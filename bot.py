@@ -8,7 +8,7 @@ import os
 import requests
 
 # Включаем логирование
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Ваши токены
@@ -42,7 +42,7 @@ def check_image_size(image_url: str) -> bool:
 async def start(update: Update, context: CallbackContext) -> int:
     logger.info("Started conversation with user: %s", update.effective_user.username)
     context.user_data.clear()  # Очистка данных пользователя при начале нового разговора
-    await update.message.reply_text('Введите ссылку:')
+    await update.message.reply_text('Введите ссылку на автора. Либо введите /restart если желаете начать сначла')
     return LINK
 
 # Получение ссылки
@@ -54,14 +54,14 @@ async def receive_link(update: Update, context: CallbackContext) -> int:
 # Получение имени автора
 async def receive_author(update: Update, context: CallbackContext) -> int:
     context.user_data['author'] = update.message.text
-    await update.message.reply_text('Отправьте изображения, не забудьте снять галочку с сжатия и отправить их файлами. Затем вы получите сообщения об успешной загрузке равное количеству отправленных изображений, нажмите /publish когда вы получите все уведомления.')
+    await update.message.reply_text('Отправьте изображения, не забудьте снять галочку с сжатия и отправить их файлами. Затем вы получите сообщения об успешной загрузке равное количеству отправленных изображений, нажмите /publish когда вы получите все уведомления. Либо введите /restart если желаете начать сначла')
     return CONTENT
 
 # Получение содержания статьи и изображений
 async def receive_content(update: Update, context: CallbackContext) -> int:
     if update.message.text:
         context.user_data['content'] = update.message.text
-        await update.message.reply_text('Если хотите, можете отправить изображения или отправьте команду /publish для завершения. Дождитесь загрузки всех файлов')
+        await update.message.reply_text('Если хотите, можете отправить изображения или отправьте команду /publish для завершения. Дождитесь загрузки всех файлов. Либо введите /restart если желаете начать сначла')
         return CONTENT
     elif update.message.photo:  # Проверка на сжатые изображения
         await update.message.reply_text('Пожалуйста, отправьте изображение как файл без сжатия, чтобы сохранить его качество.')
@@ -88,7 +88,7 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
                     if context.user_data['images']:
                         context.user_data['images'].append('<hr/>')
                     context.user_data['images'].append(f'<img src="{image_url_telegraph}" width="600" alt="Image"/>')
-                    await update.message.reply_text('Одно изображение добавлено. Продолжайте отправлять изображения или отправьте команду /publish для завершения.')
+                    await update.message.reply_text('Одно изображение добавлено. Дождитесь загрузки остальных если их более одного. Затем вы можете либо продолжать отправлять изображения, либо отправьте команду /publish для завершения.')
                 else:
                     await update.message.reply_text('Не удалось загрузить изображение на Telegraph.')
         except Exception as e:
@@ -101,7 +101,6 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
     else:
         await update.message.reply_text('Пожалуйста, отправьте текст или изображение.')
         return CONTENT
-
 
 # Публикация статьи
 async def publish_article(update: Update, context: CallbackContext) -> int:
@@ -184,6 +183,12 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
+# Обработка сброса (рестарта)
+async def restart(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text('Процесс создания публикации был сброшен. Начинаем заново.')
+    context.user_data.clear()
+    return await start(update, context)
+
 # Обработка InlineQuery
 async def inline_query(update: Update, context: CallbackContext) -> None:
     query = update.inline_query.query
@@ -233,7 +238,7 @@ def main():
             CONTENT: [MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.ALL, receive_content)],
             IMAGE: [MessageHandler(filters.PHOTO | filters.Document.ALL, receive_content)],
         },
-        fallbacks=[CommandHandler('publish', publish_article), CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('publish', publish_article), CommandHandler('cancel', cancel), CommandHandler('restart', restart)],
     )
 
     application.add_handler(conv_handler)
