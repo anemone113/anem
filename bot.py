@@ -34,15 +34,13 @@ def download_file(url: str, local_filename: str):
 def check_image_size(image_url: str) -> bool:
     response = requests.get(image_url)
     file_size = len(response.content)
-
-    # Пример: если размер файла меньше 1 МБ, возможно это сжатое изображение
     return file_size < 1_000_000  # 1 МБ
 
 # Начало разговора
 async def start(update: Update, context: CallbackContext) -> int:
     logger.info("Started conversation with user: %s", update.effective_user.username)
     context.user_data.clear()  # Очистка данных пользователя при начале нового разговора
-    await update.message.reply_text('Введите ссылку на автора. Либо введите /restart если желаете начать сначла')
+    await update.message.reply_text('Введите ссылку на автора. Либо введите /restart если желаете начать сначала')
     return LINK
 
 # Получение ссылки
@@ -54,18 +52,20 @@ async def receive_link(update: Update, context: CallbackContext) -> int:
 # Получение имени автора
 async def receive_author(update: Update, context: CallbackContext) -> int:
     context.user_data['author'] = update.message.text
-    await update.message.reply_text('Отправьте изображения, не забудьте снять галочку с сжатия и отправить их файлами. Затем вы получите сообщения об успешной загрузке равное количеству отправленных изображений, нажмите /publish когда вы получите все уведомления. Либо введите /restart если желаете начать сначла')
+    await update.message.reply_text('Отправьте изображения, не забудьте снять галочку с сжатия и отправить их файлами. Затем вы получите сообщения об успешной загрузке равное количеству отправленных изображений, нажмите /publish когда вы получите все уведомления. Либо введите /restart если желаете начать сначала')
     return CONTENT
 
 # Получение содержания статьи и изображений
 async def receive_content(update: Update, context: CallbackContext) -> int:
     if update.message.text:
-        context.user_data['content'] = update.message.text
-        await update.message.reply_text('Если хотите, можете отправить изображения или отправьте команду /publish для завершения. Дождитесь загрузки всех файлов. Либо введите /restart если желаете начать сначла')
-        return CONTENT
+        # Если получено текстовое сообщение, сбрасываем процесс
+        await update.message.reply_text('Получен текст, процесс создания статьи сброшен. Начинаем заново.')
+        return await restart(update, context)  # Сбрасываем процесс в начало
+    
     elif update.message.photo:  # Проверка на сжатые изображения
         await update.message.reply_text('Пожалуйста, отправьте изображение как файл без сжатия, чтобы сохранить его качество.')
         return CONTENT
+
     elif update.message.document and update.message.document.mime_type in ['image/jpeg', 'image/png', 'image/webp']:
         file_id = update.message.document.file_id
         logger.info(f"Received file_id: {file_id}")
@@ -132,40 +132,64 @@ async def publish_article(update: Update, context: CallbackContext) -> int:
 
         # Форматирование гиперссылки с текстом ссылки
         message_text = f'by <a href="{article_url}">{author}</a>'
-        await update.message.reply_text(message_text, parse_mode='HTML')
-
+        
         # Подготовка медиа-группы для отправки изображений
         media_group = []
-        for image_html in images:
+        if len(images) == 1:
+            # Если одно изображение, отправляем его вместе с ссылкой в одном сообщении
+            image_html = images[0]
             # Получение URL изображения
             start_index = image_html.find('src="') + 5
             end_index = image_html.find('"', start_index)
             image_url = image_html[start_index:end_index]
-
+            
             # Проверка и корректировка URL, если необходимо
             if image_url.startswith('/'):
                 image_url = f'https://telegra.ph{image_url}'
 
-            logger.info(f"Adding image to media group: {image_url}")
+            logger.info(f"Adding single image to message: {image_url}")
 
+            # Отправка сообщения с изображением и ссылкой
             try:
-                response = requests.head(image_url)
-                if response.status_code != 200:
-                    logger.error(f"Image URL {image_url} is not accessible.")
-                    continue
-            except requests.RequestException as e:
-                logger.error(f"Error checking image URL {image_url}: {e}")
-                continue
-
-            media_group.append(InputMediaPhoto(media=image_url))
-
-        # Отправка медиагруппы
-        if media_group:
-            try:
-                await update.message.reply_media_group(media=media_group)
+                await update.message.reply_photo(photo=image_url, caption=message_text, parse_mode='HTML')
             except Exception as e:
-                logger.error(f"Error sending media group: {e}")
-                await update.message.reply_text('Произошла ошибка при отправке изображений.')
+                logger.error(f"Error sending image with link: {e}")
+                await update.message.reply_text('Произошла ошибка при отправке изображения с ссылкой.')
+        else:
+            # Если несколько изображений, отправляем сообщения отдельно
+            await update.message.reply_text(message_text, parse_mode='HTML')
+
+            for image_html in images:
+                # Получение URL изображения
+                start_index = image_html.find('src="') + 5
+                end_index = image_html.find('"', start_index)
+                image_url = image_html[start_index:end_index]
+
+                # Проверка и корректировка URL, если необходимо
+                if image_url.startswith('/'):
+                    image_url = f'https://telegra.ph{image_url}'
+
+                logger.info(f"Adding image to media group: {image_url}")
+
+                try:
+                    response = requests.head(image_url)
+                    if response.status_code != 200:
+                        logger.error(f"Image URL {image_url} is not accessible.")
+                        continue
+                except requests.RequestException as e:
+                    logger.error(f"Error checking image URL {image_url}: {e}")
+                    continue
+
+                media_group.append(InputMediaPhoto(media=image_url))
+
+            # Отправка медиагруппы
+            if media_group:
+                try:
+                    await update.message.reply_media_group(media=media_group)
+                except Exception as e:
+                    logger.error(f"Error sending media group: {e}")
+                    await update.message.reply_text('Произошла ошибка при отправке изображений.')
+
     except Exception as e:
         logger.error(f"Error creating or sending article: {e}")
         await update.message.reply_text('Произошла ошибка при создании или отправке статьи.')
