@@ -20,7 +20,7 @@ telegraph = Telegraph()
 telegraph.create_account(short_name='bot')
 
 # Определение состояний
-AUTHOR, LINK, CONTENT, IMAGE = range(4)
+AUTHOR, LINK, CONTENT, IMAGE, RETRY = range(5)
 
 # Загрузка файла по URL
 def download_file(url: str, local_filename: str):
@@ -90,10 +90,12 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
                     context.user_data['images'].append(f'<img src="{image_url_telegraph}" width="600" alt="Image"/>')
                     await update.message.reply_text('Одно изображение добавлено. Дождитесь загрузки остальных если их более одного. Затем вы можете либо продолжать отправлять изображения, либо отправьте команду /publish для завершения.')
                 else:
-                    await update.message.reply_text('Не удалось загрузить изображение на Telegraph.')
+                    await update.message.reply_text('Не удалось загрузить изображение на Telegraph. Попробуйте снова отправить изображение командой /retry.  или сбросте к началу командой /restart')
+                    return RETRY
         except Exception as e:
             logger.error(f"Error uploading file: {e}")
-            await update.message.reply_text('Произошла ошибка при загрузке изображения.')
+            await update.message.reply_text('Произошла ошибка при загрузке изображения. Попробуйте снова отправить изображение командой /retry. или сбросте к началу командой /restart')
+            return RETRY
         finally:
             if os.path.exists(local_filename):
                 os.remove(local_filename)
@@ -188,11 +190,12 @@ async def publish_article(update: Update, context: CallbackContext) -> int:
                     await update.message.reply_media_group(media=media_group)
                 except Exception as e:
                     logger.error(f"Error sending media group: {e}")
-                    await update.message.reply_text('Произошла ошибка при отправке изображений.')
+                    await update.message.reply_text('Произошла ошибка при отправке изображений. Попробуйте снова командой /retry или сбросте к началу командой /restart')
 
     except Exception as e:
         logger.error(f"Error creating or sending article: {e}")
-        await update.message.reply_text('Произошла ошибка при создании или отправке статьи.')
+        await update.message.reply_text('Произошла ошибка при создании или отправке статьи. Попробуйте снова командой /retry.')
+        return RETRY
 
     # Очистка данных пользователя после публикации
     context.user_data.clear()
@@ -212,6 +215,17 @@ async def restart(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text('Процесс создания публикации был сброшен. Начинаем заново.')
     context.user_data.clear()
     return await start(update, context)
+
+# Обработка повторной попытки
+async def retry(update: Update, context: CallbackContext) -> int:
+    current_state = context.user_data.get('state', None)
+    
+    if current_state == IMAGE:
+        await update.message.reply_text('Попробуйте снова отправить изображение.')
+    elif current_state == RETRY:
+        await update.message.reply_text('Попробуйте снова отправить статью.')
+    
+    return current_state
 
 # Обработка InlineQuery
 async def inline_query(update: Update, context: CallbackContext) -> None:
@@ -261,8 +275,9 @@ def main():
             AUTHOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_author)],
             CONTENT: [MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.ALL, receive_content)],
             IMAGE: [MessageHandler(filters.PHOTO | filters.Document.ALL, receive_content)],
+            RETRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, retry)],
         },
-        fallbacks=[CommandHandler('publish', publish_article), CommandHandler('cancel', cancel), CommandHandler('restart', restart)],
+        fallbacks=[CommandHandler('publish', publish_article), CommandHandler('cancel', cancel), CommandHandler('restart', restart), CommandHandler('retry', retry)],
     )
 
     application.add_handler(conv_handler)
