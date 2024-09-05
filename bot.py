@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Ваши токены
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
+TELEGRAM_BOT_TOKEN = '6026973561:AAEH542TDSuKUfVbIvo3LbmdeI3-Z_hMTvc'
 
 # Инициализация Telegraph и Telegram бота
 telegraph = Telegraph()
@@ -90,18 +90,22 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
                     context.user_data['images'].append(f'<img src="{image_url_telegraph}" width="600" alt="Image"/>')
                     await update.message.reply_text('Одно изображение добавлено. Дождитесь загрузки остальных если их более одного. Затем вы можете либо продолжать отправлять изображения, либо отправьте команду /publish для завершения.')
                 else:
-                    await update.message.reply_text('Не удалось загрузить изображение на Telegraph. Попробуйте снова отправить изображение командой /retry.  или сбросте к началу командой /restart')
+                    await update.message.reply_text('Не удалось загрузить изображение на Telegraph. Попробуйте снова отправить изображение командой /retry. или сбросте к началу командой /restart')
+                    context.user_data['state'] = RETRY
                     return RETRY
         except Exception as e:
             logger.error(f"Error uploading file: {e}")
             await update.message.reply_text('Произошла ошибка при загрузке изображения. Попробуйте снова отправить изображение командой /retry. или сбросте к началу командой /restart')
+            context.user_data['state'] = RETRY
             return RETRY
         finally:
             if os.path.exists(local_filename):
                 os.remove(local_filename)
+        context.user_data['state'] = IMAGE
         return IMAGE
     else:
         await update.message.reply_text('Пожалуйста, отправьте текст или изображение.')
+        context.user_data['state'] = CONTENT
         return CONTENT
 
 # Публикация статьи
@@ -218,15 +222,14 @@ async def restart(update: Update, context: CallbackContext) -> int:
 
 # Обработка повторной попытки
 async def retry(update: Update, context: CallbackContext) -> int:
-    current_state = context.user_data.get('state', None)
+    state = context.user_data.get('state', None)
     
-    if current_state == IMAGE:
-        await update.message.reply_text('Попробуйте снова отправить изображение.')
-    elif current_state == RETRY:
-        await update.message.reply_text('Попробуйте снова отправить статью.')
+    if state == IMAGE:
+        await update.message.reply_text('Пожалуйста, отправьте изображение снова.')
+    elif state == RETRY:
+        await update.message.reply_text('Пожалуйста, попробуйте снова отправить статью.')
     
-    return current_state
-
+    return state
 # Обработка InlineQuery
 async def inline_query(update: Update, context: CallbackContext) -> None:
     query = update.inline_query.query
