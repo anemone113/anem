@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Ваши токены
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-TELEGRAM_BOT_TOKEN = '6026973561:AAEH542TDSuKUfVbIvo3LbmdeI3-Z_hMTvc'
+TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
 
 # Инициализация Telegraph и Telegram бота
 telegraph = Telegraph()
