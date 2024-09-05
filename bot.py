@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Ваши токены
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
+TELEGRAM_BOT_TOKEN = '6026973561:AAEH542TDSuKUfVbIvo3LbmdeI3-Z_hMTvc'
 
 # Инициализация Telegraph и Telegram бота
 telegraph = Telegraph()
@@ -31,10 +31,50 @@ def download_file(url: str, local_filename: str):
                 f.write(chunk)
 
 # Проверка размера файла
-def check_image_size(image_url: str) -> bool:
-    response = requests.get(image_url)
-    file_size = len(response.content)
-    return file_size < 1_000_000  # 1 МБ
+def check_image_size(file_path: str) -> bool:
+    return os.path.getsize(file_path) < 5_000_000  # 5 МБ
+
+# Уменьшение разрешения изображения
+def resize_image(input_path: str, output_path: str, max_size: int = 4000):
+    with Image.open(input_path) as img:
+        width, height = img.size
+        if width > max_size or height > max_size:
+            new_width = min(width, max_size)
+            new_height = int((new_width / width) * height)
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+        img.save(output_path)
+
+# Функция сжатия изображений
+def compress_image(input_path: str, output_path: str, format: str):
+    if format == 'PNG':
+        img = Image.open(input_path)
+        img = img.convert('RGB')  # Конвертируем PNG в RGB
+        temp_jpg_path = 'temp.jpg'
+        img.save(temp_jpg_path, format='JPEG', quality=100)
+        
+        while not check_image_size(temp_jpg_path):
+            with Image.open(temp_jpg_path) as temp_img:
+                quality = 90
+                temp_img.save(temp_jpg_path, format='JPEG', quality=quality)
+                while not check_image_size(temp_jpg_path):
+                    quality -= 5
+                    temp_img.save(temp_jpg_path, format='JPEG', quality=quality)
+                    if quality < 90:
+                        break
+            resize_image(temp_jpg_path, temp_jpg_path)
+        
+        os.rename(temp_jpg_path, output_path)
+
+    elif format == 'JPEG':
+        quality = 90
+        with Image.open(input_path) as img:
+            img.save(output_path, format='JPEG', quality=quality)
+            while not check_image_size(output_path):
+                quality -= 5
+                img.save(output_path, format='JPEG', quality=quality)
+                if quality < 90:
+                    break
+            resize_image(output_path, output_path)
 
 # Начало разговора
 async def start(update: Update, context: CallbackContext) -> int:
@@ -62,7 +102,7 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text('Получен текст, процесс создания статьи сброшен. Начинаем заново.')
         return await restart(update, context)  # Сбрасываем процесс в начало
     
-    elif update.message.photo:  # Проверка на сжатые изображения
+    elif update.message.photo:
         await update.message.reply_text('Пожалуйста, отправьте изображение как файл без сжатия, чтобы сохранить его качество.')
         return CONTENT
 
@@ -77,8 +117,13 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
         local_filename = 'temp_image.jpg'
         download_file(image_url, local_filename)
 
+        # Определяем формат и сжимаем изображение
+        format = 'PNG' if update.message.document.mime_type == 'image/png' else 'JPEG'
+        compressed_filename = 'compressed_image.jpg'
+        compress_image(local_filename, compressed_filename, format)
+
         try:
-            with open(local_filename, 'rb') as f:
+            with open(compressed_filename, 'rb') as f:
                 response = telegraph.upload_file(f)
                 if response:
                     image_url_telegraph = response[0]['src']
@@ -101,6 +146,8 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
         finally:
             if os.path.exists(local_filename):
                 os.remove(local_filename)
+            if os.path.exists(compressed_filename):
+                os.remove(compressed_filename)
         context.user_data['state'] = IMAGE
         return IMAGE
     else:
