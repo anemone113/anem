@@ -230,7 +230,7 @@ async def retry(update: Update, context: CallbackContext) -> int:
         
         images = context.user_data.get('images', [])
         if not images:
-            await update.message.reply_text('Нет изображений для повторной загрузки. Начните процесс заново командой /restart.')
+            await update.message.reply_text('Нет изображений для повторной загрузки. Попробуйте отправить изображения снова.Либо начните процесс заново командой /restart.')
             return CONTENT
         
         # Попытка создать новую статью с уже загруженными изображениями
