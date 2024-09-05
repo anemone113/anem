@@ -40,7 +40,7 @@ def check_image_size(image_url: str) -> bool:
 async def start(update: Update, context: CallbackContext) -> int:
     logger.info("Started conversation with user: %s", update.effective_user.username)
     context.user_data.clear()  # Очистка данных пользователя при начале нового разговора
-    await update.message.reply_text('Введите ссылку на автора. Либо введите /restart если желаете начать сначала')
+    await update.message.reply_text('Введите ссылку на автора. Обратите внимание что у бота есть команда /cancel которая в любой момент полностью отменяет диалог и сбрасывает процесс')
     return LINK
 
 # Получение ссылки
@@ -90,12 +90,12 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
                     context.user_data['images'].append(f'<img src="{image_url_telegraph}" width="600" alt="Image"/>')
                     await update.message.reply_text('Одно изображение добавлено. Дождитесь загрузки остальных если их более одного. Затем вы можете либо продолжать отправлять изображения, либо отправьте команду /publish для завершения.')
                 else:
-                    await update.message.reply_text('Не удалось загрузить изображение на Telegraph. Попробуйте снова отправить изображение командой /retry. или сбросте к началу командой /restart')
+                    await update.message.reply_text('Не удалось загрузить изображение на Telegraph. Попробуйте снова отправить изображение командой /retry. После её нажатие произойдёт повторное создание статьи со всеми уже отправленными данными включая изображения. Или если вы желаете отправить иные данные или изображения то сбросьте к началу командой /restart')
                     context.user_data['state'] = RETRY
                     return RETRY
         except Exception as e:
             logger.error(f"Error uploading file: {e}")
-            await update.message.reply_text('Произошла ошибка при загрузке изображения. Попробуйте снова отправить изображение командой /retry. или сбросте к началу командой /restart')
+            await update.message.reply_text('Произошла ошибка при загрузке изображения. Попробуйте снова отправить изображение командой /retry. После её нажатие произойдёт повторное создание статьи со всеми уже отправленными данными включая изображения. Или если вы желаете отправить иные данные или изображения то сбросьте к началу командой /restart')
             context.user_data['state'] = RETRY
             return RETRY
         finally:
@@ -194,7 +194,7 @@ async def publish_article(update: Update, context: CallbackContext) -> int:
                     await update.message.reply_media_group(media=media_group)
                 except Exception as e:
                     logger.error(f"Error sending media group: {e}")
-                    await update.message.reply_text('Произошла ошибка при отправке изображений. Попробуйте снова командой /retry или сбросте к началу командой /restart')
+                    await update.message.reply_text('Произошла ошибка при отправке изображений. Попробуйте снова отправить изображение командой /retry. После её нажатие произойдёт повторное создание статьи со всеми уже отправленными данными включая изображения. Или если вы желаете отправить иные данные или изображения то сбросьте к началу командой /restart')
 
     except Exception as e:
         logger.error(f"Error creating or sending article: {e}")
@@ -224,12 +224,49 @@ async def restart(update: Update, context: CallbackContext) -> int:
 async def retry(update: Update, context: CallbackContext) -> int:
     state = context.user_data.get('state', None)
     
-    if state == IMAGE:
-        await update.message.reply_text('Пожалуйста, отправьте изображение снова.')
-    elif state == RETRY:
-        await update.message.reply_text('Пожалуйста, попробуйте снова отправить статью.')
+    if state == IMAGE or state == RETRY:
+        # Если была ошибка при загрузке изображений или до публикации
+        await update.message.reply_text('Повторная загрузка изображений и создание новой статьи. Пожалуйста, подождите.')
+        
+        images = context.user_data.get('images', [])
+        if not images:
+            await update.message.reply_text('Нет изображений для повторной загрузки. Начните процесс заново командой /restart.')
+            return CONTENT
+        
+        # Попытка создать новую статью с уже загруженными изображениями
+        author = context.user_data.get('author', 'Автор не указан')
+        link = context.user_data.get('link', 'Ссылка не указана')
+        content = context.user_data.get('content', '')
+
+        # Сохраняем HTML-контент
+        html_content = f"<p><a href='{link}'>{link}</a></p>"  # Текст ссылки
+        html_content += ''.join(images)  # Добавляем изображения
+        html_content += f"<p>{content}</p>"  # Добавляем текст
+
+        try:
+            # Создаём черновик статьи без публикации
+            context.user_data['draft'] = {
+                'author': author,
+                'link': link,
+                'content': html_content
+            }
+
+            await update.message.reply_text('Новая статья со старыми данными успешно создана. Вы можете продолжить добавлять изображения или опубликовать статью командой /publish.')
+            return IMAGE  # Переход к этапу загрузки изображений
+        except Exception as e:
+            logger.error(f"Error creating draft: {e}")
+            await update.message.reply_text('Произошла повторная ошибка. Попробуйте снова командой /retry или начните заново с помощью /restart.')
+            return RETRY
+
+    elif state == CONTENT:
+        # Если ошибка произошла до загрузки изображений
+        await update.message.reply_text('Произошла ошибка до загрузки изображений. Пожалуйста, начните процесс заново командой /restart.')
+        return ConversationHandler.END
     
-    return state
+    else:
+        await update.message.reply_text('Неизвестная ошибка. Пожалуйста, начните процесс заново командой /restart.')
+        return ConversationHandler.END
+
 # Обработка InlineQuery
 async def inline_query(update: Update, context: CallbackContext) -> None:
     query = update.inline_query.query
