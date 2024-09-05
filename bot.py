@@ -101,12 +101,25 @@ async def receive_author(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text('Отправьте изображения, не забудьте снять галочку с сжатия и отправить их файлами. Затем вы получите сообщения об успешной загрузке равное количеству отправленных изображений, нажмите /publish когда вы получите все уведомления. Либо введите /restart если желаете начать сначала')
     return CONTENT
 
-# Получение содержания статьи и изображений
+# Добавим проверку состояния бота через getMe перед обработкой первого изображения
+async def ensure_bot_awake(context: CallbackContext):
+    try:
+        await context.bot.get_me()  # Отправляем запрос getMe
+        logger.info("Bot is awake and responding.")
+    except Exception as e:
+        logger.error(f"Error waking up bot: {e}")
+        await asyncio.sleep(2)  # Если бот не отвечает, подождать 2 секунды
+        await ensure_bot_awake(context)  # Повторная попытка
+
+# Получение содержания статьи и изображений с добавленной обработкой ошибок
 async def receive_content(update: Update, context: CallbackContext) -> int:
+    # Убедиться, что бот активен перед обработкой
+    await ensure_bot_awake(context)
+
     if update.message.text:
         await update.message.reply_text('Получен текст, процесс создания статьи сброшен. Начинаем заново.')
         return await restart(update, context)  # Сбрасываем процесс в начало
-    
+
     elif update.message.photo:
         await update.message.reply_text('Пожалуйста, отправьте изображение как файл без сжатия, чтобы сохранить его качество.')
         return CONTENT
@@ -124,8 +137,8 @@ async def receive_content(update: Update, context: CallbackContext) -> int:
 
         format = 'PNG' if update.message.document.mime_type == 'image/png' else 'JPEG'
         compressed_filename = 'compressed_image.jpg'
-        
-        # Повторные попытки с задержкой
+
+        # Повторные попытки с задержкой и обработкой ошибок
         for attempt in range(3):  # Попробовать 3 раза
             try:
                 compress_image(input_path=local_filename, output_path=compressed_filename, format=format)
