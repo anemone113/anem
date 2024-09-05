@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Ваши токены
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
+TELEGRAM_BOT_TOKEN = '6026973561:AAEH542TDSuKUfVbIvo3LbmdeI3-Z_hMTvc'
 
 # Инициализация Telegraph и Telegram бота
 telegraph = Telegraph()
@@ -46,6 +46,11 @@ def resize_image(input_path: str, output_path: str, max_size: int = 4000):
 
 # Функция сжатия изображений
 def compress_image(input_path: str, output_path: str, format: str):
+    # Если размер файла меньше 5 МБ, не конвертируем и не изменяем формат
+    if check_image_size(input_path):
+        os.rename(input_path, output_path)
+        return
+
     if format == 'PNG':
         img = Image.open(input_path)
         img = img.convert('RGB')  # Конвертируем PNG в RGB
