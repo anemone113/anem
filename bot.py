@@ -1,384 +1,346 @@
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, InlineQueryHandler, CallbackContext, ConversationHandler, filters
-from telegraph import Telegraph
+from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaPhoto
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
 from PIL import Image
-from io import BytesIO
+from tenacity import retry, wait_fixed, stop_after_attempt
+import asyncio
+import requests
 import logging
 import os
-import requests
-import asyncio
+import shutil
+import io
+import aiohttp
+from tenacity import retry, wait_fixed, stop_after_attempt, RetryError
+import tempfile
 
-# Включаем логирование
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s', level=logging.INFO)
+# Укажите ваши токены и ключ для imgbb
+TELEGRAM_BOT_TOKEN = '7285680080:AAHAdaCNm-p-Bbo6JKwXyTzTzJn0bgEAYa0'
+TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
+IMGBB_API_KEY = 'e85f48364914e1d48547389b976574a3'
+
+# Состояния
+ASKING_FOR_AUTHOR_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE = range(3)
+
+# Сохранение данных состояния пользователя
+user_data = {}
+
+# Настройка логирования
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ваши токены
-TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
-
-# Инициализация Telegraph и Telegram бота
-telegraph = Telegraph()
-telegraph.create_account(short_name='bot')
-
-# Определение состояний
-AUTHOR, LINK, CONTENT, IMAGE, RETRY = range(5)
-
-# Загрузка файла по URL
-def download_file(url: str, local_filename: str):
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(local_filename, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-# Проверка размера файла
-def check_image_size(file_path: str) -> bool:
-    return os.path.getsize(file_path) < 5_000_000  # 5 МБ
-
-# Уменьшение разрешения изображения
-def resize_image(input_path: str, output_path: str, max_size: int = 4000):
-    with Image.open(input_path) as img:
-        width, height = img.size
-        if width > max_size or height > max_size:
-            new_width = min(width, max_size)
-            new_height = int((new_width / width) * height)
-            img = img.resize((new_width, new_height), Image.LANCZOS)
-        img.save(output_path)
-
-# Функция сжатия изображений
-def compress_image(input_path: str, output_path: str, format: str):
-    # Если размер файла меньше 5 МБ, не конвертируем и не изменяем формат
-    if check_image_size(input_path):
-        os.rename(input_path, output_path)
-        return
-
-    if format == 'PNG':
-        img = Image.open(input_path)
-        img = img.convert('RGB')  # Конвертируем PNG в RGB
-        temp_jpg_path = 'temp.jpg'
-        img.save(temp_jpg_path, format='JPEG', quality=100)
-        
-        while not check_image_size(temp_jpg_path):
-            with Image.open(temp_jpg_path) as temp_img:
-                quality = 90
-                temp_img.save(temp_jpg_path, format='JPEG', quality=quality)
-                while not check_image_size(temp_jpg_path):
-                    quality -= 5
-                    temp_img.save(temp_jpg_path, format='JPEG', quality=quality)
-                    if quality < 90:
-                        break
-            resize_image(temp_jpg_path, temp_jpg_path)
-        
-        os.rename(temp_jpg_path, output_path)
-
-    elif format == 'JPEG':
-        quality = 90
-        with Image.open(input_path) as img:
-            img.save(output_path, format='JPEG', quality=quality)
-            while not check_image_size(output_path):
-                quality -= 5
-                img.save(output_path, format='JPEG', quality=quality)
-                if quality < 90:
-                    break
-            resize_image(output_path, output_path)
-
-# Начало разговора
 async def start(update: Update, context: CallbackContext) -> int:
-    logger.info("Started conversation with user: %s", update.effective_user.username)
-    context.user_data.clear()  # Очистка данных пользователя при начале нового разговора
-    await update.message.reply_text('Введите ссылку на автора. Обратите внимание что у бота есть команда /cancel которая в любой момент полностью отменяет диалог и сбрасывает процесс')
-    return LINK
-
-# Получение ссылки
-async def receive_link(update: Update, context: CallbackContext) -> int:
-    context.user_data['link'] = update.message.text
-    await update.message.reply_text('Введите имя автора:')
-    return AUTHOR
-
-# Получение имени автора
-async def receive_author(update: Update, context: CallbackContext) -> int:
-    context.user_data['author'] = update.message.text
-    await update.message.reply_text('Отправьте изображения, не забудьте снять галочку с сжатия и отправить их файлами. Затем вы получите сообщения об успешной загрузке равное количеству отправленных изображений, нажмите /publish когда вы получите все уведомления. Либо введите /restart если желаете начать сначала')
-    return CONTENT
-
-# Добавим проверку состояния бота через getMe перед обработкой первого изображения
-async def ensure_bot_awake(context: CallbackContext):
-    try:
-        await context.bot.get_me()  # Отправляем запрос getMe
-        logger.info("Bot is awake and responding.")
-    except Exception as e:
-        logger.error(f"Error waking up bot: {e}")
-        await asyncio.sleep(2)  # Если бот не отвечает, подождать 2 секунды
-        await ensure_bot_awake(context)  # Повторная попытка
-
-# Получение содержания статьи и изображений с добавленной обработкой ошибок
-async def receive_content(update: Update, context: CallbackContext) -> int:
-    # Убедиться, что бот активен перед обработкой
-    await ensure_bot_awake(context)
-
-    if update.message.text:
-        await update.message.reply_text('Получен текст, процесс создания статьи сброшен. Начинаем заново.')
-        return await restart(update, context)  # Сбрасываем процесс в начало
-
-    elif update.message.photo:
-        await update.message.reply_text('Пожалуйста, отправьте изображение как файл без сжатия, чтобы сохранить его качество.')
-        return CONTENT
-
-    elif update.message.document and update.message.document.mime_type in ['image/jpeg', 'image/png', 'image/webp']:
-        file_id = update.message.document.file_id
-        logger.info(f"Received file_id: {file_id}")
-
-        file = await context.bot.get_file(file_id)
-        image_url = file.file_path
-        logger.info(f"Image URL: {image_url}")
-
-        local_filename = 'temp_image.jpg'
-        download_file(url=image_url, local_filename=local_filename)
-
-        format = 'PNG' if update.message.document.mime_type == 'image/png' else 'JPEG'
-        compressed_filename = 'compressed_image.jpg'
-
-        # Повторные попытки с задержкой и обработкой ошибок
-        for attempt in range(3):  # Попробовать 3 раза
-            try:
-                compress_image(input_path=local_filename, output_path=compressed_filename, format=format)
-                with open(compressed_filename, 'rb') as f:
-                    response = telegraph.upload_file(f)
-                    if response:
-                        image_url_telegraph = response[0]['src']
-                        logger.info(f"Uploaded Image URL: {image_url_telegraph}")
-                        if 'images' not in context.user_data:
-                            context.user_data['images'] = []
-                        if context.user_data['images']:
-                            context.user_data['images'].append('<hr/>')
-                        context.user_data['images'].append(f'<img src="{image_url_telegraph}" width="600" alt="Image"/>')
-                        await update.message.reply_text('Одно изображение добавлено. Дождитесь загрузки остальных если их более одного. Затем вы можете либо продолжать отправлять изображения, либо отправьте команду /publish для завершения.')
-                        break
-                    else:
-                        raise ValueError("Не удалось загрузить изображение на Telegraph.")
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1}: Error uploading file: {e}")
-                if attempt < 2:  # Если не последний попытка
-                    await asyncio.sleep(5)  # Подождать 5 секунд
-                    continue
-                await update.message.reply_text('Не удалось загрузить изображение после нескольких попыток. Попробуйте снова отправить изображение командой /retry.')
-                context.user_data['state'] = RETRY
-                return RETRY
-            finally:
-                if os.path.exists(local_filename):
-                    os.remove(local_filename)
-                if os.path.exists(compressed_filename):
-                    os.remove(compressed_filename)
-        context.user_data['state'] = IMAGE
-        return IMAGE
+    user_id = update.message.from_user.id
+    if user_id not in user_data:
+        logger.info(f"User {user_id} started the process.")
+        await update.message.reply_text('Пожалуйста, отправьте ссылку на автора. В боте есть команда /restart которая перезапускает процесс на любом этапе')
+        user_data[user_id] = {'status': 'awaiting_author_link'}  # Инициализация данных для пользователя
+        return ASKING_FOR_AUTHOR_LINK
     else:
-        await update.message.reply_text('Пожалуйста, отправьте текст или изображение.')
-        context.user_data['state'] = CONTENT
-        return CONTENT
+        if user_data[user_id]['status'] == 'awaiting_author_link':
+            return await handle_author_link(update, context)
+        elif user_data[user_id]['status'] == 'awaiting_author_name':
+            return await handle_author_name(update, context)
+        elif user_data[user_id]['status'] == 'awaiting_image':
+            return await handle_image(update, context)
 
-# Публикация статьи
-async def publish_article(update: Update, context: CallbackContext) -> int:
-    author = context.user_data.get('author', 'Автор не указан')
-    link = context.user_data.get('link', 'Ссылка не указана')
-    content = context.user_data.get('content', '')
-    images = context.user_data.get('images', [])
+async def restart(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    if user_id in user_data:
+        del user_data[user_id]
+    logger.info(f"User {user_id} restarted the process.")
+    await update.message.reply_text('Процесс сброшен. Пожалуйста, начните заново. Отправьте ссылку на автора.')
+    user_data[user_id] = {'status': 'awaiting_author_link'}
+    return ASKING_FOR_AUTHOR_LINK
 
-    if not content and not images:
-        await update.message.reply_text('Не предоставлено содержания или изображений для публикации.')
-        return CONTENT
+async def handle_author_link(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    if user_id in user_data and user_data[user_id]['status'] == 'awaiting_author_link':
+        user_data[user_id]['author_link'] = update.message.text
+        logger.info(f"User {user_id} provided author link: {update.message.text}")
+        await update.message.reply_text('Теперь отправьте имя автора.')
+        user_data[user_id]['status'] = 'awaiting_author_name'
+        return ASKING_FOR_AUTHOR_NAME
+    else:
+        await update.message.reply_text('Ошибка: данные не найдены.')
+        return ConversationHandler.END
 
-    html_content = f"<p><a href='{link}'>{link}</a></p>"
-    html_content += ''.join(images)
-    html_content += f"<p>{content}</p>"
+async def handle_author_name(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    if user_id in user_data and user_data[user_id]['status'] == 'awaiting_author_name':
+        user_data[user_id]['author_name'] = update.message.text
+        logger.info(f"User {user_id} provided author name: {update.message.text}")
+        # Сохраняем имя автора как заголовок статьи
+        user_data[user_id]['title'] = update.message.text
+        await update.message.reply_text('Теперь отправьте изображение (формат JPG, PNG или RAR для GIF) Дождитесь подтверждения загрузки ваших файлов. Крупные файлы могут грузиться около 2 минут. В случае ошибки введите /restart')
+        user_data[user_id]['status'] = 'awaiting_image'
+        return ASKING_FOR_IMAGE
+    else:
+        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте снова')
+        return ConversationHandler.END
 
-    # Повторные попытки с задержкой
-    for attempt in range(3):  # Попробовать 3 раза
-        try:
-            response = telegraph.create_page(
-                title=author,
-                author_name=author,
-                html_content=html_content
-            )
-            article_url = f"https://telegra.ph/{response['path']}"
-            logger.info(f"Article URL: {article_url}")
+def compress_image(file_path: str, output_path: str) -> None:
+    # Определяем максимальный размер файла в байтах (5 МБ)
+    max_size = 5 * 1024 * 1024
 
-            message_text = f'by <a href="{article_url}">{author}</a>'
+    # Открываем изображение
+    with Image.open(file_path) as img:
+        # Проверяем формат и размер изображения
+        if img.format == 'PNG' and os.path.getsize(file_path) > max_size:
+            # Если PNG и размер больше 5 МБ, конвертируем в JPG
+            img = img.convert('RGB')
+            temp_path = file_path.rsplit('.', 1)[0] + '.jpg'
+            img.save(temp_path, format='JPEG', quality=90)
+            file_path = temp_path
+            img = Image.open(file_path)
+        
+        # Если изображение имеет альфа-канал, преобразуем его в RGB
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            img = img.convert('RGB')
+
+        # Сохраняем изображение в формате JPG с начальным качеством
+        quality = 90
+        img.save(output_path, format='JPEG', quality=quality)
+
+        # Проверяем размер файла и сжимаем при необходимости
+        while os.path.getsize(output_path) > max_size:
+            quality -= 10
+            if quality < 10:
+                break
+            img.save(output_path, format='JPEG', quality=quality)
+
+        # Если изображение всё ещё больше 5 МБ, уменьшаем разрешение
+        while os.path.getsize(output_path) > max_size:
+            width, height = img.size
+            img = img.resize((width // 2, height // 2), Image.ANTIALIAS)
+            img.save(output_path, format='JPEG', quality=quality)
+
+        # Удаляем временный JPG файл, если он был создан
+        if file_path.endswith('.jpg'):
+            os.remove(file_path)
+
+# Асинхронная функция для загрузки изображения на imgbb
+async def upload_image_to_imgbb(file_path: str) -> str:
+    async with aiohttp.ClientSession() as session:
+        with open(file_path, 'rb') as f:
+            form = aiohttp.FormData()
+            form.add_field('key', IMGBB_API_KEY)
+            form.add_field('image', f)
+
+            async with session.post('https://api.imgbb.com/1/upload', data=form) as response:
+                if response.status == 200:
+                    response_json = await response.json()
+                    return response_json['data']['url']
+                else:
+                    raise Exception(f"Ошибка загрузки на imgbb: {response.status}")
+
+# Обновленная функция handle_image для обработки изображений
+async def handle_image(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    if user_id in user_data and user_data[user_id]['status'] == 'awaiting_image':
+        if update.message.photo:
+            await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG или PNG), без сжатия.')
+            return ASKING_FOR_IMAGE
+        elif update.message.document:
+            file_name = update.message.document.file_name
+            file_ext = file_name.lower().split('.')[-1]
+            file = await context.bot.get_file(update.message.document.file_id)
             
-            media_group = []
-            if len(images) == 1:
-                image_html = images[0]
-                start_index = image_html.find('src="') + 5
-                end_index = image_html.find('"', start_index)
-                image_url = image_html[start_index:end_index]
-                if image_url.startswith('/'):
-                    image_url = f'https://telegra.ph{image_url}'
+            # Создаём временный файл
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_ext}') as tmp_file:
+                file_path = tmp_file.name
+                await file.download_to_drive(file_path)
 
-                logger.info(f"Adding single image to message: {image_url}")
+            # Если файл .rar, переименовываем его в .gif
+            if file_ext == 'rar':
+                new_file_path = f'{os.path.splitext(file_path)[0]}.gif'
+                shutil.move(file_path, new_file_path)
+                file_path = new_file_path
+                file_name = os.path.basename(file_path)
+                file_ext = 'gif'
+
+            if file_ext in ('jpg', 'jpeg', 'png', 'gif'):
+                # Если изображение больше 5 МБ, сжимаем его
+                if os.path.getsize(file_path) > 5 * 1024 * 1024:
+                    compressed_path = f'{os.path.splitext(file_path)[0]}_compressed.jpg'
+                    compress_image(file_path, compressed_path)
+                    file_path = compressed_path
 
                 try:
-                    await update.message.reply_photo(photo=image_url, caption=message_text, parse_mode='HTML')
+                    # Запускаем асинхронную загрузку изображений
+                    image_url = await upload_image_to_imgbb(file_path)
+                    if 'images' not in user_data[user_id]:
+                        user_data[user_id]['images'] = []
+                    user_data[user_id]['images'].append(image_url)  # Сохраняем только URL
+                    os.remove(file_path)  # Удаляем временный файл
+                    await update.message.reply_text('Одно изображение добавлено. Дождитесь загрузки остальных изображений если их больше чем одно. Или отправьте следующее изображение. Если желаете завершить публикацию введите /publish для завершения.')
+                    return ASKING_FOR_IMAGE
                 except Exception as e:
-                    logger.error(f"Error sending image with link: {e}")
-                    await update.message.reply_text('Произошла ошибка при отправке изображения с ссылкой.')
+                    await update.message.reply_text(f'Ошибка при загрузке изображения на imgbb: {str(e)}')
+                    return ConversationHandler.END
             else:
-                await update.message.reply_text(message_text, parse_mode='HTML')
-
-                for image_html in images:
-                    start_index = image_html.find('src="') + 5
-                    end_index = image_html.find('"', start_index)
-                    image_url = image_html[start_index:end_index]
-                    if image_url.startswith('/'):
-                        image_url = f'https://telegra.ph{image_url}'
-
-                    logger.info(f"Adding image to media group: {image_url}")
-
-                    try:
-                        response = requests.head(image_url)
-                        if response.status_code != 200:
-                            logger.error(f"Image URL {image_url} is not accessible.")
-                            continue
-                    except requests.RequestException as e:
-                        logger.error(f"Error checking image URL {image_url}: {e}")
-                        continue
-
-                    media_group.append(InputMediaPhoto(media=image_url))
-
-                if media_group:
-                    try:
-                        await update.message.reply_media_group(media=media_group)
-                    except Exception as e:
-                        logger.error(f"Error sending media group: {e}")
-                        await update.message.reply_text('Произошла ошибка при отправке изображений. Попробуйте снова отправить изображение командой /retry.')
-            break
-        except Exception as e:
-            logger.error(f"Attempt {attempt + 1}: Error creating or sending article: {e}")
-            if attempt < 2:  # Если не последний попытка
-                await asyncio.sleep(5)  # Подождать 5 секунд
-                continue
-            await update.message.reply_text('Произошла ошибка при создании или отправке статьи после нескольких попыток. Попробуйте снова командой /retry.')
-            return RETRY
-
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-# Обработка отмены
-async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text('Разговор отменен.')
-    # Очистка данных пользователя при отмене
-    context.user_data.clear()
-    return ConversationHandler.END
-
-# Обработка сброса (рестарта)
-async def restart(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text('Процесс создания публикации был сброшен. Начинаем заново.')
-    context.user_data.clear()
-    return await start(update, context)
-
-# Обработка повторной попытки
-async def retry(update: Update, context: CallbackContext) -> int:
-    state = context.user_data.get('state', None)
-    
-    if state == IMAGE or state == RETRY:
-        await update.message.reply_text('Повторная загрузка изображений и создание новой статьи. Пожалуйста, подождите.')
-        
-        images = context.user_data.get('images', [])
-        if not images:
-            await update.message.reply_text('Нет изображений для повторной загрузки. Попробуйте отправить изображения снова. Или начните процесс заново командой /restart.')
-            return CONTENT
-        
-        author = context.user_data.get('author', 'Автор не указан')
-        link = context.user_data.get('link', 'Ссылка не указана')
-        content = context.user_data.get('content', '')
-
-        html_content = f"<p><a href='{link}'>{link}</a></p>"
-        html_content += ''.join(images)
-        html_content += f"<p>{content}</p>"
-
-        # Повторные попытки с задержкой
-        for attempt in range(3):  # Попробовать 3 раза
-            try:
-                context.user_data['draft'] = {
-                    'author': author,
-                    'link': link,
-                    'content': html_content
-                }
-                await update.message.reply_text('Новая статья со старыми данными успешно создана. Вы можете продолжить добавлять изображения или опубликовать статью командой /publish.')
-                return IMAGE
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1}: Error creating draft: {e}")
-                if attempt < 2:
-                    await asyncio.sleep(5)  # Подождать 5 секунд
-                    continue
-                await update.message.reply_text('Произошла повторная ошибка. Попробуйте снова командой /retry или начните заново с помощью /restart.')
-                return RETRY
-
-    elif state == CONTENT:
-        await update.message.reply_text('Произошла ошибка до загрузки изображений. Пожалуйста, начните процесс заново командой /restart.')
+                await update.message.reply_text('Пожалуйста, отправьте изображение в формате JPG, PNG или GIF, без сжатия.')
+                return ASKING_FOR_IMAGE
+        else:
+            await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG, PNG или GIF), без сжатия.')
+            return ASKING_FOR_IMAGE
+    else:
+        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте снова')
         return ConversationHandler.END
-    
-    await update.message.reply_text('Неизвестное состояние. Попробуйте начать заново командой /restart.')
-    return ConversationHandler.END
 
-# Обработка InlineQuery
-async def inline_query(update: Update, context: CallbackContext) -> None:
-    query = update.inline_query.query
-    if not query:
+@retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
+def make_request(url, data):
+    response = requests.post(url, json=data)
+    response.raise_for_status()
+    return response.json()
+
+# Функция для отправки медиа-сообщений с повторными попытками
+@retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
+async def send_media_with_retries(update, media_group, caption):
+    try:
+        await update.message.reply_text(caption, parse_mode='HTML')
+        await update.message.reply_media_group(media=media_group)
+    except Exception as e:
+        logger.error(f"Failed to send media group: {e}")
+        raise  # Перекидываем исключение для повторных попыток
+
+async def send_media_group(update, media_group, caption):
+    if not media_group:
+        logger.error("Media group is empty")
         return
+    try:
+        await update.message.reply_text(caption, parse_mode='HTML')
+        await update.message.reply_media_group(media=media_group)
+    except Exception as e:
+        logger.error(f"Failed to send media group: {e}")
+        raise
 
-    # Поиск и отображение статьи по запросу
-    articles = find_articles(query)
-    results = []
-    for article in articles:
-        results.append(
-            InlineQueryResultArticle(
-                id=article['id'],
-                title=article['title'],
-                input_message_content=InputTextMessageContent(
-                    message_text=f"{article['title']}\n\n{article['content']}\n\n[Читать далее]({article['url']})"
-                ),
-                url=article['url'],
-                thumb_url=article['thumb_url']  # Если у вас есть изображение-миниатюра
-            )
-        )
-    await update.inline_query.answer(results, cache_time=1)
+async def publish(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.from_user.id
+    if user_id in user_data:
+        try:
+            author_name = user_data[user_id]['author_name']
+            author_link = user_data[user_id]['author_link']
+            images = user_data[user_id].get('images', [])
+            title = user_data[user_id].get('title', 'test')
 
-# Функция для поиска статей (пример)
-def find_articles(query: str):
-    # В этой функции вы должны реализовать логику поиска статей
-    # Здесь просто возвращаем пример данных
-    return [
-        {
-            'id': '1',
-            'title': 'Пример статьи',
-            'content': 'Это пример содержания статьи.',
-            'url': 'https://telegra.ph/example',
-            'thumb_url': 'https://example.com/thumbnail.jpg'
-        }
-    ]
+            # Создание статьи в Telegra.ph
+            content = [
+                {
+                    'tag': 'p',
+                    'children': [
+                        {
+                            'tag': 'a',
+                            'attrs': {'href': author_link},
+                            'children': [author_link]  # Используем URL как текст гиперссылки
+                        }
+                    ]
+                }
+            ]
 
-def main():
+            for index, image_url in enumerate(images):
+                content.append({'tag': 'img', 'attrs': {'src': image_url}})
+                if index < len(images) - 1:
+                    content.append({'tag': 'hr'})  # Горизонтальная линия-разделитель
+
+            # Добавляем текст с уменьшенным размером в конце статьи
+            content.append({'tag': 'hr'})  # Добавляем разделитель
+
+            content.append({
+    'tag': 'i',  # Тег для выделения текста курсивом
+    'children': ['Полноразмерные изображения доступны в браузере (три точки вверху этого окна)']
+})
+
+            response = requests.post('https://api.telegra.ph/createPage', json={
+                'access_token': TELEGRAPH_TOKEN,
+                'title': title,
+                'author_name': author_name,
+                'content': content
+            })
+            response.raise_for_status()  # Проверяем, что запрос выполнен успешно
+            response_json = response.json()
+
+            if response_json.get('ok'):
+                article_url = f"https://telegra.ph/{response_json['result']['path']}"
+                message_with_link = f'Автор: {author_name}\n<a href="{article_url}">Оригинал</a>'
+
+                if len(images) == 1:
+                    await update.message.reply_photo(
+                        photo=images[0],
+                        caption=message_with_link,
+                        parse_mode='HTML'
+                    )
+                elif len(images) > 1:
+                    media_group = [InputMediaPhoto(media=image) for image in images]
+
+                    # Вставьте проверку здесь
+                    if not media_group:
+                        logger.error("Media group is empty")
+                        await update.message.reply_text('Ошибка при отправке медиа.')
+                        return
+
+                    try:
+                        await send_media_group(update, media_group, message_with_link)
+                    except Exception as e:
+                        logger.error(f"Failed to send media group: {e}")
+                        await update.message.reply_text('Ошибка при отправке медиа.')
+
+                del user_data[user_id]
+                await update.message.reply_text(
+                    'Процесс завершен. Бот перезапущен успешно.',
+                    reply_markup=ReplyKeyboardRemove()
+                )
+                logger.info(f"User {user_id}'s data cleared and process completed.")
+                await start(update, context)
+                return ConversationHandler.END
+            else:
+                await update.message.reply_text('Ошибка при создании статьи.')
+        except requests.RequestException as e:
+            logger.error(f"Request error: {e}")
+            await update.message.reply_text('Ошибка при создании статьи.')
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            await update.message.reply_text('Произошла непредвиденная ошибка.')
+        
+        del user_data[user_id]
+        logger.info(f"Error occurred. User {user_id}'s data cleared.")
+        return ConversationHandler.END
+    else:
+        await update.message.reply_text('Ошибка: данные не найдены.')
+        return ConversationHandler.END
+
+async def unknown_message(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.from_user.id
+    if user_id not in user_data:
+        await update.message.reply_text('Неизвестное сообщение. Пожалуйста, отправьте ссылку на автора, имя автора или изображение. В случае если это сообщение повторяется нажмите /restart')
+    else:
+        # Обработка сообщений в процессе
+        if user_data[user_id]['status'] == 'awaiting_author_link':
+            await handle_author_link(update, context)
+        elif user_data[user_id]['status'] == 'awaiting_author_name':
+            await handle_author_name(update, context)
+        elif user_data[user_id]['status'] == 'awaiting_image':
+            await handle_image(update, context)
+
+
+def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Определение обработчиков
-    conv_handler = ConversationHandler(
+    # Настройка ConversationHandler
+    conversation_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, start)],
         states={
-            LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_link)],
-            AUTHOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_author)],
-            CONTENT: [MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.ALL, receive_content)],
-            IMAGE: [MessageHandler(filters.PHOTO | filters.Document.ALL, receive_content)],
-            RETRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, retry)],
+            ASKING_FOR_AUTHOR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_author_link)],
+            ASKING_FOR_AUTHOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_author_name)],
+            ASKING_FOR_IMAGE: [MessageHandler(filters.PHOTO | filters.Document.ALL, handle_image)]
         },
-        fallbacks=[CommandHandler('publish', publish_article), CommandHandler('cancel', cancel), CommandHandler('restart', restart), CommandHandler('retry', retry)],
+        fallbacks=[MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message)],
+        per_user=True
     )
 
-    application.add_handler(conv_handler)
-    application.add_handler(InlineQueryHandler(inline_query))
-
-    logger.info("Bot is starting...")
+    application.add_handler(CommandHandler('restart', restart))
+    application.add_handler(CommandHandler('publish', publish))
+    application.add_handler(conversation_handler)
+    logger.info("Bot started and polling...")
     application.run_polling()
 
 if __name__ == '__main__':
     main()
-    
