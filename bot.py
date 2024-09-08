@@ -18,7 +18,7 @@ TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
 IMGBB_API_KEY = 'fdd4c4ac12a927568f6bd0704d2553fa'
 
 # Состояния
-ASKING_FOR_AUTHOR_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE = range(3)
+ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE = range(3)
 
 # Сохранение данных состояния пользователя
 user_data = {}
@@ -32,11 +32,11 @@ async def start(update: Update, context: CallbackContext) -> int:
     if user_id not in user_data:
         logger.info(f"User {user_id} started the process.")
         await update.message.reply_text('Пожалуйста, отправьте ссылку на автора.\n \n В боте есть команда /restart которая перезапускает процесс на любом этапе')
-        user_data[user_id] = {'status': 'awaiting_author_link'}  # Инициализация данных для пользователя
-        return ASKING_FOR_AUTHOR_LINK
+        user_data[user_id] = {'status': 'awaiting_artist_link'}  # Инициализация данных для пользователя
+        return ASKING_FOR_ARTIST_LINK
     else:
-        if user_data[user_id]['status'] == 'awaiting_author_link':
-            return await handle_author_link(update, context)
+        if user_data[user_id]['status'] == 'awaiting_artist_link':
+            return await handle_artist_link(update, context)
         elif user_data[user_id]['status'] == 'awaiting_author_name':
             return await handle_author_name(update, context)
         elif user_data[user_id]['status'] == 'awaiting_image':
@@ -48,13 +48,13 @@ async def restart(update: Update, context: CallbackContext) -> int:
         del user_data[user_id]
     logger.info(f"User {user_id} restarted the process.")
     await update.message.reply_text('Процесс сброшен. Пожалуйста, начните заново. \n Отправьте ссылку на автора.')
-    user_data[user_id] = {'status': 'awaiting_author_link'}
-    return ASKING_FOR_AUTHOR_LINK
+    user_data[user_id] = {'status': 'awaiting_artist_link'}
+    return ASKING_FOR_ARTIST_LINK
 
-async def handle_author_link(update: Update, context: CallbackContext) -> int:
+async def handle_artist_link(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
-    if user_id in user_data and user_data[user_id]['status'] == 'awaiting_author_link':
-        user_data[user_id]['author_link'] = update.message.text
+    if user_id in user_data and user_data[user_id]['status'] == 'awaiting_artist_link':
+        user_data[user_id]['artist_link'] = update.message.text
         logger.info(f"User {user_id} provided author link: {update.message.text}")
         await update.message.reply_text('Теперь отправьте имя автора.')
         user_data[user_id]['status'] = 'awaiting_author_name'
@@ -70,7 +70,7 @@ async def handle_author_name(update: Update, context: CallbackContext) -> int:
         logger.info(f"User {user_id} provided author name: {update.message.text}")
         # Сохраняем имя автора как заголовок статьи
         user_data[user_id]['title'] = update.message.text
-        await update.message.reply_text('Теперь отправьте изображения или текст. Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст \n \n Текст поддерживает следущее форматирование: \n "тэг курсив: " \n "тэг жирный: " \n "тэг цитата: " \n "тэг цитата по центру: " \n "тэг разделитель" - горизонтальная линия по центру, служит для визуального отделения информации. Применяется отдельным сообщением \n "тэг заголовок: " \n \n Для их применения просто введите нужное слово в начале текстового сообщения к содержанию которого нужно применить данный тэг и отправьте это сообщение. К каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Так же вы можете начажать /restart для сброса')
+        await update.message.reply_text('Теперь отправьте изображения или текст. Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст \n \n Текст поддерживает следущее форматирование: \n "тэг курсив: " \n "тэг жирный: " \n "тэг цитата: " \n "тэг цитата по центру: " \n "тэг разделитель" - горизонтальная линия по центру, служит для визуального отделения информации. Применяется отдельным сообщением \n "тэг заголовок: " \n \n Для их применения просто введите нужное слово в начале текстового сообщения к содержанию которого нужно применить данный тэг и отправьте это сообщение. Каждое отдельное текстовое сообщение отправленное боту будет отображаться в статье как отдельный абзац, к каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Так же вы можете начажать /restart для сброса')
         user_data[user_id]['status'] = 'awaiting_image'
         return ASKING_FOR_IMAGE
     else:
@@ -242,10 +242,12 @@ async def publish(update: Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
     if user_id in user_data:
         try:
-            author_name = user_data[user_id]['author_name']
-            author_link = user_data[user_id]['author_link']
+            author_name = "Anemone"  # Установлено имя автора
+            author_link = "https://t.me/anemonn"  # Ссылка на автора
+            artist_link = user_data[user_id]['artist_link']
             media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'test')
+            
 
             # Создание статьи в Telegra.ph
             content = [
@@ -254,8 +256,8 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     'children': [
                         {
                             'tag': 'a',
-                            'attrs': {'href': author_link},
-                            'children': [author_link]  # Используем URL как текст гиперссылки
+                            'attrs': {'href': artist_link},
+                            'children': [artist_link]  # Используем URL как текст гиперссылки
                         }
                     ]
                 }
@@ -282,6 +284,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 'access_token': TELEGRAPH_TOKEN,
                 'title': title,
                 'author_name': author_name,
+                'author_url': author_link,  # Ссылка на автора
                 'content': content
             })
             response.raise_for_status()  # Проверяем, что запрос выполнен успешно
@@ -298,7 +301,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 # Подсчет количества изображений
                 image_count = sum(1 for item in article_data.get('result', {}).get('content', []) if item.get('tag') == 'img')
 
-                message_with_link = f'Автор: {author_name}\n<a href="{article_url}">Оригинал</a>'
+                message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
 
                 if image_count == 1:
                     # Если одно изображение
@@ -358,8 +361,8 @@ async def unknown_message(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text('Неизвестное сообщение. Пожалуйста, отправьте ссылку на автора, имя автора или изображение. В случае если это сообщение повторяется нажмите /restart')
     else:
         # Обработка сообщений в процессе
-        if user_data[user_id]['status'] == 'awaiting_author_link':
-            await handle_author_link(update, context)
+        if user_data[user_id]['status'] == 'awaiting_artist_link':
+            await handle_artist_link(update, context)
         elif user_data[user_id]['status'] == 'awaiting_author_name':
             await handle_author_name(update, context)
         elif user_data[user_id]['status'] == 'awaiting_image':
@@ -373,7 +376,7 @@ def main() -> None:
     conversation_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, start)],
         states={
-            ASKING_FOR_AUTHOR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_author_link)],
+            ASKING_FOR_ARTIST_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_artist_link)],
             ASKING_FOR_AUTHOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_author_name)],
             ASKING_FOR_IMAGE: [MessageHandler(filters.PHOTO | filters.Document.ALL, handle_image)]
         },
