@@ -13,7 +13,7 @@ from tenacity import retry, wait_fixed, stop_after_attempt, RetryError
 import tempfile
 
 # Укажите ваши токены и ключ для imgbb
-TELEGRAM_BOT_TOKEN = '7285680080:AAHAdaCNm-p-Bbo6JKwXyTzTzJn0bgEAYa0'
+TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
 IMGBB_API_KEY = 'e85f48364914e1d48547389b976574a3'
 
