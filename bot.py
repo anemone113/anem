@@ -275,7 +275,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
             content.append({'tag': 'hr'})  # Добавляем разделитель
             content.append({
                 'tag': 'i',  # Тег для выделения текста курсивом
-                'children': [f'Полноразмерные изображения доступны в браузере:']
+                'children': [f'Полноразмерные изображения доступны в браузере(три точки вверху)']
             })
 
             response = requests.post('https://api.telegra.ph/createPage', json={
