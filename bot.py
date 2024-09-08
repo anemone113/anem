@@ -74,7 +74,7 @@ async def handle_author_name(update: Update, context: CallbackContext) -> int:
         user_data[user_id]['status'] = 'awaiting_image'
         return ASKING_FOR_IMAGE
     else:
-        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте снова')
+        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте снова или нажмите /restart')
         return ConversationHandler.END
 
 def compress_image(file_path: str, output_path: str) -> None:
@@ -188,10 +188,10 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
                         user_data[user_id]['media'] = []
                     user_data[user_id]['media'].append({'type': 'image', 'url': image_url})
                     os.remove(file_path)  # Удаляем временный файл
-                    await update.message.reply_text('Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений если их больше чем одно. Или отправьте следующее изображение. \n\nЕсли желаете завершить публикацию введите /publish для завершения.')
+                    await update.message.reply_text('Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений если их больше чем одно. Или отправьте следующее изображение или текстовое сообщение. \n\nЕсли желаете завершить публикацию введите /publish для завершения.')
                     return ASKING_FOR_IMAGE
                 except Exception as e:
-                    await update.message.reply_text(f'Ошибка при загрузке изображения на imgbb: {str(e)}')
+                    await update.message.reply_text(f'Ошибка при загрузке изображения на imgbb: {str(e)} Можете попробовать прислать файл ещё раз или нажать /restart')
                     return ConversationHandler.END
             else:
                 await update.message.reply_text('Пожалуйста, отправьте изображение в формате JPG, PNG или GIF, без сжатия.')
@@ -208,7 +208,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG, PNG или GIF), без сжатия, или текст.')
             return ASKING_FOR_IMAGE
     else:
-        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте снова. /restart')
+        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте отправить снова. Или нажмите /restart')
         return ConversationHandler.END
 
 @retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
@@ -316,14 +316,14 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     # Вставьте проверку здесь
                     if not media_group:
                         logger.error("Media group is empty")
-                        await update.message.reply_text('Ошибка при отправке медиа.')
+                        await update.message.reply_text('Ошибка при отправке медиа. /restart')
                         return
 
                     try:
                         await send_media_group(update, media_group, message_with_link)
                     except Exception as e:
                         logger.error(f"Failed to send media group: {e}")
-                        await update.message.reply_text('Ошибка при отправке медиа.')
+                        await update.message.reply_text('Ошибка при отправке медиа. /restart')
 
                 # Отправляем сообщение с количеством изображений
                 await update.message.reply_text(f'В статье {image_count} изображений.')
@@ -337,19 +337,19 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 await start(update, context)
                 return ConversationHandler.END
             else:
-                await update.message.reply_text('Ошибка при создании статьи.')
+                await update.message.reply_text('Ошибка при создании статьи. /restart')
         except requests.RequestException as e:
             logger.error(f"Request error: {e}")
-            await update.message.reply_text('Ошибка при создании статьи.')
+            await update.message.reply_text('Ошибка при создании статьи. /restart')
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
-            await update.message.reply_text('Произошла непредвиденная ошибка.')
+            await update.message.reply_text('Произошла непредвиденная ошибка. /restart')
         
         del user_data[user_id]
         logger.info(f"Error occurred. User {user_id}'s data cleared.")
         return ConversationHandler.END
     else:
-        await update.message.reply_text('Ошибка: данные не найдены.')
+        await update.message.reply_text('Ошибка: данные не найдены. /restart')
         return ConversationHandler.END
 
 async def unknown_message(update: Update, context: CallbackContext) -> None:
