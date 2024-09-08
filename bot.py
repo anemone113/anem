@@ -15,7 +15,7 @@ import tempfile
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-IMGBB_API_KEY = 'e85f48364914e1d48547389b976574a3'
+IMGBB_API_KEY = 'fdd4c4ac12a927568f6bd0704d2553fa'
 
 # Состояния
 ASKING_FOR_AUTHOR_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE = range(3)
@@ -31,7 +31,7 @@ async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     if user_id not in user_data:
         logger.info(f"User {user_id} started the process.")
-        await update.message.reply_text('Пожалуйста, отправьте ссылку на автора. В боте есть команда /restart которая перезапускает процесс на любом этапе')
+        await update.message.reply_text('Пожалуйста, отправьте ссылку на автора.\n \n В боте есть команда /restart которая перезапускает процесс на любом этапе')
         user_data[user_id] = {'status': 'awaiting_author_link'}  # Инициализация данных для пользователя
         return ASKING_FOR_AUTHOR_LINK
     else:
@@ -47,7 +47,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
     if user_id in user_data:
         del user_data[user_id]
     logger.info(f"User {user_id} restarted the process.")
-    await update.message.reply_text('Процесс сброшен. Пожалуйста, начните заново. Отправьте ссылку на автора.')
+    await update.message.reply_text('Процесс сброшен. Пожалуйста, начните заново. \n Отправьте ссылку на автора.')
     user_data[user_id] = {'status': 'awaiting_author_link'}
     return ASKING_FOR_AUTHOR_LINK
 
@@ -70,7 +70,7 @@ async def handle_author_name(update: Update, context: CallbackContext) -> int:
         logger.info(f"User {user_id} provided author name: {update.message.text}")
         # Сохраняем имя автора как заголовок статьи
         user_data[user_id]['title'] = update.message.text
-        await update.message.reply_text('Теперь отправьте изображение (формат JPG, PNG или RAR для GIF) Дождитесь подтверждения загрузки ваших файлов. Крупные файлы могут грузиться около 2 минут. В случае ошибки введите /restart')
+        await update.message.reply_text('Теперь отправьте изображения или текст. Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст \n \n Текст поддерживает следущее форматирование: \n "тэг курсив: " \n "тэг жирный: " \n "тэг цитата: " \n "тэг цитата по центру: " \n "тэг разделитель" - горизонтальная линия по центру, служит для визуального отделения информации. Применяется отдельным сообщением \n "тэг заголовок: " \n \n Для их применения просто введите нужное слово в начале текстового сообщения к содержанию которого нужно применить данный тэг и отправьте это сообщение. К каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Так же вы можете начажать /restart для сброса')
         user_data[user_id]['status'] = 'awaiting_image'
         return ASKING_FOR_IMAGE
     else:
@@ -132,6 +132,23 @@ async def upload_image_to_imgbb(file_path: str) -> str:
                 else:
                     raise Exception(f"Ошибка загрузки на imgbb: {response.status}")
 
+def apply_markup(text: str) -> dict:
+    """Применяет разметку к тексту на основе команд и возвращает узел контента."""
+    text_lower = text.lower()  
+    if text_lower.startswith("тэг курсив: "):
+        return {"tag": "i", "children": [text[len("Тэг курсив: "):]]}
+    elif text_lower.startswith("тэг жирный: "):
+        return {"tag": "b", "children": [text[len("Тэг жирный: "):]]}
+    elif text_lower.startswith("тэг заголовок: "):
+        return {"tag": "h4", "children": [text[len("Тэг заголовок: "):]]}
+    elif text_lower.startswith("тэг цитата: "):
+        return {"tag": "blockquote", "children": [text[len("Тэг цитата: "):]]}
+    elif text_lower.startswith("тэг цитата по центру: "):
+        return {"tag": "aside", "children": [text[len("Тэг цитата по центру: "):]]}
+    elif text_lower.startswith("тэг разделитель"):
+        return {"tag": "hr"}
+    return text
+
 # Обновленная функция handle_image для обработки изображений
 async def handle_image(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
@@ -143,7 +160,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
             file_name = update.message.document.file_name
             file_ext = file_name.lower().split('.')[-1]
             file = await context.bot.get_file(update.message.document.file_id)
-            
+
             # Создаём временный файл
             with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_ext}') as tmp_file:
                 file_path = tmp_file.name
@@ -167,11 +184,11 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
                 try:
                     # Запускаем асинхронную загрузку изображений
                     image_url = await upload_image_to_imgbb(file_path)
-                    if 'images' not in user_data[user_id]:
-                        user_data[user_id]['images'] = []
-                    user_data[user_id]['images'].append(image_url)  # Сохраняем только URL
+                    if 'media' not in user_data[user_id]:
+                        user_data[user_id]['media'] = []
+                    user_data[user_id]['media'].append({'type': 'image', 'url': image_url})
                     os.remove(file_path)  # Удаляем временный файл
-                    await update.message.reply_text('Одно изображение добавлено. Дождитесь загрузки остальных изображений если их больше чем одно. Или отправьте следующее изображение. Если желаете завершить публикацию введите /publish для завершения.')
+                    await update.message.reply_text('Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений если их больше чем одно. Или отправьте следующее изображение. \n\nЕсли желаете завершить публикацию введите /publish для завершения.')
                     return ASKING_FOR_IMAGE
                 except Exception as e:
                     await update.message.reply_text(f'Ошибка при загрузке изображения на imgbb: {str(e)}')
@@ -179,11 +196,19 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
             else:
                 await update.message.reply_text('Пожалуйста, отправьте изображение в формате JPG, PNG или GIF, без сжатия.')
                 return ASKING_FOR_IMAGE
+        elif update.message.text:
+            # Обработка текстовых сообщений с разметкой
+            formatted_text = apply_markup(update.message.text)
+            if 'media' not in user_data[user_id]:
+                user_data[user_id]['media'] = []
+            user_data[user_id]['media'].append({'type': 'text', 'content': formatted_text})
+            await update.message.reply_text('Текст успешно добавлен. Вы можете отправить ещё текст или изображения. \n\n Либо завершить публикацию с помощью команды /publish.')
+            return ASKING_FOR_IMAGE
         else:
-            await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG, PNG или GIF), без сжатия.')
+            await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG, PNG или GIF), без сжатия, или текст.')
             return ASKING_FOR_IMAGE
     else:
-        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте снова')
+        await update.message.reply_text('Ошибка: данные не найдены. Попробуйте снова. /restart')
         return ConversationHandler.END
 
 @retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
@@ -219,7 +244,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
         try:
             author_name = user_data[user_id]['author_name']
             author_link = user_data[user_id]['author_link']
-            images = user_data[user_id].get('images', [])
+            media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'test')
 
             # Создание статьи в Telegra.ph
@@ -236,18 +261,22 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 }
             ]
 
-            for index, image_url in enumerate(images):
-                content.append({'tag': 'img', 'attrs': {'src': image_url}})
-                if index < len(images) - 1:
-                    content.append({'tag': 'hr'})  # Горизонтальная линия-разделитель
+            # Добавление изображений с разделителями
+            for index, item in enumerate(media):
+                if item['type'] == 'text':
+                    content.append({'tag': 'p', 'children': [item['content']]})
+                elif item['type'] == 'image':
+                    content.append({'tag': 'img', 'attrs': {'src': item['url']}})
+                    # Добавляем горизонтальный разделитель, если это не последнее изображение
+                    if index < len(media) - 1:
+                        content.append({'tag': 'hr'})
 
             # Добавляем текст с уменьшенным размером в конце статьи
             content.append({'tag': 'hr'})  # Добавляем разделитель
-
             content.append({
-    'tag': 'i',  # Тег для выделения текста курсивом
-    'children': ['Полноразмерные изображения доступны в браузере (три точки вверху этого окна)']
-})
+                'tag': 'i',  # Тег для выделения текста курсивом
+                'children': [f'Полноразмерные изображения доступны в браузере:']
+            })
 
             response = requests.post('https://api.telegra.ph/createPage', json={
                 'access_token': TELEGRAPH_TOKEN,
@@ -260,16 +289,29 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
             if response_json.get('ok'):
                 article_url = f"https://telegra.ph/{response_json['result']['path']}"
+
+                # Получение списка содержимого статьи
+                article_response = requests.get(f'https://api.telegra.ph/getPage?access_token={TELEGRAPH_TOKEN}&path={response_json["result"]["path"]}&return_content=true')
+                article_response.raise_for_status()
+                article_data = article_response.json()
+
+                # Подсчет количества изображений
+                image_count = sum(1 for item in article_data.get('result', {}).get('content', []) if item.get('tag') == 'img')
+
                 message_with_link = f'Автор: {author_name}\n<a href="{article_url}">Оригинал</a>'
 
-                if len(images) == 1:
-                    await update.message.reply_photo(
-                        photo=images[0],
-                        caption=message_with_link,
-                        parse_mode='HTML'
-                    )
-                elif len(images) > 1:
-                    media_group = [InputMediaPhoto(media=image) for image in images]
+                if image_count == 1:
+                    # Если одно изображение
+                    single_image = next((item for item in media if item['type'] == 'image'), None)
+                    if single_image:
+                        await update.message.reply_photo(
+                            photo=single_image['url'],
+                            caption=message_with_link,
+                            parse_mode='HTML'
+                        )
+                elif image_count > 1:
+                    # Если несколько изображений
+                    media_group = [InputMediaPhoto(media=item['url']) for item in media if item['type'] == 'image']
 
                     # Вставьте проверку здесь
                     if not media_group:
@@ -282,6 +324,9 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     except Exception as e:
                         logger.error(f"Failed to send media group: {e}")
                         await update.message.reply_text('Ошибка при отправке медиа.')
+
+                # Отправляем сообщение с количеством изображений
+                await update.message.reply_text(f'В статье {image_count} изображений.')
 
                 del user_data[user_id]
                 await update.message.reply_text(
