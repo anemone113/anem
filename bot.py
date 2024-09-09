@@ -1,6 +1,7 @@
 from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
 from PIL import Image
+from telegram.constants import ParseMode
 from tenacity import retry, wait_fixed, stop_after_attempt
 import asyncio
 import requests
@@ -53,11 +54,10 @@ async def restart(update: Update, context: CallbackContext) -> int:
     return ASKING_FOR_ARTIST_LINK
 
 HELP_TEXT = """
-Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст. Текст поддерживает следующие тэги(без кавычек): \n \n"***" - горизонтальная линия по центру, служит для визуального отделения информации. Для применения отправить *** отдельным сообщением и в этом месте в статье телеграф появится горизонтальный разделитель\n "(ссылка)[текст ссылки] - гиперссылка \n \n "_любой текст_" - курсив \n "*любой текст*" - жирный текст \n Этими тэгами можно выделить абсолютно любое слово или слова в тексте и они будут жирными или курсивными \n \n  "тэг цитата: "  \n "тэг цитата по центру: "  \n "тэг заголовок: "  \n "тэг большой заголовок: "  \n  Эти тэги применяются на всё сообщение целиком, для их применения просто введите в начале сообщения нужный тэг. Каждое отдельное текстовое сообщение отправленное боту будет отображаться в статье как отдельный абзац, к каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Например сообщение: \n "тэг цитата: *Волк* никогда не будет жить в _загоне_, но загоны всегда будут жить в *волке*"\n В телеграфе будет выглядеть как цитата в которой слово "волк" выделено жирным, а "загоне" - курсивом
-"""
+```Python
+        "Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст.\n Текст поддерживает следующие тэги (без кавычек)\: \n \n \"\*\*\*\" \- горизонтальная линия по центру, служит для визуального отделения информации. Для применения отправить \*\*\* отдельным сообщением и в этом месте в статье телеграф появится горизонтальный разделитель \n \n \"\_любой текст\_\" \- курсив \n \"\*любой текст\*\" - жирный текст \n \"\(ссылка\)\[текст ссылки\]\" \- гиперссылка \n Этими тэгами можно выделить абсолютно любое слово или слова в вашем сообщении и они будут жирными или курсивными, либо сформируют гиперссылку с кликабельным текстом \n \n \"видео\: \" \- ссылка на vimeo или ютуб \n \"цитата\: \"  \n \"цитата по центру\: \"  \n \"заголовок\: \"  \n \"подзаголовок\: \"  \n  Эти тэги применяются на всё сообщение целиком, для их применения просто введите в начале сообщения нужный тэг. Каждое отдельное текстовое сообщение отправленное боту будет отображаться в статье как отдельный абзац, к каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Например сообщение\:\(без кавычек\) \n \"тэг цитата\: \*Волк\* никогда не будет жить в \_загоне\_, но загоны всегда будут жить в \*волке\*\"\n В телеграфе будет выглядеть как цитата в которой слово \"волк\" выделено жирным, а \"загоне\" \- курсивом\n\n Или например текст \"видео\: \(сылка на видео ютуб или вимео начинающаяся с https\)\" \- отправленный отдельным сообщением, будет отображаться как интерактивное видео в статье телеграф\n```\n""" 
 
-async def help_command(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text(HELP_TEXT)
+async def help_command(update: Update, context: CallbackContext) -> None: await update.message.reply_text( HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2 )
 
 async def handle_artist_link(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
@@ -140,27 +140,7 @@ async def upload_image_to_imgbb(file_path: str) -> str:
                 else:
                     raise Exception(f"Ошибка загрузки на imgbb: {response.status}")
 
-# Определяем разметку тегов
-markup_tags = {
-    '*': 'strong',  # Жирный текст
-    '_': 'em',      # Курсив
-}
-
-def apply_markup(text: str) -> dict:
-    """Применяет разметку к тексту на основе команд и возвращает узел контента в формате Telegra.ph."""
-    
-    # Обрабатываем гиперссылки по маске (ссылка)[текст]
-    # Регулярное выражение для поиска гиперссылок
-    link_regex = re.compile(r'\((.*?)\)\[(.*?)\]', re.DOTALL)
-    
-    # Сначала обрабатываем гиперссылки
-    if link_regex.search(text):
-        content = apply_markup_to_content(text)
-        return {"tag": "p", "children": content}
-
-    # Обрабатываем другие команды
-    content = apply_markup_to_content(text)
-    return {"tag": "p", "children": content}
+import re
 
 # Определяем разметку тегов
 markup_tags = {
@@ -174,24 +154,66 @@ def apply_markup(text: str) -> dict:
     text_lower = text.lower()
 
     # Обработка команд
-    if text_lower.startswith("тэг заголовок: "):
-        content = text[len("Тэг заголовок: "):]
+    if text_lower.startswith("подзаголовок: "):
+        content = text[len("Подзаголовок: "):]
         content = apply_markup_to_content(content)
         return {"tag": "h4", "children": content}
-    elif text_lower.startswith("тэг цитата: "):
-        content = text[len("Тэг цитата: "):]
+    elif text_lower.startswith("цитата: "):
+        content = text[len("Цитата: "):]
         content = apply_markup_to_content(content)
         return {"tag": "blockquote", "children": content}
-    elif text_lower.startswith("тэг большой заголовок: "):
-        content = text[len("Тэг большой заголовок: "):]
+    elif text_lower.startswith("заголовок: "):
+        content = text[len("Заголовок: "):]
         content = apply_markup_to_content(content)
         return {"tag": "h3", "children": content}
-    elif text_lower.startswith("тэг цитата по центру: "):
-        content = text[len("Тэг цитата по центру: "):]
+    elif text_lower.startswith("цитата по центру: "):
+        content = text[len("Цитата по центру: "):]
         content = apply_markup_to_content(content)
         return {"tag": "aside", "children": content}
     elif text_lower.startswith("***"):
         return {"tag": "hr"}
+    elif text_lower.startswith("видео: "):
+        video_url = text[len("Видео: "):].strip()
+        # Кодируем URL, чтобы он подходил для использования в src
+        encoded_url = re.sub(r'https://', 'https%3A%2F%2F', video_url)
+        
+        # Проверяем, это YouTube или Vimeo
+        if "youtube.com" in video_url or "youtu.be" in video_url:
+            return {
+                "tag": "figure",
+                "children": [
+                    {
+                        "tag": "iframe",
+                        "attrs": {
+                            "src": f"/embed/youtube?url={encoded_url}",
+                            "width": 640,
+                            "height": 360,
+                            "frameborder": 0,
+                            "allowtransparency": "true",
+                            "allowfullscreen": "true",
+                            "scrolling": "no"
+                        }
+                    }
+                ]
+            }
+        elif "vimeo.com" in video_url:
+            return {
+                "tag": "figure",
+                "children": [
+                    {
+                        "tag": "iframe",
+                        "attrs": {
+                            "src": f"/embed/vimeo?url={encoded_url}",
+                            "width": 640,
+                            "height": 360,
+                            "frameborder": 0,
+                            "allowtransparency": "true",
+                            "allowfullscreen": "true",
+                            "scrolling": "no"
+                        }
+                    }
+                ]
+            }
 
     # Если команда не распознана, обрабатываем текст с разметкой
     content = apply_markup_to_content(text)
@@ -382,7 +404,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
             content.append({'tag': 'hr'})  # Добавляем разделитель
             content.append({
                 'tag': 'i',  # Тег для выделения текста курсивом
-                'children': [f'Полноразмерные изображения доступны в браузере(три точки вверху)']
+                'children': [f'Оригиналы доступны в браузере через меню (⋮)']
             })
 
             response = requests.post('https://api.telegra.ph/createPage', json={
