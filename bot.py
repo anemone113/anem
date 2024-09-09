@@ -11,6 +11,7 @@ import io
 import aiohttp
 from tenacity import retry, wait_fixed, stop_after_attempt, RetryError
 import tempfile
+import re
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
@@ -51,6 +52,13 @@ async def restart(update: Update, context: CallbackContext) -> int:
     user_data[user_id] = {'status': 'awaiting_artist_link'}
     return ASKING_FOR_ARTIST_LINK
 
+HELP_TEXT = """
+Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст. Текст поддерживает следующие тэги(без кавычек): \n \n"***" - горизонтальная линия по центру, служит для визуального отделения информации. Для применения отправить *** отдельным сообщением и в этом месте в статье телеграф появится горизонтальный разделитель\n "(ссылка)[текст ссылки] - гиперссылка \n \n "_любой текст_" - курсив \n "*любой текст*" - жирный текст \n Этими тэгами можно выделить абсолютно любое слово или слова в тексте и они будут жирными или курсивными \n \n  "тэг цитата: "  \n "тэг цитата по центру: "  \n "тэг заголовок: "  \n "тэг большой заголовок: "  \n  Эти тэги применяются на всё сообщение целиком, для их применения просто введите в начале сообщения нужный тэг. Каждое отдельное текстовое сообщение отправленное боту будет отображаться в статье как отдельный абзац, к каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Например сообщение: \n "тэг цитата: *Волк* никогда не будет жить в _загоне_, но загоны всегда будут жить в *волке*"\n В телеграфе будет выглядеть как цитата в которой слово "волк" выделено жирным, а "загоне" - курсивом
+"""
+
+async def help_command(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text(HELP_TEXT)
+
 async def handle_artist_link(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     if user_id in user_data and user_data[user_id]['status'] == 'awaiting_artist_link':
@@ -70,7 +78,7 @@ async def handle_author_name(update: Update, context: CallbackContext) -> int:
         logger.info(f"User {user_id} provided author name: {update.message.text}")
         # Сохраняем имя автора как заголовок статьи
         user_data[user_id]['title'] = update.message.text
-        await update.message.reply_text('Теперь отправьте изображения или текст. Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст \n \n Текст поддерживает следущее форматирование: \n "тэг курсив: " \n "тэг жирный: " \n "тэг цитата: " \n "тэг цитата по центру: " \n "тэг разделитель" - горизонтальная линия по центру, служит для визуального отделения информации. Применяется отдельным сообщением \n "тэг заголовок: " \n \n Для их применения просто введите нужное слово в начале текстового сообщения к содержанию которого нужно применить данный тэг и отправьте это сообщение. Каждое отдельное текстовое сообщение отправленное боту будет отображаться в статье как отдельный абзац, к каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Так же вы можете начажать /restart для сброса')
+        await update.message.reply_text('Теперь отправьте изображения или текст. \n \n Текст поддерживает различное форматирование. Для получения помощи введите /help  \n \n Так же вы можете начажать /restart для сброса')
         user_data[user_id]['status'] = 'awaiting_image'
         return ASKING_FOR_IMAGE
     else:
@@ -132,22 +140,119 @@ async def upload_image_to_imgbb(file_path: str) -> str:
                 else:
                     raise Exception(f"Ошибка загрузки на imgbb: {response.status}")
 
+# Определяем разметку тегов
+markup_tags = {
+    '*': 'strong',  # Жирный текст
+    '_': 'em',      # Курсив
+}
+
 def apply_markup(text: str) -> dict:
-    """Применяет разметку к тексту на основе команд и возвращает узел контента."""
-    text_lower = text.lower()  
-    if text_lower.startswith("тэг курсив: "):
-        return {"tag": "i", "children": [text[len("Тэг курсив: "):]]}
-    elif text_lower.startswith("тэг жирный: "):
-        return {"tag": "b", "children": [text[len("Тэг жирный: "):]]}
-    elif text_lower.startswith("тэг заголовок: "):
-        return {"tag": "h4", "children": [text[len("Тэг заголовок: "):]]}
+    """Применяет разметку к тексту на основе команд и возвращает узел контента в формате Telegra.ph."""
+    
+    # Обрабатываем гиперссылки по маске (ссылка)[текст]
+    # Регулярное выражение для поиска гиперссылок
+    link_regex = re.compile(r'\((.*?)\)\[(.*?)\]', re.DOTALL)
+    
+    # Сначала обрабатываем гиперссылки
+    if link_regex.search(text):
+        content = apply_markup_to_content(text)
+        return {"tag": "p", "children": content}
+
+    # Обрабатываем другие команды
+    content = apply_markup_to_content(text)
+    return {"tag": "p", "children": content}
+
+# Определяем разметку тегов
+markup_tags = {
+    '*': 'strong',  # Жирный текст
+    '_': 'em',      # Курсив
+}
+
+def apply_markup(text: str) -> dict:
+    """Применяет разметку к тексту на основе команд и возвращает узел контента в формате Telegra.ph."""
+    
+    text_lower = text.lower()
+
+    # Обработка команд
+    if text_lower.startswith("тэг заголовок: "):
+        content = text[len("Тэг заголовок: "):]
+        content = apply_markup_to_content(content)
+        return {"tag": "h4", "children": content}
     elif text_lower.startswith("тэг цитата: "):
-        return {"tag": "blockquote", "children": [text[len("Тэг цитата: "):]]}
+        content = text[len("Тэг цитата: "):]
+        content = apply_markup_to_content(content)
+        return {"tag": "blockquote", "children": content}
+    elif text_lower.startswith("тэг большой заголовок: "):
+        content = text[len("Тэг большой заголовок: "):]
+        content = apply_markup_to_content(content)
+        return {"tag": "h3", "children": content}
     elif text_lower.startswith("тэг цитата по центру: "):
-        return {"tag": "aside", "children": [text[len("Тэг цитата по центру: "):]]}
-    elif text_lower.startswith("тэг разделитель"):
+        content = text[len("Тэг цитата по центру: "):]
+        content = apply_markup_to_content(content)
+        return {"tag": "aside", "children": content}
+    elif text_lower.startswith("***"):
         return {"tag": "hr"}
-    return text
+
+    # Если команда не распознана, обрабатываем текст с разметкой
+    content = apply_markup_to_content(text)
+    return {"tag": "div", "children": content}
+
+def apply_markup_to_content(content: str) -> list:
+    """Обрабатывает разметку в тексте и возвращает список узлов для Telegra.ph."""
+    nodes = []
+
+    # Регулярные выражения для разметки
+    regex_markup = re.compile(r'(\*|_)(.*?)\1', re.DOTALL)
+    link_regex = re.compile(r'\((.*?)\)\[(.*?)\]', re.DOTALL)
+
+    # Сначала обрабатываем гиперссылки
+    if link_regex.search(content):
+        content = process_links(content)
+
+    pos = 0
+    for match in regex_markup.finditer(content):
+        # Добавляем текст до текущего совпадения
+        if pos < match.start():
+            nodes.append(content[pos:match.start()])
+
+        # Определяем тег и добавляем узел
+        tag = markup_tags.get(match.group(1))
+        if tag:
+            text = match.group(2)
+            nodes.append({"tag": tag, "children": [text]})
+
+        # Обновляем позицию
+        pos = match.end()
+
+    # Добавляем оставшийся текст
+    if pos < len(content):
+        nodes.append(content[pos:])
+
+    return nodes
+
+def process_links(content: str) -> list:
+    """Обрабатывает текст, заменяя ссылки на элементы <a>."""
+    nodes = []
+    link_regex = re.compile(r'\((.*?)\)\[(.*?)\]', re.DOTALL)
+    
+    pos = 0
+    for match in link_regex.finditer(content):
+        # Добавляем текст до текущего совпадения
+        nodes.append(content[pos:match.start()])
+
+        # Добавляем узел ссылки
+        url, link_text = match.groups()
+        nodes.append({"tag": "a", "attrs": {"href": url}, "children": [{"tag": "text", "children": [link_text]}]})
+
+        # Обновляем позицию
+        pos = match.end()
+
+    # Добавляем оставшийся текст
+    if pos < len(content):
+        nodes.append(content[pos:])
+
+    return nodes
+
 
 # Обновленная функция handle_image для обработки изображений
 async def handle_image(update: Update, context: CallbackContext) -> int:
@@ -188,7 +293,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
                         user_data[user_id]['media'] = []
                     user_data[user_id]['media'].append({'type': 'image', 'url': image_url})
                     os.remove(file_path)  # Удаляем временный файл
-                    await update.message.reply_text('Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений если их больше чем одно. Или отправьте следующее изображение или текстовое сообщение. \n\nЕсли желаете завершить публикацию введите /publish для завершения.')
+                    await update.message.reply_text('Одно изображение добавлено.\n\n Если желаете завершить публикацию введите /publish для завершения.')
                     return ASKING_FOR_IMAGE
                 except Exception as e:
                     await update.message.reply_text(f'Ошибка при загрузке изображения на imgbb: {str(e)} Можете попробовать прислать файл ещё раз или нажать /restart')
@@ -298,35 +403,40 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 article_response.raise_for_status()
                 article_data = article_response.json()
 
-                # Подсчет количества изображений
+                              # Подсчет количества изображений
                 image_count = sum(1 for item in article_data.get('result', {}).get('content', []) if item.get('tag') == 'img')
 
-                message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                if image_count > 1:
+                    message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                    await update.message.reply_text(message_with_link, parse_mode='HTML')
 
-                if image_count == 1:
-                    # Если одно изображение
+                    media_groups = [media[i:i + 10] for i in range(0, len(media), 10)]
+
+                    for group in media_groups:
+                        media_group = [InputMediaPhoto(media=item['url']) for item in group if item['type'] == 'image']
+
+                        # Вставьте проверку здесь
+                        if not media_group:
+                            logger.error("Media group is empty")
+                            await update.message.reply_text('Ошибка при отправке медиа. /restart')
+                            return
+
+                        try:
+                            await update.message.reply_media_group(media_group)
+                        except Exception as e:
+                            logger.error(f"Failed to send media group: {e}")
+                            await update.message.reply_text('Ошибка при отправке медиа. /restart')
+
+                elif image_count == 1:
+                    # Если одно изображение, отправляем одно сообщение с изображением и ссылкой
                     single_image = next((item for item in media if item['type'] == 'image'), None)
                     if single_image:
                         await update.message.reply_photo(
                             photo=single_image['url'],
-                            caption=message_with_link,
+                            caption=f'Автор: {title}\n<a href="{article_url}">Оригинал</a>',
                             parse_mode='HTML'
                         )
-                elif image_count > 1:
-                    # Если несколько изображений
-                    media_group = [InputMediaPhoto(media=item['url']) for item in media if item['type'] == 'image']
 
-                    # Вставьте проверку здесь
-                    if not media_group:
-                        logger.error("Media group is empty")
-                        await update.message.reply_text('Ошибка при отправке медиа. /restart')
-                        return
-
-                    try:
-                        await send_media_group(update, media_group, message_with_link)
-                    except Exception as e:
-                        logger.error(f"Failed to send media group: {e}")
-                        await update.message.reply_text('Ошибка при отправке медиа. /restart')
 
                 # Отправляем сообщение с количеством изображений
                 await update.message.reply_text(f'В статье {image_count} изображений.')
@@ -385,6 +495,7 @@ def main() -> None:
     )
 
     application.add_handler(CommandHandler('restart', restart))
+    application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CommandHandler('publish', publish))
     application.add_handler(conversation_handler)
     logger.info("Bot started and polling...")
