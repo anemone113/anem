@@ -18,12 +18,14 @@ import re
 TELEGRAM_BOT_TOKEN = '7538468672:AAGRzsQVHQ1mzXgQuBbZjSA4FezIirJxjRA'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
 IMGBB_API_KEY = 'fdd4c4ac12a927568f6bd0704d2553fa'
+GROUP_CHAT_ID = -1002233281756
 
 # Состояния
 ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE = range(3)
 
 # Сохранение данных состояния пользователя
 user_data = {}
+publish_data = {}
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -55,7 +57,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
 
 HELP_TEXT = """
 ```Python
-        "Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст.\n Текст поддерживает следующие тэги (без кавычек)\: \n \n \"\*\*\*\" \- горизонтальная линия по центру, служит для визуального отделения информации. Для применения отправить \*\*\* отдельным сообщением и в этом месте в статье телеграф появится горизонтальный разделитель \n \n \"\_любой текст\_\" \- курсив \n \"\*любой текст\*\" - жирный текст \n \"\(ссылка\)\[текст ссылки\]\" \- гиперссылка \n Этими тэгами можно выделить абсолютно любое слово или слова в вашем сообщении и они будут жирными или курсивными, либо сформируют гиперссылку с кликабельным текстом \n \n \"видео\: \" \- ссылка на vimeo или ютуб \n \"цитата\: \"  \n \"цитата по центру\: \"  \n \"заголовок\: \"  \n \"подзаголовок\: \"  \n  Эти тэги применяются на всё сообщение целиком, для их применения просто введите в начале сообщения нужный тэг. Каждое отдельное текстовое сообщение отправленное боту будет отображаться в статье как отдельный абзац, к каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Например сообщение\:\(без кавычек\) \n \"тэг цитата\: \*Волк\* никогда не будет жить в \_загоне\_, но загоны всегда будут жить в \*волке\*\"\n В телеграфе будет выглядеть как цитата в которой слово \"волк\" выделено жирным, а \"загоне\" \- курсивом\n\n Или например текст \"видео\: \(сылка на видео ютуб или вимео начинающаяся с https\)\" \- отправленный отдельным сообщением, будет отображаться как интерактивное видео в статье телеграф\n```\n""" 
+        "Статья телеграф будет формироваться именно в той последовательности в которой вы будете присылать файлы изображений и/или текст.\n Текст поддерживает следующие тэги (без кавычек)\: \n \n \"\*\*\*\" \- горизонтальная линия по центру, служит для визуального отделения информации. Для применения отправить \*\*\* отдельным сообщением и в этом месте в статье телеграф появится горизонтальный разделитель \n \n \"\_любой текст\_\" \- курсив \n \"\*любой текст\*\" - жирный текст \n \"\(ссылка\)\[текст ссылки\]\" \- гиперссылка \n Этими тэгами можно выделить абсолютно любое слово или слова в вашем сообщении и они будут жирными или курсивными, либо сформируют гиперссылку с кликабельным текстом \n \n \"видео\: \" \- ссылка на vimeo или ютуб \n \"цитата\: \"  \n \"цитата по центру\: \"  \n \"заголовок\: \"  \n \"подзаголовок\: \"  \n  Эти тэги применяются на всё сообщение целиком, для их применения просто введите в начале сообщения нужный тэг. Каждое отдельное текстовое сообщение отправленное боту будет отображаться в статье как отдельный абзац, к каждому новому сообщению можно применить уникальный тэг при необходимости. Сообщение без тэга будет обычным текстом \n \n Например сообщение\:\(без кавычек\) \n \"тэг цитата\: \*Волк\* никогда не будет жить в \_загоне\_, но загоны всегда будут жить в \*волке\*\"\n В телеграфе будет выглядеть как цитата в которой слово \"волк\" выделено жирным, а \"загоне\" \- курсивом\n\n Или например текст \"видео\: сылка на видео ютуб или вимео начинающаяся с https\" \- отправленный отдельным сообщением, будет отображаться как интерактивное видео в статье телеграф\n```\n""" 
 
 async def help_command(update: Update, context: CallbackContext) -> None: await update.message.reply_text( HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2 )
 
@@ -281,7 +283,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     if user_id in user_data and user_data[user_id]['status'] == 'awaiting_image':
         if update.message.photo:
-            await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG или PNG), без сжатия.')
+            await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG, PNG или RAR для  GIF), без сжатия.')
             return ASKING_FOR_IMAGE
         elif update.message.document:
             file_name = update.message.document.file_name
@@ -374,7 +376,6 @@ async def publish(update: Update, context: CallbackContext) -> None:
             artist_link = user_data[user_id]['artist_link']
             media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'test')
-            
 
             # Создание статьи в Telegra.ph
             content = [
@@ -425,7 +426,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 article_response.raise_for_status()
                 article_data = article_response.json()
 
-                              # Подсчет количества изображений
+                # Подсчет количества изображений
                 image_count = sum(1 for item in article_data.get('result', {}).get('content', []) if item.get('tag') == 'img')
 
                 if image_count > 1:
@@ -459,9 +460,15 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             parse_mode='HTML'
                         )
 
-
                 # Отправляем сообщение с количеством изображений
                 await update.message.reply_text(f'В статье {image_count} изображений.')
+
+                # Сохраняем данные для команды /suggest
+                publish_data[user_id] = {
+                    'title': title,
+                    'article_url': article_url,
+                    'image_count': image_count
+                }
 
                 del user_data[user_id]
                 await update.message.reply_text(
@@ -479,7 +486,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             await update.message.reply_text('Произошла непредвиденная ошибка. /restart')
-        
+
         del user_data[user_id]
         logger.info(f"Error occurred. User {user_id}'s data cleared.")
         return ConversationHandler.END
@@ -500,6 +507,46 @@ async def unknown_message(update: Update, context: CallbackContext) -> None:
         elif user_data[user_id]['status'] == 'awaiting_image':
             await handle_image(update, context)
 
+async def suggest(update: Update, context: CallbackContext) -> None:
+    global publish_data
+    user_id = update.message.from_user.id
+    if user_id in publish_data:
+        data = publish_data[user_id]
+        title = data['title']
+        article_url = data['article_url']
+        
+        try:
+            # Получаем содержимое статьи
+            article_response = requests.get(f'https://api.telegra.ph/getPage?path={article_url.split("/")[-1]}&return_content=true')
+            article_response.raise_for_status()
+            article_data = article_response.json()
+
+            # Ищем все изображения в контенте
+            images = []
+            for node in article_data['result']['content']:
+                if node['tag'] == 'img' and 'attrs' in node and 'src' in node['attrs']:
+                    images.append(node['attrs']['src'])
+            
+            # Отправляем первое сообщение с текстом в группу
+            message_with_link = f'Пользователь {update.message.from_user.username} предложил:\nАвтор: {title}\n<a href="{article_url}">Оригинал</a>'
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_with_link, parse_mode='HTML')
+            
+            # Если есть изображения, отправляем их как медиагруппу в группу
+            if images:
+                media_group = [InputMediaPhoto(image) for image in images]
+                await context.bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media_group)
+            else:
+                await context.bot.send_message(chat_id=GROUP_CHAT_ID, text='Изображений в статье нет.')
+
+            # Сообщение об успешной отправке предложения в личный диалог с пользователем
+            await update.message.reply_text('Ваше предложение отправлено в группу!')
+        except Exception as e:
+            logger.error(f"Failed to process article: {e}")
+            await update.message.reply_text('Ошибка при обработке статьи. /restart')
+    else:
+        await update.message.reply_text('Нет данных для предложения.')
+
+
 
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -519,6 +566,7 @@ def main() -> None:
     application.add_handler(CommandHandler('restart', restart))
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CommandHandler('publish', publish))
+    application.add_handler(CommandHandler('suggest', suggest))  # Добавляем обработчик для /suggest
     application.add_handler(conversation_handler)
     logger.info("Bot started and polling...")
     application.run_polling()
