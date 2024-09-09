@@ -454,10 +454,6 @@ async def publish(update: Update, context: CallbackContext) -> None:
             if response_json.get('ok'):
                 article_url = f"https://telegra.ph/{response_json['result']['path']}"
 
-                # Отправляем ссылку на статью в любом случае
-                message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
-                await update.message.reply_text(message_with_link, parse_mode='HTML')
-
                 # Получение данных статьи
                 article_response = requests.get(f'https://api.telegra.ph/getPage?access_token={TELEGRAPH_TOKEN}&path={response_json["result"]["path"]}&return_content=true')
                 article_response.raise_for_status()
@@ -466,10 +462,10 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 # Подсчет количества изображений
                 image_count = sum(1 for item in article_data.get('result', {}).get('content', []) if item.get('tag') == 'img')
 
-                # Отправляем сообщение с количеством изображений
+                # Отправка изображений, если они есть
                 if image_count > 1:
-                    await update.message.reply_text(f'В статье {image_count} изображений.')
-                    
+                    message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                    await update.message.reply_text(message_with_link, parse_mode='HTML')
                     media_groups = [media[i:i + 10] for i in range(0, len(media), 10)]
                     for group in media_groups:
                         media_group = [InputMediaPhoto(media=item['url']) for item in group if item['type'] == 'image']
@@ -481,7 +477,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             return
 
                 elif image_count == 1:
-                    # Если одно изображение, отправляем одно сообщение с изображением и ссылкой
+                    # Если одно изображение, отправляем одно сообщение с изображением
                     single_image = next((item for item in media if item['type'] == 'image'), None)
                     if single_image:
                         caption = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
@@ -497,7 +493,11 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
                 elif image_count == 0:
                     # Если нет изображений
-                    await update.message.reply_text('В статье нет изображений.')
+                    message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                    await update.message.reply_text(message_with_link, parse_mode='HTML')
+
+                # Отправка сообщения с количеством изображений
+                await update.message.reply_text(f'В статье {image_count} изображений.')
 
                 # Сохранение данных
                 publish_data[user_id] = {
