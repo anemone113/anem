@@ -367,12 +367,46 @@ async def send_media_group(update, media_group, caption):
         logger.error(f"Failed to send media group: {e}")
         raise
 
+async def send_media_group_with_retries(update, media_group, max_retries=3, delay=2):
+    retries = 0
+    while retries < max_retries:
+        try:
+            await update.message.reply_media_group(media_group)
+            return True  # Успешная отправка
+        except Exception as e:
+            logger.error(f"Failed to send media group: {e}")
+            retries += 1
+            if retries < max_retries:
+                logger.info(f"Retrying in {delay} seconds... (Attempt {retries}/{max_retries})")
+                await asyncio.sleep(delay)
+    return False  # Если все попытки не удались
+
+# Метод для отправки одного изображения с повторными попытками и задержкой
+async def send_photo_with_retries(update, photo_url, caption, parse_mode, max_retries=3, delay=2):
+    retries = 0
+    while retries < max_retries:
+        try:
+            await update.message.reply_photo(
+                photo=photo_url,
+                caption=caption,
+                parse_mode=parse_mode
+            )
+            return True  # Успешная отправка
+        except Exception as e:
+            logger.error(f"Failed to send photo: {e}")
+            retries += 1
+            if retries < max_retries:
+                logger.info(f"Retrying in {delay} seconds... (Attempt {retries}/{max_retries})")
+                await asyncio.sleep(delay)
+    return False  # Если все попытки не удались
+
+# Основная функция публикации
 async def publish(update: Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
     if user_id in user_data:
         try:
-            author_name = "Anemone"  # Установлено имя автора
-            author_link = "https://t.me/anemonn"  # Ссылка на автора
+            author_name = "Anemone"
+            author_link = "https://t.me/anemonn"
             artist_link = user_data[user_id]['artist_link']
             media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'test')
@@ -385,7 +419,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                         {
                             'tag': 'a',
                             'attrs': {'href': artist_link},
-                            'children': [artist_link]  # Используем URL как текст гиперссылки
+                            'children': [artist_link]
                         }
                     ]
                 }
@@ -397,14 +431,13 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     content.append({'tag': 'p', 'children': [item['content']]})
                 elif item['type'] == 'image':
                     content.append({'tag': 'img', 'attrs': {'src': item['url']}})
-                    # Добавляем горизонтальный разделитель, если это не последнее изображение
                     if index < len(media) - 1:
                         content.append({'tag': 'hr'})
 
-            # Добавляем текст с уменьшенным размером в конце статьи
-            content.append({'tag': 'hr'})  # Добавляем разделитель
+            # Добавление надписи в конце статьи
+            content.append({'tag': 'hr'})
             content.append({
-                'tag': 'i',  # Тег для выделения текста курсивом
+                'tag': 'i',
                 'children': [f'Оригиналы доступны в браузере через меню (⋮)']
             })
 
@@ -412,16 +445,20 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 'access_token': TELEGRAPH_TOKEN,
                 'title': title,
                 'author_name': author_name,
-                'author_url': author_link,  # Ссылка на автора
+                'author_url': author_link,
                 'content': content
             })
-            response.raise_for_status()  # Проверяем, что запрос выполнен успешно
+            response.raise_for_status()
             response_json = response.json()
 
             if response_json.get('ok'):
                 article_url = f"https://telegra.ph/{response_json['result']['path']}"
 
-                # Получение списка содержимого статьи
+                # Отправляем ссылку на статью в любом случае
+                message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                await update.message.reply_text(message_with_link, parse_mode='HTML')
+
+                # Получение данных статьи
                 article_response = requests.get(f'https://api.telegra.ph/getPage?access_token={TELEGRAPH_TOKEN}&path={response_json["result"]["path"]}&return_content=true')
                 article_response.raise_for_status()
                 article_data = article_response.json()
@@ -429,41 +466,40 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 # Подсчет количества изображений
                 image_count = sum(1 for item in article_data.get('result', {}).get('content', []) if item.get('tag') == 'img')
 
+                # Отправляем сообщение с количеством изображений
                 if image_count > 1:
-                    message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
-                    await update.message.reply_text(message_with_link, parse_mode='HTML')
-
+                    await update.message.reply_text(f'В статье {image_count} изображений.')
+                    
                     media_groups = [media[i:i + 10] for i in range(0, len(media), 10)]
-
                     for group in media_groups:
                         media_group = [InputMediaPhoto(media=item['url']) for item in group if item['type'] == 'image']
 
-                        # Вставьте проверку здесь
-                        if not media_group:
-                            logger.error("Media group is empty")
+                        # Попытка отправить медиа группу с задержкой и повторными попытками
+                        success = await send_media_group_with_retries(update, media_group)
+                        if not success:
                             await update.message.reply_text('Ошибка при отправке медиа. /restart')
                             return
-
-                        try:
-                            await update.message.reply_media_group(media_group)
-                        except Exception as e:
-                            logger.error(f"Failed to send media group: {e}")
-                            await update.message.reply_text('Ошибка при отправке медиа. /restart')
 
                 elif image_count == 1:
                     # Если одно изображение, отправляем одно сообщение с изображением и ссылкой
                     single_image = next((item for item in media if item['type'] == 'image'), None)
                     if single_image:
-                        await update.message.reply_photo(
-                            photo=single_image['url'],
-                            caption=f'Автор: {title}\n<a href="{article_url}">Оригинал</a>',
+                        caption = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                        success = await send_photo_with_retries(
+                            update,
+                            photo_url=single_image['url'],
+                            caption=caption,
                             parse_mode='HTML'
                         )
+                        if not success:
+                            await update.message.reply_text('Ошибка при отправке изображения. /restart')
+                            return
 
-                # Отправляем сообщение с количеством изображений
-                await update.message.reply_text(f'В статье {image_count} изображений.')
+                elif image_count == 0:
+                    # Если нет изображений
+                    await update.message.reply_text('В статье нет изображений.')
 
-                # Сохраняем данные для команды /suggest
+                # Сохранение данных
                 publish_data[user_id] = {
                     'title': title,
                     'article_url': article_url,
