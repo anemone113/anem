@@ -227,56 +227,56 @@ def apply_markup_to_content(content: str) -> list:
 
     # Регулярные выражения для разметки
     regex_markup = re.compile(r'(\*|_)(.*?)\1', re.DOTALL)
-    link_regex = re.compile(r'\((.*?)\)\[(.*?)\]', re.DOTALL)
+    link_regex = re.compile(r'\[(.*?)\]\((.*?)\)', re.DOTALL)
 
     # Сначала обрабатываем гиперссылки
-    if link_regex.search(content):
-        content = process_links(content)
-
     pos = 0
-    for match in regex_markup.finditer(content):
-        # Добавляем текст до текущего совпадения
-        if pos < match.start():
-            nodes.append(content[pos:match.start()])
-
-        # Определяем тег и добавляем узел
-        tag = markup_tags.get(match.group(1))
-        if tag:
-            text = match.group(2)
-            nodes.append({"tag": tag, "children": [text]})
-
-        # Обновляем позицию
-        pos = match.end()
-
-    # Добавляем оставшийся текст
-    if pos < len(content):
-        nodes.append(content[pos:])
-
-    return nodes
-
-def process_links(content: str) -> list:
-    """Обрабатывает текст, заменяя ссылки на элементы <a>."""
-    nodes = []
-    link_regex = re.compile(r'\((.*?)\)\[(.*?)\]', re.DOTALL)
-    
-    pos = 0
+    temp_nodes = []
     for match in link_regex.finditer(content):
         # Добавляем текст до текущего совпадения
-        nodes.append(content[pos:match.start()])
+        if pos < match.start():
+            temp_nodes.append(content[pos:match.start()])
 
         # Добавляем узел ссылки
-        url, link_text = match.groups()
-        nodes.append({"tag": "a", "attrs": {"href": url}, "children": [{"tag": "text", "children": [link_text]}]})
+        link_text, url = match.groups()
+        temp_nodes.append({"tag": "a", "attrs": {"href": url}, "children": [{"tag": "text", "children": [link_text]}]})
 
         # Обновляем позицию
         pos = match.end()
 
-    # Добавляем оставшийся текст
+    # Добавляем оставшийся текст после обработки гиперссылок
     if pos < len(content):
-        nodes.append(content[pos:])
+        temp_nodes.append(content[pos:])
+
+    # Теперь обрабатываем остальную разметку
+    nodes = []
+    pos = 0
+    for node in temp_nodes:
+        if isinstance(node, str):
+            # Обрабатываем текст с разметкой
+            text = node
+            while True:
+                match = regex_markup.search(text)
+                if not match:
+                    nodes.append({"tag": "text", "children": [text]})
+                    break
+                # Добавляем текст до текущего совпадения
+                if pos < match.start():
+                    nodes.append({"tag": "text", "children": [text[:match.start()]]})
+                    text = text[match.start():]
+                # Определяем тег и добавляем узел
+                tag = markup_tags.get(match.group(1))
+                if tag:
+                    text = text[match.end():]
+                    nodes.append({"tag": tag, "children": [match.group(2)]})
+                    pos = 0
+                else:
+                    nodes.append({"tag": "text", "children": [text]})
+                    break
+        else:
+            nodes.append(node)
 
     return nodes
-
 
 # Обновленная функция handle_image для обработки изображений
 async def handle_image(update: Update, context: CallbackContext) -> int:
@@ -589,7 +589,10 @@ def main() -> None:
 
     # Настройка ConversationHandler
     conversation_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, start)],
+        entry_points=[
+            CommandHandler('start', start),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, start)
+        ],
         states={
             ASKING_FOR_ARTIST_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_artist_link)],
             ASKING_FOR_AUTHOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_author_name)],
@@ -609,3 +612,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
