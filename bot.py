@@ -73,13 +73,36 @@ async def handle_artist_link(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text('Ошибка: данные не найдены.')
         return ConversationHandler.END
 
+# Ввод имени художника
 async def handle_author_name(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     if user_id in user_data and user_data[user_id]['status'] == 'awaiting_author_name':
-        user_data[user_id]['author_name'] = update.message.text
-        logger.info(f"User {user_id} provided author name: {update.message.text}")
-        # Сохраняем имя автора как заголовок статьи
-        user_data[user_id]['title'] = update.message.text
+        author_input = update.message.text.strip()
+
+        # Проверка на то, заключен ли весь текст в "^...^"
+        if re.match(r'^\^.*\^$', author_input):
+            # Извлекаем текст без символов "^"
+            title = author_input[1:-1].strip()  
+            user_data[user_id]['title'] = title
+            user_data[user_id]['author_name'] = ""  # Убираем имя автора
+            user_data[user_id]['extra_phrase'] = ""  # Пустая фраза, если ничего не найдено
+        else:
+            # Проверка на наличие фразы в "^...^" в начале текста
+            match = re.match(r'^\^(.*?)\^\s*(.*)', author_input)
+            if match:
+                phrase = match.group(1)  # Извлекаем фразу из "^...^"
+                author_name = match.group(2).strip()  # Извлекаем остальное имя автора
+                user_data[user_id]['extra_phrase'] = phrase  # Сохраняем фразу отдельно
+            else:
+                author_name = author_input.strip()  # Если нет фразы в "^...^", сохраняем как есть
+                user_data[user_id]['extra_phrase'] = ""  # Пустая фраза, если ничего не найдено
+
+            # Сохраняем имя автора как заголовок статьи
+            user_data[user_id]['author_name'] = author_name
+            user_data[user_id]['title'] = author_name  # Используем только имя автора для заголовка
+
+        logger.info(f"User {user_id} provided author name or title: {author_input}")
+        
         await update.message.reply_text('Теперь отправьте изображения файлом или текст. \n \n Текст поддерживает различное форматирование. Для получения списка тэгов и помощи введите /help  \n \n Так же вы можете начажать /restart для сброса')
         user_data[user_id]['status'] = 'awaiting_image'
         return ASKING_FOR_IMAGE
@@ -150,26 +173,29 @@ markup_tags = {
     '_': 'em',      # Курсив
 }
 
+import re
+
 def apply_markup(text: str) -> dict:
     """Применяет разметку к тексту на основе команд и возвращает узел контента в формате Telegra.ph."""
     
+    text = text.strip()  # Убираем пробелы в начале и в конце текста
     text_lower = text.lower()
 
     # Обработка команд
     if text_lower.startswith("подзаголовок: "):
-        content = text[len("Подзаголовок: "):]
+        content = text[len("Подзаголовок: "):].strip()
         content = apply_markup_to_content(content)
         return {"tag": "h4", "children": content}
-    elif text_lower.startswith("цитата: "):
-        content = text[len("Цитата: "):]
+    elif text_lower.startswith("цитата:"):
+        content = text[len("Цитата:"):].strip()
         content = apply_markup_to_content(content)
         return {"tag": "blockquote", "children": content}
     elif text_lower.startswith("заголовок: "):
-        content = text[len("Заголовок: "):]
+        content = text[len("Заголовок: "):].strip()
         content = apply_markup_to_content(content)
         return {"tag": "h3", "children": content}
-    elif text_lower.startswith("цитата по центру: "):
-        content = text[len("Цитата по центру: "):]
+    elif text_lower.startswith("цитата по центру:"):
+        content = text[len("Цитата по центру:"):].strip()
         content = apply_markup_to_content(content)
         return {"tag": "aside", "children": content}
     elif text_lower.startswith("***"):
@@ -411,6 +437,27 @@ async def publish(update: Update, context: CallbackContext) -> None:
             media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'test')
 
+            # Извлекаем фразу перед "Автор", если она есть
+            extra_phrase = user_data[user_id].get('extra_phrase', "")
+            author_name_final = user_data[user_id].get('author_name', '')
+
+            # Формируем строку с фразой перед "Автор", если она есть
+            if extra_phrase:
+                author_line = f"{extra_phrase}\nАвтор: {author_name_final}"
+            else:
+                author_line = f"Автор: {author_name_final}"
+
+            # Проверяем, есть ли авторское имя
+            if not author_name_final:
+                author_line = title  # Если это заголовок из "^...^", то используем только заголовок
+            else:
+                # Формируем строку с фразой перед "Автор", если она есть
+                if extra_phrase:
+                    author_line = f"{extra_phrase}\nАвтор: {author_name_final}"
+                else:
+                    author_line = f"Автор: {author_name_final}"
+
+
             # Создание статьи в Telegra.ph
             content = [
                 {
@@ -464,7 +511,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
                 # Отправка изображений, если они есть
                 if image_count > 1:
-                    message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                    message_with_link = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
                     await update.message.reply_text(message_with_link, parse_mode='HTML')
                     media_groups = [media[i:i + 10] for i in range(0, len(media), 10)]
                     for group in media_groups:
@@ -480,7 +527,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     # Если одно изображение, отправляем одно сообщение с изображением
                     single_image = next((item for item in media if item['type'] == 'image'), None)
                     if single_image:
-                        caption = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                        caption = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
                         success = await send_photo_with_retries(
                             update,
                             photo_url=single_image['url'],
@@ -493,17 +540,18 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
                 elif image_count == 0:
                     # Если нет изображений
-                    message_with_link = f'Автор: {title}\n<a href="{article_url}">Оригинал</a>'
+                    message_with_link = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
                     await update.message.reply_text(message_with_link, parse_mode='HTML')
 
-                # Отправка сообщения с количеством изображений
+# Отправка сообщения с количеством изображений
                 await update.message.reply_text(f'В статье {image_count} изображений.')
 
                 # Сохранение данных
                 publish_data[user_id] = {
                     'title': title,
                     'article_url': article_url,
-                    'image_count': image_count
+                    'image_count': image_count,
+                    'author_line': author_line
                 }
 
                 del user_data[user_id]
@@ -542,7 +590,7 @@ async def unknown_message(update: Update, context: CallbackContext) -> None:
             await handle_author_name(update, context)
         elif user_data[user_id]['status'] == 'awaiting_image':
             await handle_image(update, context)
-
+            
 async def suggest(update: Update, context: CallbackContext) -> None:
     global publish_data
     user_id = update.message.from_user.id
@@ -550,7 +598,8 @@ async def suggest(update: Update, context: CallbackContext) -> None:
         data = publish_data[user_id]
         title = data['title']
         article_url = data['article_url']
-        
+        author_line = data['author_line']
+
         try:
             # Получаем содержимое статьи
             article_response = requests.get(f'https://api.telegra.ph/getPage?path={article_url.split("/")[-1]}&return_content=true')
@@ -564,7 +613,7 @@ async def suggest(update: Update, context: CallbackContext) -> None:
                     images.append(node['attrs']['src'])
             
             # Отправляем первое сообщение с текстом в группу
-            message_with_link = f'Пользователь {update.message.from_user.username} предложил:\nАвтор: {title}\n<a href="{article_url}">Оригинал</a>'
+            message_with_link = f'Пользователь {update.message.from_user.username} предложил:\n {author_line}\n<a href="{article_url}">Оригинал</a>'
             await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_with_link, parse_mode='HTML')
             
             # Если есть изображения, отправляем их как медиагруппу в группу
@@ -581,8 +630,6 @@ async def suggest(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text('Ошибка при обработке статьи. /restart')
     else:
         await update.message.reply_text('Нет данных для предложения.')
-
-
 
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
