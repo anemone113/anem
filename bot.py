@@ -1,4 +1,4 @@
-from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaPhoto
+from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDocument, InputMediaVideo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
 from PIL import Image
 from telegram.constants import ParseMode
@@ -26,6 +26,7 @@ ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE = range(3)
 # Сохранение данных состояния пользователя
 user_data = {}
 publish_data = {}
+users_in_send_mode = set()
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -35,28 +36,34 @@ async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     if user_id not in user_data:
         logger.info(f"User {user_id} started the process.")
-        await update.message.reply_text('Пожалуйста, отправьте ссылку на автора. Если у вас её нет то отправьте любой текст\n \n В боте есть команда /restart которая перезапускает процесс на любом этапе')
+        await update.message.reply_text('🌠Этот бот поможет вам создать пост для группы Anemone. Изначально он будет виден исключительно вам, так что не бойтесь пробовать, экспериментировать и смотреть что получится\n \nДля начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет то отправьте любой текст\n \n <i>В боте есть команда /restart которая перезапускает процесс на любом этапе</i>\n',
+    parse_mode='HTML')
         user_data[user_id] = {'status': 'awaiting_artist_link'}  # Инициализация данных для пользователя
         return ASKING_FOR_ARTIST_LINK
     else:
-        if user_data[user_id]['status'] == 'awaiting_artist_link':
+        status = user_data[user_id].get('status')
+        if status == 'awaiting_artist_link':
             return await handle_artist_link(update, context)
-        elif user_data[user_id]['status'] == 'awaiting_author_name':
+        elif status == 'awaiting_author_name':
             return await handle_author_name(update, context)
-        elif user_data[user_id]['status'] == 'awaiting_image':
+        elif status == 'awaiting_image':
             return await handle_image(update, context)
+        else:
+            await update.message.reply_text('🚫Ошибка: некорректное состояние.')
+            return ConversationHandler.END
 
 async def restart(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     if user_id in user_data:
-        del user_data[user_id]
-    logger.info(f"User {user_id} restarted the process.")
-    await update.message.reply_text('Процесс сброшен. Пожалуйста, начните заново. \n Отправьте ссылку на автора.')
+        del user_data[user_id]  # Удаляем старые данные пользователя  
+    logger.info(f"User {user_id} restarted the process.") 
+    # Инициализируем новое состояние пользователя
     user_data[user_id] = {'status': 'awaiting_artist_link'}
+    await update.message.reply_text('✅Процесс сброшен. Пожалуйста, начните заново. \n Отправьте ссылку на автора.')
     return ASKING_FOR_ARTIST_LINK
 
 HELP_TEXT = """
-Статья в Telegraph формируется в порядке отправки изображений и текста боту\. Изначально статья и всё её содержание видны только вам\, администрации она станет доступна только после того как вы нажмёте сначла кнопку \/publish \(опубликовать\) и затем \(по желанию\) кнопку \/share \(поделиться\)\. Если после публикации вы не захотите вводить команду share то публикация останется видна только вам\n\n Поддерживаемые тэги\:\(без кавычек\)\n \- \"\*\*\*\" — горизонтальная линия\-разделитель \(отправьте три звёздочки отдельным сообщением\, в этом месте в статье телеграф появится разделитель\)\.\n\- \"\_текст\_\" — курсив\.\n\- \"\*текст\*\" — жирный текст\.\n\- \"\[текст ссылки\]\(ссылка\)\" — гиперссылка\.\n\- \"видео\: \" — вставка видео с Vimeo или YouTube\.\n\- \"цитата\:\" — цитата\.\n\- \"цитата по центру\:\" — центрированная цитата\.\n\- "заголовок:" — заголовок\\.\n\\- "подзаголовок:" — подзаголовок\\.\n\n Последние 5 тэгов пишутся в начале сообщения и применяются ко всему сообщению целиком\. Каждое новое сообщение — это новый абзац\. Сообщения без тэгов — обычный текст\.\n\n Пример\: \(без кавычек\)\n\- \"цитата\: \*Волк\* никогда не будет жить в загоне\, но загоны всегда будут жить в \*волке\*\" — в статье телеграф будет выглядеть как цитата\, в которой слово \"волк\" выделено жирным\.\n\- \"видео\: ссылка\_на\_видео\" — вставка видео YouTube или Vimeo\.\n\nКроме того бот поддерживает загрузку GIF файлов\. Для этого переименуйте \.GIF в \.RAR \, затем отправьте файл боту во время оформления поста\. Это нужно для того чтобы телеграм не пережимал GIF файлы\, бот автоматически переиминует файл обратно в GIF перед размещением в Телеграф \n
+▶️Статья в Telegraph формируется в порядке отправки изображений и текста боту\. Изначально статья и всё её содержание видны только вам\, администрации она станет доступна только после того как вы нажмёте сначала кнопку \/publish \(опубликовать\) и затем \(по желанию\) кнопку \/share \(поделиться\)\. Если после публикации вы не захотите вводить команду share то публикация останется видна только вам\n\n ▶️Поддерживаемые тэги при создании статьи telegraph\:\(без кавычек\)\n \- \"\*\*\*\" — горизонтальная линия\-разделитель \(отправьте три звёздочки отдельным сообщением\, в этом месте в статье телеграф появится разделитель\)\.\n\- \"\_текст\_\" — курсив\.\n\- \"\*текст\*\" — жирный текст\.\n\- \"\[текст ссылки\]\(ссылка\)\" — гиперссылка\.\n\- \"видео\: \" — вставка видео с Vimeo или YouTube\.\n\- \"цитата\:\" — цитата\.\n\- \"цитата по центру\:\" — центрированная цитата\.\n\- "заголовок:" — заголовок\\.\n\\- "подзаголовок:" — подзаголовок\\.\n\n Последние 5 тэгов пишутся в начале сообщения и применяются ко всему сообщению целиком\. Каждое новое сообщение — это новый абзац\. Сообщения без тэгов — обычный текст\.\n\n Пример\: \(без кавычек\)\n\- \"цитата\: \*Волк\* никогда не будет жить в загоне\, но загоны всегда будут жить в \*волке\*\" — в статье телеграф будет выглядеть как цитата\, в которой слово \"волк\" выделено жирным\.\n\- \"видео\: ссылка\_на\_видео\" — вставка видео YouTube или Vimeo\.\n\n▶️Кроме того бот поддерживает загрузку GIF файлов\. Для этого переименуйте \.GIF в \.RAR \, затем отправьте файл боту во время оформления поста\. Это нужно для того чтобы телеграм не пережимал GIF файлы\, бот автоматически переименует файл обратно в GIF перед размещением в Телеграф\n\n▶️Так же вы можете отправить что\-то администрации напрямую\, в режиме прямой связи\. Для этого введите команду \/send и после неё все ваши сообщения отправленные боту тут же будут пересылаться администрации\. Это могут быть какие\-то пояснения\, дополнительные изображения или их правильное размещение в посте телеграм\, вопросы\, предложения\, ссылка на самостоятельно созданную статью телеграф\, пойманные в боте ошибки и что угодно ещё\. Для завершения этого режима просто введите \/fin и бот вернётся в свой обычный режим\. Просьба не спамить через этот режим\, писать или отправлять только нужную информацию  \n
 """
 
 async def help_command(update: Update, context: CallbackContext) -> None: await update.message.reply_text( HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2 )
@@ -66,7 +73,8 @@ async def handle_artist_link(update: Update, context: CallbackContext) -> int:
     if user_id in user_data and user_data[user_id]['status'] == 'awaiting_artist_link':
         user_data[user_id]['artist_link'] = update.message.text
         logger.info(f"User {user_id} provided author link: {update.message.text}")
-        await update.message.reply_text('Теперь отправьте имя автора. \n\n Чтобы скрыть слово "Автор:", используйте символ "^" при вводе имени. Например: ^Имя^. ')
+        await update.message.reply_text('Теперь отправьте имя автора. \n\n <i>Чтобы скрыть слово "Автор:", используйте символ "^" в начале и конце сообщения. Например: ^Имя^</i>',
+    parse_mode='HTML')
         user_data[user_id]['status'] = 'awaiting_author_name'
         return ASKING_FOR_AUTHOR_NAME
     else:
@@ -76,21 +84,21 @@ async def handle_artist_link(update: Update, context: CallbackContext) -> int:
 # Ввод имени художника
 async def handle_author_name(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
-    if user_id in user_data and user_data[user_id]['status'] == 'awaiting_author_name':
+    if user_id in user_data and user_data[user_id].get('status') == 'awaiting_author_name':
         author_input = update.message.text.strip()
 
-        # Проверка на то, заключен ли весь текст в "^...^"
-        if re.match(r'^\^.*\^$', author_input):
-            # Извлекаем текст без символов "^"
-            title = author_input[1:-1].strip()  
+        # Проверка на то, заключен ли весь текст в "^...^" с учётом переносов строк
+        if re.match(r'^\^(.*)\^$', author_input, re.S):
+            # Извлекаем текст без символов "^", сохраняя переносы строк
+            title = author_input[1:-1].strip()
             user_data[user_id]['title'] = title
             user_data[user_id]['author_name'] = ""  # Убираем имя автора
             user_data[user_id]['extra_phrase'] = ""  # Пустая фраза, если ничего не найдено
         else:
-            # Проверка на наличие фразы в "^...^" в начале текста
-            match = re.match(r'^\^(.*?)\^\s*(.*)', author_input)
+            # Проверка на наличие фразы в "^...^" в начале текста с учётом переносов строк
+            match = re.match(r'^\^(.*?)\^\s*(.*)', author_input, re.S)
             if match:
-                phrase = match.group(1)  # Извлекаем фразу из "^...^"
+                phrase = match.group(1).strip()  # Извлекаем фразу из "^...^", сохраняя переносы строк
                 author_name = match.group(2).strip()  # Извлекаем остальное имя автора
                 user_data[user_id]['extra_phrase'] = phrase  # Сохраняем фразу отдельно
             else:
@@ -102,8 +110,9 @@ async def handle_author_name(update: Update, context: CallbackContext) -> int:
             user_data[user_id]['title'] = author_name  # Используем только имя автора для заголовка
 
         logger.info(f"User {user_id} provided author name or title: {author_input}")
-        
-        await update.message.reply_text('Теперь отправьте изображения файлом(без сжатия) или текст. \n \n Текст поддерживает различное форматирование. Для получения списка тэгов и помощи введите /help  \n \n Так же вы можете начажать /restart для сброса')
+
+        await update.message.reply_text('Теперь наполним публикацию telegraph контентом, для этого отправьте изображения файлом (без сжатия) или текст. \n\n Текст поддерживает различное форматирование. Для получения списка тэгов и помощи введите /help. \n\n <i>Так же вы можете нажать /restart для сброса</i>',
+    parse_mode='HTML')
         user_data[user_id]['status'] = 'awaiting_image'
         return ASKING_FOR_IMAGE
     else:
@@ -304,6 +313,8 @@ def apply_markup_to_content(content: str) -> list:
 
     return nodes
 
+
+
 # Обновленная функция handle_image для обработки изображений
 async def handle_image(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
@@ -352,16 +363,27 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
                 await update.message.reply_text('Пожалуйста, отправьте изображение в формате JPG, PNG или .RAR для .GIF файлом, без сжатия.\n\n для помощи введите /help')
                 return ASKING_FOR_IMAGE
         elif update.message.text:
-            # Обработка текстовых сообщений с разметкой
-            formatted_text = apply_markup(update.message.text)
-            if 'media' not in user_data[user_id]:
-                user_data[user_id]['media'] = []
-            user_data[user_id]['media'].append({'type': 'text', 'content': formatted_text})
-            await update.message.reply_text('✅ Текст успешно добавлен. Вы можете отправить ещё текст или изображения. \n\n Либо завершить публикацию с помощью команды /publish.')
-            return ASKING_FOR_IMAGE
+            # Обработка текстовых сообщений с помощью новой функции
+            return await handle_text(update, context)
         else:
             await update.message.reply_text('Пожалуйста, отправьте изображение как файл (формат JPG, PNG или .RAR для .GIF), без сжатия, или текст.\n\n для помощи введите /help')
             return ASKING_FOR_IMAGE
+    else:
+        await update.message.reply_text('🚫Ошибка: данные не найдены. Попробуйте отправить снова. Или нажмите /restart')
+        return ConversationHandler.END
+
+        
+# Функция для обработки текстовых сообщений
+async def handle_text(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    if user_id in user_data and user_data[user_id]['status'] == 'awaiting_image':
+        # Обработка текстовых сообщений с разметкой
+        formatted_text = apply_markup(update.message.text)
+        if 'media' not in user_data[user_id]:
+            user_data[user_id]['media'] = []
+        user_data[user_id]['media'].append({'type': 'text', 'content': formatted_text})
+        await update.message.reply_text('✅ Текст успешно добавлен. Вы можете отправить ещё текст или изображения. \n\n Либо завершить публикацию с помощью команды /publish.')
+        return ASKING_FOR_IMAGE
     else:
         await update.message.reply_text('🚫Ошибка: данные не найдены. Попробуйте отправить снова. Или нажмите /restart')
         return ConversationHandler.END
@@ -512,16 +534,27 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 # Отправка изображений, если они есть
                 if image_count > 1:
                     message_with_link = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
-                    await update.message.reply_text(message_with_link, parse_mode='HTML')
+                    await update.message.reply_text(message_with_link, parse_mode='HTML', disable_web_page_preview=True)
                     media_groups = [media[i:i + 10] for i in range(0, len(media), 10)]
                     for group in media_groups:
-                        media_group = [InputMediaPhoto(media=item['url']) for item in group if item['type'] == 'image']
+                        media_group = []
 
-                        # Попытка отправить медиа группу с задержкой и повторными попытками
-                        success = await send_media_group_with_retries(update, media_group)
-                        if not success:
-                            await update.message.reply_text('🚫Ошибка при отправке медиа. /restart')
-                            return
+                        for idx, item in enumerate(group):
+                            if item['type'] == 'image':
+                                if idx == 0:  # Добавляем заголовок только для первого изображения
+                                    media_group.append(InputMediaPhoto(
+                                        media=item['url'],
+                                        caption=f'{author_line}\n<a href="{article_url}">Оригинал</a>',
+                                        parse_mode='HTML'
+                        ))
+                                else:
+                                    media_group.append(InputMediaPhoto(media=item['url']))
+
+            # Попытка отправить медиа группу с задержкой и повторными попытками
+                    success = await send_media_group_with_retries(update, media_group)
+                    if not success:
+                        await update.message.reply_text('🚫Ошибка при отправке медиа. /restart')
+                        return
 
                 elif image_count == 1:
                     # Если одно изображение, отправляем одно сообщение с изображением
@@ -556,10 +589,11 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
                 del user_data[user_id]
                 await update.message.reply_text(
-                    '✅Публикация успешно создана.\n Но сейчас она видна только вам, чтобы поделиться ей с администрацией вы можете нажать /share (эта кнопка будет работать только до создания следующей вашей статьи) \n\n Либо создайте другую публикацию если что-то пошло не так\n\n ✅*Бот перезапущен успешно.*\n\n(.=^・ェ・^=)',
+                    '✅Все данные для публикации успешно созданы.\n Но сейчас они видны только вам, чтобы поделиться ими с администрацией просто нажмите /share (эта кнопка будет работать только до вашего следующего нажатия команды publish) \n\n Либо создайте другую публикацию если что-то пошло не так. \n\nВы так же можете ввести команду /send чтобы перейти в режим прямой связи с администрацией. Таким образом вы можете задать вопросы, отправить дополнительные файлы, изображения и пояснения касательно вашей публикации, сообщить об обнаруженных багах или что-то ещё. Для этого просто нажмите на эту команду после чего любые ваши сообщения отправленные боту будут пересылаться администрации.\n\n  ✅*Бот перезапущен успешно.*\n\n(=^・ェ・^=)',
                     reply_markup=ReplyKeyboardRemove()
                 )
                 logger.info(f"User {user_id}'s data cleared and process completed.")
+                await update.message.reply_text('********************************************************')
                 await start(update, context)
                 return ConversationHandler.END
             else:
@@ -614,7 +648,7 @@ async def share(update: Update, context: CallbackContext) -> None:
             
             # Отправляем первое сообщение с текстом в группу
             message_with_link = f'Пользователь {update.message.from_user.username} предложил:\n {author_line}\n<a href="{article_url}">Оригинал</a>'
-            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_with_link, parse_mode='HTML')
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_with_link, parse_mode='HTML', disable_web_page_preview=True)
             
             # Если есть изображения, отправляем их как медиагруппу в группу
             if images:
@@ -631,6 +665,101 @@ async def share(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text('🚫Нет данных для предложения.')
 
+async def send_mode(update: Update, context: CallbackContext) -> None:
+    """Включение режима дублирования сообщений."""
+    user_id = update.message.from_user.id
+    users_in_send_mode.add(user_id)
+    await update.message.reply_text('🔄 Режим прямой связи включен. Все последующие сообщения будут дублироваться администрации. Для завершения режима введите /fin')
+    
+async def fin_mode(update: Update, context: CallbackContext) -> None:
+    """Выключение режима дублирования сообщений и возврат к изначальной логике."""
+    user_id = update.message.from_user.id
+    if user_id in users_in_send_mode:
+        users_in_send_mode.remove(user_id)
+        await update.message.reply_text('✅ Режим пересылки сообщений администрации отключен. Бот вернулся к своему основному режиму работы.')
+    else:
+        await update.message.reply_text('❗ Вы не активировали режим дублирования.')
+
+from telegram import InputMediaPhoto, InputMediaVideo
+
+
+
+from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
+
+async def duplicate_message(update: Update, context: CallbackContext) -> None:
+    """Дублирование сообщений пользователя в группу, включая медиа-группы, одиночные сообщения и документы."""
+    user = update.message.from_user
+    user_name = user.username if user.username else user.full_name
+    message_prefix = f"{user_name} отправил сообщение:"
+
+    if user.id in users_in_send_mode:
+        # Если сообщение является частью медиа-группы
+        if update.message.media_group_id:
+            media_group = []
+            messages = await context.bot.get_updates(offset=update.update_id - 10)  # Получаем несколько предыдущих сообщений для сборки медиа-группы
+
+            # Фильтрация сообщений с тем же media_group_id
+            for message in messages:
+                if message.message.media_group_id == update.message.media_group_id:
+                    if message.message.photo:
+                        media_group.append(InputMediaPhoto(message.message.photo[-1].file_id, caption=message.message.caption if message.message.caption else ""))
+                    elif message.message.video:
+                        media_group.append(InputMediaVideo(message.message.video.file_id, caption=message.message.caption if message.message.caption else ""))
+                    elif message.message.document:
+                        media_group.append(InputMediaDocument(message.message.document.file_id, caption=message.message.caption if message.message.caption else ""))
+
+            # Отправляем медиа-группу, если она есть
+            if media_group:
+                await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_prefix)
+                await context.bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media_group)
+                await update.message.reply_text("Сообщение успешно отправлено администрации")
+
+        # Обработка одиночных текстовых сообщений
+        elif update.message.text:
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=f"{message_prefix}\n{update.message.text}")
+            await update.message.reply_text("Сообщение успешно отправлено администрации")
+
+        # Обработка одиночных фото
+        elif update.message.photo:
+            photo = update.message.photo[-1].file_id  # Получаем последнюю фотографию с наибольшим разрешением
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_prefix)
+            await context.bot.send_photo(chat_id=GROUP_CHAT_ID, photo=photo, caption=update.message.caption)
+            await update.message.reply_text("Сообщение успешно отправлено администрации")
+
+        # Обработка одиночных документов (включая изображения, отправленные как файл)
+        elif update.message.document:
+            doc = update.message.document.file_id
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_prefix)
+            await context.bot.send_document(chat_id=GROUP_CHAT_ID, document=doc, caption=update.message.caption)
+            await update.message.reply_text("Сообщение успешно отправлено администрации")
+
+        # Обработка одиночных видео
+        elif update.message.video:
+            video = update.message.video.file_id
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_prefix)
+            await context.bot.send_video(chat_id=GROUP_CHAT_ID, video=video, caption=update.message.caption)
+            await update.message.reply_text("Сообщение успешно отправлено администрации")
+
+        # Обработка стикеров
+        elif update.message.sticker:
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_prefix)
+            await context.bot.send_sticker(chat_id=GROUP_CHAT_ID, sticker=update.message.sticker.file_id)
+            await update.message.reply_text("Сообщение успешно отправлено администрации")
+
+        # Обработка аудио
+        elif update.message.audio:
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_prefix)
+            await context.bot.send_audio(chat_id=GROUP_CHAT_ID, audio=update.message.audio.file_id, caption=update.message.caption)
+            await update.message.reply_text("Сообщение успешно отправлено администрации")
+
+        # Добавьте обработку других типов сообщений по мере необходимости
+    else:
+        # Если пользователь не в режиме дублирования, продолжаем с основной логикой
+        await start(update, context)
+
+
+
+
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -643,15 +772,19 @@ def main() -> None:
         states={
             ASKING_FOR_ARTIST_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_artist_link)],
             ASKING_FOR_AUTHOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_author_name)],
-            ASKING_FOR_IMAGE: [MessageHandler(filters.PHOTO | filters.Document.ALL, handle_image)]
+            ASKING_FOR_IMAGE: [MessageHandler(filters.PHOTO | filters.Document.ALL, handle_image),
+                               MessageHandler(filters.PHOTO | filters.Document.ALL, handle_text)]
         },
         fallbacks=[MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message)],
         per_user=True
     )
 
+    application.add_handler(CommandHandler('send', send_mode))
+    application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CommandHandler('publish', publish))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений    application.add_handler(conversation_handler)
     application.add_handler(CommandHandler('share', share))  # Добавляем обработчик для /share
     application.add_handler(conversation_handler)
     logger.info("Bot started and polling...")
