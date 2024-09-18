@@ -762,7 +762,7 @@ async def duplicate_message(update: Update, context: CallbackContext) -> None:
 
 
 def main() -> None:
-    port = int(os.environ.get("PORT", 10000))
+
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Настройка ConversationHandler
@@ -789,10 +789,9 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений    application.add_handler(conversation_handler)
     application.add_handler(CommandHandler('share', share))  # Добавляем обработчик для /share
     application.add_handler(conversation_handler)
-    logger.info("Bot started and polling...")
-    application.run_polling()
+    logger.info("Bot started and polling...")  
     keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
-    bot.polling(non_stop=True, interval=0) #запуск бота
+    application.run_polling() #запуск бота
 
 
 if __name__ == '__main__':
