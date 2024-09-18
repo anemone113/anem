@@ -33,9 +33,6 @@ users_in_send_mode = set()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
-bot.polling(non_stop=True, interval=0) #запуск бота
-
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     if user_id not in user_data:
@@ -794,6 +791,9 @@ def main() -> None:
     application.add_handler(conversation_handler)
     logger.info("Bot started and polling...")
     application.run_polling()
+    keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
+    bot.polling(non_stop=True, interval=0) #запуск бота
+
 
 if __name__ == '__main__':
     main()
