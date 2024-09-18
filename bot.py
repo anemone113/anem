@@ -761,6 +761,7 @@ async def duplicate_message(update: Update, context: CallbackContext) -> None:
 
 
 def main() -> None:
+    port = int(os.environ.get("PORT", 10000))
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Настройка ConversationHandler
