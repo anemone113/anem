@@ -1,6 +1,7 @@
 from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDocument, InputMediaVideo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
 from PIL import Image
+from background import keep_alive
 from telegram.constants import ParseMode
 from tenacity import retry, wait_fixed, stop_after_attempt
 import asyncio
@@ -31,6 +32,9 @@ users_in_send_mode = set()
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
+bot.polling(non_stop=True, interval=0) #запуск бота
 
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
