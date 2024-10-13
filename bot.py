@@ -161,6 +161,7 @@ def compress_image(file_path: str, output_path: str) -> None:
             os.remove(file_path)
 
 # Асинхронная функция для загрузки изображения на imgbb
+# Функция для загрузки изображения на imgbb
 async def upload_image_to_imgbb(file_path: str) -> str:
     async with aiohttp.ClientSession() as session:
         with open(file_path, 'rb') as f:
@@ -174,6 +175,82 @@ async def upload_image_to_imgbb(file_path: str) -> str:
                     return response_json['data']['url']
                 else:
                     raise Exception(f"Ошибка загрузки на imgbb: {response.status}")
+
+# Функция для загрузки изображения на Imgur
+async def upload_image_to_imgur(file_path: str) -> str:
+    IMGUR_CLIENT_ID = '5932e0bc7fdb523'  # Укажите свой ID клиента Imgur
+    headers = {'Authorization': f'Client-ID {IMGUR_CLIENT_ID}'}
+    async with aiohttp.ClientSession() as session:
+        with open(file_path, 'rb') as f:
+            form = aiohttp.FormData()
+            form.add_field('image', f)
+
+            async with session.post('https://api.imgur.com/3/image', headers=headers, data=form) as response:
+                if response.status == 200:
+                    response_json = await response.json()
+                    return response_json['data']['link']
+                else:
+                    raise Exception(f"Ошибка загрузки на Imgur: {response.status}")
+
+# Функция для загрузки изображения на Catbox
+async def upload_image_to_catbox(file_path: str) -> str:
+    async with aiohttp.ClientSession() as session:
+        with open(file_path, 'rb') as f:
+            form = aiohttp.FormData()
+            form.add_field('reqtype', 'fileupload')
+            form.add_field('fileToUpload', f)
+            
+            # Добавляем ваш userhash
+            form.add_field('userhash', '1f68d2a125c66f6ab79a4f89c')
+
+            async with session.post('https://catbox.moe/user/api.php', data=form) as response:
+                if response.status == 200:
+                    return await response.text()  # возвращает URL загруженного файла
+                else:
+                    raise Exception(f"Ошибка загрузки на Catbox: {response.status}")
+
+async def upload_image_to_freeimage(file_path: str) -> str:
+    async with aiohttp.ClientSession() as session:
+        with open(file_path, 'rb') as f:
+            form = aiohttp.FormData()
+            form.add_field('key', '6d207e02198a847aa98d0a2a901485a5')  # Ваш API ключ для freeimage.host
+            form.add_field('action', 'upload')
+            form.add_field('source', f)  # Используем файл для загрузки
+
+            async with session.post('https://freeimage.host/api/1/upload', data=form) as response:
+                if response.status == 200:
+                    response_json = await response.json()
+                    return response_json['image']['url']  # Проверьте правильность пути к URL в ответе
+                elif response.status == 400:
+                    response_text = await response.text()
+                    raise Exception(f"Ошибка загрузки на Free Image Hosting: {response_text}")
+                else:
+                    raise Exception(f"Ошибка загрузки на Free Image Hosting: {response.status}")
+
+# Основная функция загрузки изображения с проверкой доступности сервисов
+async def upload_image(file_path: str) -> str:
+    try:
+        # Попытка загрузки на imgbb
+        return await upload_image_to_imgbb(file_path)
+    except Exception as e:
+        logging.error(f"Ошибка загрузки на imgbb: {e}")
+        try:
+            # Попытка загрузки на Catbox
+            return await upload_image_to_catbox(file_path)
+        except Exception as e:
+            logging.error(f"Ошибка загрузки на Catbox: {e}")
+            try:
+                # Попытка загрузки на Free Image Hosting
+                return await upload_image_to_freeimage(file_path)
+            except Exception as e:
+                logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
+                try:
+                    # Попытка загрузки на Imgur
+                    return await upload_image_to_imgur(file_path)
+                except Exception as e:
+                    logging.error(f"Ошибка загрузки на Imgur: {e}")
+                    raise Exception("Не удалось загрузить изображение на все сервисы.")
+
 
 import re
 
@@ -342,27 +419,42 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
                 file_ext = 'gif'
 
             if file_ext in ('jpg', 'jpeg', 'png', 'gif'):
-                # Если изображение больше 5 МБ, сжимаем его
-                if os.path.getsize(file_path) > 5 * 1024 * 1024:
-                    compressed_path = f'{os.path.splitext(file_path)[0]}_compressed.jpg'
-                    compress_image(file_path, compressed_path)
-                    file_path = compressed_path
-
-                try:
-                    # Запускаем асинхронную загрузку изображений
-                    image_url = await upload_image_to_imgbb(file_path)
-                    if 'media' not in user_data[user_id]:
-                        user_data[user_id]['media'] = []
-                    user_data[user_id]['media'].append({'type': 'image', 'url': image_url})
-                    os.remove(file_path)  # Удаляем временный файл
-                    await update.message.reply_text('✅ Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений если их больше чем одно. Затем вы можете продолжить присылать изображения или текст \n\n Либо если желаете завершить публикацию введите /publish')
-                    return ASKING_FOR_IMAGE
-                except Exception as e:
-                    await update.message.reply_text(f'🚫Ошибка при загрузке изображения на imgbb, сервер не отвечает: {str(e)} Можете попробовать прислать файл ещё раз через некоторое время или нажать /restart')
-                    return ConversationHandler.END
+                # Если формат GIF, не трогаем его, даже если размер больше 5 МБ
+                if file_ext == 'gif':
+                    try:
+                        # Запускаем асинхронную загрузку изображения через универсальную функцию
+                        image_url = await upload_image(file_path)
+                        if 'media' not in user_data[user_id]:
+                            user_data[user_id]['media'] = []
+                        user_data[user_id]['media'].append({'type': 'image', 'url': image_url})
+                        await update.message.reply_text('✅ Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений, если их больше чем одно. Затем вы можете продолжить присылать изображения или текст.\n\n Либо если желаете завершить публикацию, введите /publish')
+                        return ASKING_FOR_IMAGE
+                    except Exception as e:
+                        await update.message.reply_text(f'🚫Ошибка при загрузке изображения: {str(e)}. Можете попробовать прислать файл ещё раз через некоторое время или нажать /restart')
+                        return ConversationHandler.END
+                else:
+                    # Если изображение больше 5 МБ (но не GIF), сжимаем его
+                    if os.path.getsize(file_path) > 5 * 1024 * 1024:
+                        compressed_path = f'{os.path.splitext(file_path)[0]}_compressed.jpg'
+                        compress_image(file_path, compressed_path)
+                        file_path = compressed_path
+            
+                    try:
+                        # Запускаем асинхронную загрузку изображения через универсальную функцию
+                        image_url = await upload_image(file_path)
+                        if 'media' not in user_data[user_id]:
+                            user_data[user_id]['media'] = []
+                        user_data[user_id]['media'].append({'type': 'image', 'url': image_url})
+                        os.remove(file_path)  # Удаляем временный файл
+                        await update.message.reply_text('✅ Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений, если их больше чем одно. Затем вы можете продолжить присылать изображения или текст.\n\n Либо если желаете завершить публикацию, введите /publish')
+                        return ASKING_FOR_IMAGE
+                    except Exception as e:
+                        await update.message.reply_text(f'🚫Ошибка при загрузке изображения: {str(e)}. Можете попробовать прислать файл ещё раз через некоторое время или нажать /restart')
+                        return ConversationHandler.END
             else:
                 await update.message.reply_text('Пожалуйста, отправьте изображение в формате JPG, PNG или .RAR для .GIF файлом, без сжатия.\n\n для помощи введите /help')
                 return ASKING_FOR_IMAGE
+            
         elif update.message.text:
             # Обработка текстовых сообщений с помощью новой функции
             return await handle_text(update, context)
