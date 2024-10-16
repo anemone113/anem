@@ -362,30 +362,26 @@ def apply_markup_to_content(content: str) -> list:
         temp_nodes.append(content[pos:])
 
     # Теперь обрабатываем остальную разметку
-    nodes = []
-    pos = 0
     for node in temp_nodes:
         if isinstance(node, str):
             # Обрабатываем текст с разметкой
-            text = node
             while True:
-                match = regex_markup.search(text)
+                match = regex_markup.search(node)
                 if not match:
-                    nodes.append({"tag": "text", "children": [text]})
+                    # Если больше нет совпадений, добавляем оставшийся текст
+                    nodes.append({"tag": "text", "children": [node]})
                     break
                 # Добавляем текст до текущего совпадения
-                if pos < match.start():
-                    nodes.append({"tag": "text", "children": [text[:match.start()]]})
-                    text = text[match.start():]
+                if match.start() > 0:
+                    nodes.append({"tag": "text", "children": [node[:match.start()]]})
+
                 # Определяем тег и добавляем узел
                 tag = markup_tags.get(match.group(1))
                 if tag:
-                    text = text[match.end():]
                     nodes.append({"tag": tag, "children": [match.group(2)]})
-                    pos = 0
-                else:
-                    nodes.append({"tag": "text", "children": [text]})
-                    break
+
+                # Обновляем строку: обрезаем её до конца текущего совпадения
+                node = node[match.end():]
         else:
             nodes.append(node)
 
@@ -483,7 +479,7 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
 
 @retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
 def make_request(url, data):
-    response = requests.post(url, json=data)
+    response = requests.post(url, json=data, timeout=30)
     response.raise_for_status()
     return response.json()
 
