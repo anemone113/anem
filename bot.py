@@ -624,14 +624,21 @@ async def preview_article(update: Update, context: CallbackContext) -> None:
             # Создаём контент для страницы
             content = [{'tag': 'p', 'children': [{'tag': 'a', 'attrs': {'href': artist_link}, 'children': [artist_link]}]}]
 
-            for item in media:
+            # Добавление изображений с разделителями
+            for index, item in enumerate(media):
                 if item['type'] == 'text':
                     content.append({'tag': 'p', 'children': [item['content']]})
                 elif item['type'] == 'image':
+                    # Создаем фигуру с изображением и подписью
                     figure_content = [{'tag': 'img', 'attrs': {'src': item['url']}}]
                     if item.get('caption'):
                         figure_content.append({'tag': 'figcaption', 'children': [item['caption']]})
+
                     content.append({'tag': 'figure', 'children': figure_content})
+
+                    # Добавление разделителя после изображения, если это не последнее изображение
+                    if index < len(media) - 1:
+                        content.append({'tag': 'hr'})
 
             # Создание статьи в Telegra.ph
             response = requests.post('https://api.telegra.ph/createPage', json={
