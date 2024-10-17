@@ -848,6 +848,12 @@ async def unknown_message(update: Update, context: CallbackContext) -> None:
         elif user_data[user_id]['status'] == 'awaiting_image':
             await handle_image(update, context)
             
+def chunk_images(images, chunk_size=10):
+    for i in range(0, len(images), chunk_size):
+        yield images[i:i + chunk_size]
+
+TELEGRAM_API_TIMEOUT = 20  # Увеличьте время ожидания        
+
 async def share(update: Update, context: CallbackContext) -> None:
     global publish_data
     user_id = update.message.from_user.id
@@ -858,33 +864,42 @@ async def share(update: Update, context: CallbackContext) -> None:
         author_line = data['author_line']
 
         try:
-            # Получаем содержимое статьи
-            article_response = requests.get(f'https://api.telegra.ph/getPage?path={article_url.split("/")[-1]}&return_content=true')
+            # Увеличиваем таймаут для запроса к Telegra.ph
+            article_response = requests.get(f'https://api.telegra.ph/getPage?path={article_url.split("/")[-1]}&return_content=true', timeout=10)
             article_response.raise_for_status()
             article_data = article_response.json()
 
-            # Ищем все изображения в контенте
+            # Ищем изображения в контенте, включая теги figure
             images = []
             for node in article_data['result']['content']:
-                if node['tag'] == 'img' and 'attrs' in node and 'src' in node['attrs']:
+                if node.get('tag') == 'img' and 'attrs' in node and 'src' in node['attrs']:
                     images.append(node['attrs']['src'])
-            
-            # Отправляем первое сообщение с текстом в группу
+                elif node.get('tag') == 'figure' and 'children' in node:
+                    images_in_figure = count_images_in_content(node['children'])
+                    images.extend([img['attrs']['src'] for img in node['children'] if img.get('tag') == 'img' and 'attrs' in img and 'src' in img['attrs']])
+
+            # Отправляем сообщение с текстом
             message_with_link = f'Пользователь {update.message.from_user.username} предложил:\n {author_line}\n<a href="{article_url}">Оригинал</a>'
             await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message_with_link, parse_mode='HTML', disable_web_page_preview=True)
-            
-            # Если есть изображения, отправляем их как медиагруппу в группу
+
+            # Отправляем изображения группами по 10
             if images:
-                media_group = [InputMediaPhoto(image) for image in images]
-                await context.bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media_group)
+                for image_group in chunk_images(images):
+                    media_group = [InputMediaPhoto(image) for image in image_group]
+                    await context.bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media_group)
+                    await asyncio.sleep(1)  # Задержка в 1 секунду между отправками медиа-групп
             else:
                 await context.bot.send_message(chat_id=GROUP_CHAT_ID, text='Изображений в статье нет.')
 
-            # Сообщение об успешной отправке предложения в личный диалог с пользователем
+            # Сообщение об успешной отправке
             await update.message.reply_text('✅Ваше предложение отправлено администрации. Спасибо.')
+
+        except Timeout:
+            logger.warning("Request to Telegram timed out, but message sent successfully.")
+            await update.message.reply_text('✅Ваше предложение отправлено, но обработка статьи заняла больше времени. Вероятно это произошло из-за большого объёма статьи, на всякий случай сообщите об этом через команду /send и прикрепите там ссылку на вашу статью /restart для перезапуска')
         except Exception as e:
             logger.error(f"Failed to process article: {e}")
-            await update.message.reply_text('🚫Ошибка при обработке статьи. /restart')
+            await update.message.reply_text('✅Ваше предложение отправлено, но обработка статьи заняла больше времени. Вероятно это произошло из-за большого объёма статьи, на всякий случай сообщите об этом через команду /send и прикрепите там ссылку на вашу статью /restart для перезапуска')
     else:
         await update.message.reply_text('🚫Нет данных для предложения.')
 
