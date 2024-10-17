@@ -1012,6 +1012,7 @@ def main() -> None:
     application.add_handler(CommandHandler('publish', publish))
     application.add_handler(CommandHandler('preview', preview_article))  # Добавляем обработчик для /preview
     application.add_handler(CommandHandler('delete', delete_last))
+    application.add_handler(CommandHandler('share', share))  # Добавляем обработчик для /share
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений
     
     application.add_handler(conversation_handler)
