@@ -1708,15 +1708,6 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             await message_to_reply.reply_text(f'🚫Ошибка при отправке медиа-группы.')
                             return
 
-                    media_group_storage[user_id] = media_group_data
-                    message_with_link = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
-                    await message_to_reply.reply_text(
-                        message_with_link,
-                        parse_mode='HTML',
-                        reply_markup=create_publish_button(user_id), 
-                        disable_web_page_preview=True
-                    )
-
 
                 if image_count == 1:
                     single_image = next((item for item in media if item['type'] == 'image'), None)
@@ -1729,21 +1720,13 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             "parse_mode": 'HTML'
                         }]
                         
-                        # Проверяем, откуда пришел вызов - из команды или инлайн-кнопки
-                        success = await send_photo_with_retries(
-                            update=update,
-                            photo_url=single_image['url'],
-                            caption=caption,
-                            parse_mode='HTML',
-                            reply_markup=create_publish_button(user_id)
-                        )
                         if not success:
                             await message_to_reply.reply_text('🚫Ошибка при отправке изображения. /restart')
                             return
 
                 elif image_count == 0:
                     message_with_link = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
-                    await message_to_reply.reply_text(message_with_link, parse_mode='HTML', reply_markup=create_publish_button(user_id))
+                    await message_to_reply.reply_text(message_with_link, parse_mode='HTML')
 
                 await message_to_reply.reply_text(f'В статье {image_count} изображений.')
 
@@ -1975,7 +1958,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_create_article_button, pattern='create_article'))
     application.add_handler(CallbackQueryHandler(handle_help_text_button, pattern='help_command'))
     application.add_handler(CallbackQueryHandler(handle_restart_button, pattern='restart'))
-    application.add_handler(CallbackQueryHandler(handle_publish_button, pattern='^publish_'))  # Обработчик для публикации
     application.add_handler(CallbackQueryHandler(handle_restart_button))
     application.add_handler(CallbackQueryHandler(handle_edit_button))
     application.add_handler(CommandHandler('send', send_mode))
