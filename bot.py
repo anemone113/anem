@@ -2168,9 +2168,9 @@ def main() -> None:
     application.add_handler(conversation_handler)
 
     
-
-    logger.info("Bot started and polling...")
-    application.run_polling()  # Запуск бота
+    logger.info("Bot started and polling...")  
+    keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
+    application.run_polling() #запуск бота
 
 if __name__ == '__main__':
     main()
