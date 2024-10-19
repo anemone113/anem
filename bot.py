@@ -1998,7 +1998,7 @@ def main() -> None:
     
     logger.info("Bot started and polling...")  
     keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
-    application.run_polling(non_stop=True, interval=0) #запуск бота
+    application.run_polling(non_stop=True, interval=10) #запуск бота
     
 if __name__ == '__main__':
     main()
