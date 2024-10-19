@@ -19,7 +19,7 @@ from requests.exceptions import Timeout
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-IMGBB_API_KEY = '2467db337d47e9f9cc85af27dc7ea1d3'
+IMGBB_API_KEY = '25c8af109577638da9ba88a667be22b1'
 GROUP_CHAT_ID = -1002233281756
 
 # Состояния
@@ -194,7 +194,26 @@ def compress_image(file_path: str, output_path: str) -> None:
         if file_path.endswith('.jpg'):
             os.remove(file_path)
 
-# Асинхронная функция для загрузки изображения на imgbb
+# Функция для загрузки изображения на сloudinary
+async def upload_image_to_cloudinary(file_path: str) -> str:
+    CLOUDINARY_URL = 'https://api.cloudinary.com/v1_1/dmacjjaho/image/upload'
+    UPLOAD_PRESET = 'ml_default'
+    
+    async with aiohttp.ClientSession() as session:
+        with open(file_path, 'rb') as f:
+            form = aiohttp.FormData()
+            form.add_field('file', f)
+            form.add_field('upload_preset', UPLOAD_PRESET)
+
+            async with session.post(CLOUDINARY_URL, data=form) as response:
+                if response.status == 200:
+                    response_json = await response.json()
+                    return response_json['secure_url']
+                else:
+                    response_text = await response.text()  # Логируем текст ошибки
+                    raise Exception(f"Ошибка загрузки на Cloudinary: {response.status}, ответ: {response_text}")
+
+                    
 # Функция для загрузки изображения на imgbb
 async def upload_image_to_imgbb(file_path: str) -> str:
     async with aiohttp.ClientSession() as session:
@@ -269,21 +288,27 @@ async def upload_image(file_path: str) -> str:
     except Exception as e:
         logging.error(f"Ошибка загрузки на imgbb: {e}")
         try:
-            # Попытка загрузки на Free Image Hosting
-            return await upload_image_to_freeimage(file_path)
+            # Попытка загрузки на Cloudinary
+            return await upload_image_to_cloudinary(file_path)
         except Exception as e:
-            logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
+            logging.error(f"Ошибка загрузки на Cloudinary: {e}")
             try:
-                # Попытка загрузки на Catbox
-                return await upload_image_to_catbox(file_path)
+                # Попытка загрузки на Free Image Hosting
+                return await upload_image_to_freeimage(file_path)
             except Exception as e:
-                logging.error(f"Ошибка загрузки на Catbox: {e}")
+                logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
                 try:
-                    # Попытка загрузки на Imgur
-                    return await upload_image_to_imgur(file_path)
+                    # Попытка загрузки на Catbox
+                    return await upload_image_to_catbox(file_path)
                 except Exception as e:
-                    logging.error(f"Ошибка загрузки на Imgur: {e}")
-                    raise Exception("Не удалось загрузить изображение на все сервисы.")
+                    logging.error(f"Ошибка загрузки на Catbox: {e}")
+                    try:
+                        # Попытка загрузки на Imgur
+                        return await upload_image_to_imgur(file_path)
+                    except Exception as e:
+                        logging.error(f"Ошибка загрузки на Imgur: {e}")
+                        raise Exception("Не удалось загрузить изображение на все сервисы.")
+
 
 
 import re
