@@ -2156,7 +2156,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_help_text_button, pattern='help_command'))
     application.add_handler(CallbackQueryHandler(handle_restart_button, pattern='restart'))
     application.add_handler(CallbackQueryHandler(handle_page_change, pattern='^page_')) 
-    application.add_handler(CallbackQueryHandler(handle_publish_button, pattern='^publish_'))  # Обработчик для публикации
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
