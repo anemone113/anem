@@ -1906,8 +1906,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             update=update,
                             photo_url=single_image['url'],
                             caption=caption,
-                            parse_mode='HTML',
-                            reply_markup=create_publish_button(user_id)
+                            parse_mode='HTML'
                         )
                         if not success:
                             await message_to_reply.reply_text('🚫Ошибка при отправке изображения. /restart')
@@ -1915,7 +1914,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
                 elif image_count == 0:
                     message_with_link = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
-                    await message_to_reply.reply_text(message_with_link, parse_mode='HTML', reply_markup=create_publish_button(user_id))
+                    await message_to_reply.reply_text(message_with_link, parse_mode='HTML')
 
                 image_text = (
                     "изображение" if image_count % 10 == 1 and image_count % 100 != 11
