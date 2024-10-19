@@ -213,7 +213,7 @@ async def upload_image_to_cloudinary(file_path: str) -> str:
                     response_text = await response.text()  # Логируем текст ошибки
                     raise Exception(f"Ошибка загрузки на Cloudinary: {response.status}, ответ: {response_text}")
 
-                    
+
 # Функция для загрузки изображения на imgbb
 async def upload_image_to_imgbb(file_path: str) -> str:
     async with aiohttp.ClientSession() as session:
@@ -308,7 +308,6 @@ async def upload_image(file_path: str) -> str:
                     except Exception as e:
                         logging.error(f"Ошибка загрузки на Imgur: {e}")
                         raise Exception("Не удалось загрузить изображение на все сервисы.")
-
 
 
 import re
@@ -455,7 +454,7 @@ async def edit_article(update: Update, context: CallbackContext) -> None:
         user_id = update.message.from_user.id  # Если это сообщение, получаем ID пользователя
 
     media = user_data[user_id].get('media', [])
-
+    
     if not media:
         await update.message.reply_text("🚫 Ошибка: нет фрагментов для редактирования.")
         return
@@ -470,28 +469,45 @@ async def edit_article(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             print(f"Ошибка при удалении сообщения с содержанием: {e}")
 
-    # Создаём новый список кнопок для содержания статьи
+    # Настройки пагинации
+    items_per_page = 30  # Количество кнопок на странице
+    total_pages = (len(media) + items_per_page - 1) // items_per_page  # Общее количество страниц
+    current_page = user_data[user_id].get('current_page', 0)  # Текущая страница
+
+    # Ограничиваем текущую страницу
+    current_page = max(0, min(current_page, total_pages - 1))
+    
+    # Создаем новый список кнопок для текущей страницы
     keyboard = []
     image_counter = 1  # Счётчик для изображений
-    for idx, item in enumerate(media):
+    start_idx = current_page * items_per_page
+    end_idx = min(start_idx + items_per_page, len(media))
+
+    for idx in range(start_idx, end_idx):
+        item = media[idx]
         if item['type'] == 'text':
             text = item['content']
-            
-            # Извлечение текста, если нужно
             if isinstance(text, dict) and 'children' in text:
                 text = ''.join(child['children'][0] for child in text['children'] if isinstance(child, dict) and 'children' in child)
-            
             preview_text = (text[:12] + '...') if len(text) > 12 else text
-        else:  # Если элемент — это изображение
-            preview_text = f"{image_counter} изображение"  # Нумерация только для изображений
-            image_counter += 1  # Увеличиваем счётчик только для изображений
+        else:
+            preview_text = f"{image_counter} изображение"
+            image_counter += 1
         
-        # Добавляем кнопки для предпросмотра, редактирования и удаления
         keyboard.append([
             InlineKeyboardButton(text=str(preview_text), callback_data=f"preview_{idx}"),
             InlineKeyboardButton(text="Редактировать", callback_data=f"edit_{idx}"),
             InlineKeyboardButton(text="Удалить", callback_data=f"delete_{idx}"),
         ])
+
+    # Добавляем кнопки навигации, если это не первая страница
+    if current_page > 0:
+        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='page_down')])
+    
+    # Добавляем кнопки навигации, если это не последняя страница
+    if current_page < total_pages - 1:
+        keyboard.append([InlineKeyboardButton("Вперёд ➡️", callback_data='page_up')])
+    
     keyboard.append([
         InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')
     ])    
@@ -503,7 +519,8 @@ async def edit_article(update: Update, context: CallbackContext) -> None:
     )
     # Сохраняем ID нового сообщения с кнопками
     user_data[user_id]['last_content_message_id'] = sent_message.message_id
-    del context.user_data['editing_index']
+    user_data[user_id]['current_page'] = current_page  # Сохраняем текущую страницу
+
 
 
 
@@ -540,40 +557,65 @@ async def handle_edit_delete(update: Update, context: CallbackContext) -> None:
             user_data[user_id]['media'] = media  # Сохраняем изменения
 
             # Обновляем кнопки
+# Количество кнопок на одной странице
+            PAGE_SIZE = 30
+
+            # Получаем текущую страницу из user_data (по умолчанию 1)
+            if 'page' not in user_data[user_id]:
+                user_data[user_id]['page'] = 1
+            current_page = user_data[user_id]['page']
+
+            # Обновляем кнопки
             keyboard = []
             image_counter = 1  # Счётчик для изображений
 
-            for idx, item in enumerate(media):
+            # Подсчёт общего количества элементов
+            total_items = len(media)
+            total_pages = (total_items + PAGE_SIZE - 1) // PAGE_SIZE  # Рассчитываем количество страниц
+
+            # Показ элементов только для текущей страницы
+            start_idx = (current_page - 1) * PAGE_SIZE
+            end_idx = start_idx + PAGE_SIZE
+
+            for idx, item in enumerate(media[start_idx:end_idx], start=start_idx):
                 if item['type'] == 'text':
                     text = item['content']
-
+                    
                     # Извлечение текста, если нужно
                     if isinstance(text, dict) and 'children' in text:
                         text = ''.join(child['children'][0] for child in text['children'] if isinstance(child, dict) and 'children' in child)
-
+                    
                     preview_text = (text[:12] + '...') if len(text) > 12 else text
                 else:  # Если элемент — это изображение
                     preview_text = f"{image_counter} изображение"  # Нумерация только для изображений
                     image_counter += 1  # Увеличиваем счётчик только для изображений
-
+                
+                # Добавляем кнопки для текущей страницы
                 keyboard.append([
                     InlineKeyboardButton(text=str(preview_text), callback_data=f"preview_{idx}"),
                     InlineKeyboardButton(text="Редактировать", callback_data=f"edit_{idx}"),
                     InlineKeyboardButton(text="Удалить", callback_data=f"delete_{idx}"),
                 ])
-            keyboard.append([
-                InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')
-            ])    
 
-            # Обновляем сообщение с новыми кнопками
+            # Добавляем кнопки для переключения страниц
+            navigation_buttons = []
+            if current_page > 1:
+                navigation_buttons.append(InlineKeyboardButton("⬆️ Предыдущая страница", callback_data=f"prev_page_{current_page - 1}"))
+            if current_page < total_pages:
+                navigation_buttons.append(InlineKeyboardButton("⬇️ Следующая страница", callback_data=f"next_page_{current_page + 1}"))
+
+            if navigation_buttons:
+                keyboard.append(navigation_buttons)
+
+            # Добавляем кнопку предпросмотра
+            keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')])
+
+            # Отправляем новое сообщение с обновлённым списком кнопок
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.edit_reply_markup(reply_markup=reply_markup)  # Обновляем клавиатуру
 
             await query.message.reply_text("✅ Фрагмент удалён.")
         return
-
-
-
 
 
 async def handle_new_text(update: Update, context: CallbackContext) -> int:
@@ -603,10 +645,24 @@ async def handle_new_text(update: Update, context: CallbackContext) -> int:
                 except Exception as e:
                     print(f"Ошибка при удалении сообщения с содержанием: {e}")
 
+            # Настройки пагинации
+            items_per_page = 30  # Количество кнопок на странице
+            total_pages = (len(media) + items_per_page - 1) // items_per_page  # Общее количество страниц
+            current_page = user_data[user_id].get('current_page', 0)  # Текущая страница
+
+            # Ограничиваем текущую страницу
+            current_page = max(0, min(current_page, total_pages - 1))
+
+
             # Создаём новый список кнопок для содержания статьи
+    # Создаем новый список кнопок для текущей страницы
             keyboard = []
             image_counter = 1  # Счётчик для изображений
+            start_idx = current_page * items_per_page
+            end_idx = min(start_idx + items_per_page, len(media))
+
             for idx, item in enumerate(media):
+                item = media[idx]
                 if item['type'] == 'text':
                     text = item['content']
                     
@@ -625,6 +681,15 @@ async def handle_new_text(update: Update, context: CallbackContext) -> int:
                     InlineKeyboardButton(text="Редактировать", callback_data=f"edit_{idx}"),
                     InlineKeyboardButton(text="Удалить", callback_data=f"delete_{idx}"),
                 ])
+
+            if current_page > 0:
+                keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='page_down')])
+            
+            # Добавляем кнопки навигации, если это не последняя страница
+            if current_page < total_pages - 1:
+                keyboard.append([InlineKeyboardButton("Вперёд ➡️", callback_data='page_up')])
+            
+
             keyboard.append([
                 InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')
             ])    
@@ -633,13 +698,13 @@ async def handle_new_text(update: Update, context: CallbackContext) -> int:
             reply_markup = InlineKeyboardMarkup(keyboard)
             sent_message = await context.bot.send_message(
                 chat_id=update.message.chat_id,
-                text='📝 Текущее содержание статьи:',
+                text='📝 Текущее содержание статьи2:',
                 reply_markup=reply_markup
             )
 
             # Сохраняем ID нового сообщения с кнопками
             user_data[user_id]['last_content_message_id'] = sent_message.message_id
-
+            user_data[user_id]['current_page'] = current_page  
             # Сообщаем пользователю об успешном обновлении текста
             await context.bot.send_message(
                 chat_id=update.message.chat_id,
@@ -780,10 +845,22 @@ async def handle_new_image(update: Update, context: CallbackContext, index: int,
                         except Exception as e:
                             print(f"Ошибка при удалении сообщения с содержанием: {e}")
 
+
+                    # Настройки пагинации
+                    items_per_page = 30  # Количество кнопок на странице
+                    total_pages = (len(media) + items_per_page - 1) // items_per_page  # Общее количество страниц
+                    current_page = user_data[user_id].get('current_page', 0)  # Текущая страница
+
+                    # Ограничиваем текущую страницу
+                    current_page = max(0, min(current_page, total_pages - 1))
+
                     # Создаём новый список кнопок для содержания статьи
                     keyboard = []
                     image_counter = 1  # Счётчик для изображений
-                    for idx, item in enumerate(media):
+                    start_idx = current_page * items_per_page
+                    end_idx = min(start_idx + items_per_page, len(media))
+                    for idx in range(start_idx, end_idx):
+                        item = media[idx]
                         if item['type'] == 'text':
                             text = item['content']
                             
@@ -793,7 +870,7 @@ async def handle_new_image(update: Update, context: CallbackContext, index: int,
                             
                             preview_text = (text[:12] + '...') if len(text) > 12 else text
                         else:  # Если элемент — это изображение
-                            preview_text = f"{image_counter} изображение"  # Нумерация только для изображений
+                            preview_text = f"Обн изображение"  # Нумерация только для изображений
                             image_counter += 1  # Увеличиваем счётчик только для изображений
                         
                         # Добавляем кнопки для предпросмотра, редактирования и удаления
@@ -802,6 +879,14 @@ async def handle_new_image(update: Update, context: CallbackContext, index: int,
                             InlineKeyboardButton(text="Редактировать", callback_data=f"edit_{idx}"),
                             InlineKeyboardButton(text="Удалить", callback_data=f"delete_{idx}"),
                         ])
+
+                    if current_page > 0:
+                        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='page_down')])
+                    
+                    # Добавляем кнопки навигации, если это не последняя страница
+                    if current_page < total_pages - 1:
+                        keyboard.append([InlineKeyboardButton("Вперёд ➡️", callback_data='page_up')])
+                    
                     keyboard.append([
                         InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')
                     ])    
@@ -810,12 +895,13 @@ async def handle_new_image(update: Update, context: CallbackContext, index: int,
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     sent_message = await context.bot.send_message(
                         chat_id=update.message.chat_id,
-                        text='📝 Текущее содержание статьи:',
+                        text='📝 Текущее содержание статьи1:',
                         reply_markup=reply_markup
                     )
 
                     # Сохраняем ID нового сообщения с кнопками
                     user_data[user_id]['last_content_message_id'] = sent_message.message_id
+                    user_data[user_id]['current_page'] = current_page  
 
                     # Удаляем индекс редактирования после завершения
                     del context.user_data['editing_index']
@@ -1085,12 +1171,20 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         reply_markup = InlineKeyboardMarkup(keyboard)                                
 
-                        # Отправляем новое сообщение
+                        if 'image_counter' not in user_data[user_id]:
+                            user_data[user_id]['image_counter'] = 0
+
+                        # Когда бот получает изображение, увеличиваем счётчик
+                        user_data[user_id]['image_counter'] += 1
+                        image_counter = user_data[user_id]['image_counter']
+
+                        # Используем счётчик в сообщении
+                        image_text = "изображение" if image_counter == 1 else "изображения"
                         sent_message = await context.bot.send_message(
                             chat_id=update.message.chat_id,
-                            text='✅ Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений, если их больше чем одно. Затем вы можете продолжить присылать изображения или текст.\n\n Так же вы можете использовать следующие команды:',
+                            text=f'✅ {image_counter} {image_text} добавлено.\n\n Дождитесь загрузки остальных изображений, если их больше чем одно. Затем вы можете продолжить присылать изображения или текст.\n\n Так же вы можете использовать следующие команды:',
                             reply_to_message_id=message_id,
-                            reply_markup=reply_markup 
+                            reply_markup=reply_markup
                         )
 
                         # Сохраняем ID нового сообщения
@@ -1139,12 +1233,21 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         reply_markup = InlineKeyboardMarkup(keyboard) 
 
-                        # Отправляем новое сообщение
+
+                        if 'image_counter' not in user_data[user_id]:
+                            user_data[user_id]['image_counter'] = 0
+
+                        # Когда бот получает изображение, увеличиваем счётчик
+                        user_data[user_id]['image_counter'] += 1
+                        image_counter = user_data[user_id]['image_counter']
+
+                        # Используем счётчик в сообщении
+                        image_text = "изображение" if image_counter == 1 else "изображения"
                         sent_message = await context.bot.send_message(
                             chat_id=update.message.chat_id,
-                            text='✅ Одно изображение добавлено.\n\n Дождитесь загрузки остальных изображений, если их больше чем одно. Затем вы можете продолжить присылать изображения или текст.\n\n Так же вы можете использовать следующие команды:',
+                            text=f'✅ {image_counter} {image_text} добавлено.\n\n Дождитесь загрузки остальных изображений, если их больше чем одно. Затем вы можете продолжить присылать изображения или текст.\n\n Так же вы можете использовать следующие команды:',
                             reply_to_message_id=message_id,
-                            reply_markup=reply_markup 
+                            reply_markup=reply_markup
                         )
 
                         # Сохраняем ID нового сообщения
@@ -1233,13 +1336,21 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
 
         reply_markup = InlineKeyboardMarkup(keyboard) 
 
+        if 'text_counter' not in user_data[user_id]:
+            user_data[user_id]['text_counter'] = 0
+
+        # Когда бот получает текст, увеличиваем счётчик
+        user_data[user_id]['text_counter'] += 1
+        text_counter = user_data[user_id]['text_counter']
+
+        # Используем счётчик текста в сообщении
+        text_message = "текст" if text_counter == 1 else "текста"
         sent_message = await update.message.reply_text(
-            '✅ Текст успешно добавлен. Вы можете отправить ещё текст или изображения.\n\n'
+            f'✅ {text_counter} {text_message} успешно добавлено. Вы можете отправить ещё текст или изображения.\n\n'
             'Либо воспользоваться одной из команд ниже:\n',
             reply_to_message_id=update.message.message_id,
             reply_markup=reply_markup  # Добавляем клавиатуру с кнопкой
         )
-
         # Сохраняем ID нового сообщения
         user_data_entry['last_message_id'] = sent_message.message_id
         user_data[user_id] = user_data_entry
@@ -1302,10 +1413,21 @@ async def handle_new_text_from_image(update: Update, context: CallbackContext, i
         except Exception as e:
             print(f"Ошибка при удалении сообщения с содержанием: {e}")
 
+        # Настройки пагинации
+    items_per_page = 30  # Количество кнопок на странице
+    total_pages = (len(media) + items_per_page - 1) // items_per_page  # Общее количество страниц
+    current_page = user_data[user_id].get('current_page', 0)  # Текущая страница
+
+    # Ограничиваем текущую страницу
+    current_page = max(0, min(current_page, total_pages - 1))        
+
     # Создаём новый список кнопок для содержания статьи
     keyboard = []
     image_counter = 1  # Счётчик для изображений
-    for idx, item in enumerate(media):
+    start_idx = current_page * items_per_page
+    end_idx = min(start_idx + items_per_page, len(media))
+    for idx in range(start_idx, end_idx):
+        item = media[idx]
         if item['type'] == 'text':
             text = item['content']
             
@@ -1324,20 +1446,31 @@ async def handle_new_text_from_image(update: Update, context: CallbackContext, i
             InlineKeyboardButton(text="Редактировать", callback_data=f"edit_{idx}"),
             InlineKeyboardButton(text="Удалить", callback_data=f"delete_{idx}"),
         ])
+    # Добавляем кнопки навигации, если это не первая страница
+    if current_page > 0:
+        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='page_down')])
+    
+    # Добавляем кнопки навигации, если это не последняя страница
+    if current_page < total_pages - 1:
+        keyboard.append([InlineKeyboardButton("Вперёд ➡️", callback_data='page_up')])
+    
     keyboard.append([
         InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')
-    ])    
+    ])       
 
     # Отправляем новое сообщение с обновлённым списком кнопок
     reply_markup = InlineKeyboardMarkup(keyboard)
     sent_message = await context.bot.send_message(
         chat_id=update.message.chat_id,
-        text='📝 Текущее содержание статьи:',
+        text='📝 Текущее содержание статьи3:',
         reply_markup=reply_markup
     )
 
     # Сохраняем ID нового сообщения с кнопками
     user_data[user_id]['last_content_message_id'] = sent_message.message_id
+    user_data[user_id]['current_page'] = current_page 
+
+    del context.user_data['editing_index']
 
     return ASKING_FOR_IMAGE
     
@@ -1590,6 +1723,20 @@ async def handle_edit_button(update: Update, context: CallbackContext) -> None:
     if query.data == 'edit_article':
         await edit_article(update, context)  
 
+# Добавьте обработчик для переключения страниц
+async def handle_page_change(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if query.data == 'page_down':
+        user_data[user_id]['current_page'] -= 1
+    elif query.data == 'page_up':
+        user_data[user_id]['current_page'] += 1
+
+    await edit_article(update, context)  # Повторно вызываем функцию редактирования
+
+
+
 
 # Функция для рекурсивного поиска изображений
 def count_images_in_content(content):
@@ -1702,36 +1849,45 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 logger.info(f"Number of images detected: {image_count}")
 
                 if image_count > 1:
-                    media_groups = [media[i:i + 10] for i in range(0, len(media), 10)]
-                    media_group_data = []  
+                    # Фильтруем только изображения, чтобы избежать смешивания с текстом
+                    image_media = [item for item in media if item['type'] == 'image']
+                    
+                    # Разделение только изображений на группы по 10
+                    media_groups = [image_media[i:i + 10] for i in range(0, len(image_media), 10)]
+                    media_group_data = []
+                    
+                    # Для хранения информации о том, был ли добавлен текст
+                    text_added = False
 
                     for group in media_groups:
                         media_group = []
+
                         for idx, item in enumerate(group):
-                            if item['type'] == 'image':
-                                if idx == 0:
-                                    media_group.append(InputMediaPhoto(
-                                        media=item['url'],
-                                        caption=f'{author_line}\n<a href="{article_url}">Оригинал</a>',
-                                        parse_mode='HTML'
-                                    ))
-                                    media_group_data.append({
-                                        "file_id": item['url'],
-                                        "caption": f'{author_line}\n<a href="{article_url}">Оригинал</a>',
-                                        "parse_mode": 'HTML'
-                                    })
-                                else:
-                                    media_group.append(InputMediaPhoto(media=item['url']))
-                                    media_group_data.append({
-                                        "file_id": item['url'],
-                                        "caption": None
-                                    })
+                            caption = None
+                            
+                            # Если текст ещё не добавлен, добавляем подпись к первому изображению
+                            if not text_added:
+                                caption = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
+                                text_added = True
+
+                            # Добавляем только изображения в медиа-группу
+                            media_group.append(InputMediaPhoto(media=item['url'], caption=caption, parse_mode='HTML' if caption else None))
+                            
+                            # Запоминаем данные для последующего использования
+                            media_group_data.append({
+                                "file_id": item['url'],
+                                "caption": caption,
+                                "parse_mode": 'HTML' if caption else None
+                            })
 
                         # Используем функцию для повторных попыток отправки медиа-группы
                         success = await send_media_group_with_retries(update, media_group)
                         if not success:
                             await message_to_reply.reply_text(f'🚫Ошибка при отправке медиа-группы.')
                             return
+
+                    media_group_storage[user_id] = media_group_data
+
 
 
                 if image_count == 1:
@@ -1745,15 +1901,31 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             "parse_mode": 'HTML'
                         }]
                         
+                        # Проверяем, откуда пришел вызов - из команды или инлайн-кнопки
+                        success = await send_photo_with_retries(
+                            update=update,
+                            photo_url=single_image['url'],
+                            caption=caption,
+                            parse_mode='HTML',
+                            reply_markup=create_publish_button(user_id)
+                        )
                         if not success:
                             await message_to_reply.reply_text('🚫Ошибка при отправке изображения. /restart')
                             return
 
                 elif image_count == 0:
                     message_with_link = f'{author_line}\n<a href="{article_url}">Оригинал</a>'
-                    await message_to_reply.reply_text(message_with_link, parse_mode='HTML')
+                    await message_to_reply.reply_text(message_with_link, parse_mode='HTML', reply_markup=create_publish_button(user_id))
 
-                await message_to_reply.reply_text(f'В статье {image_count} изображений.')
+                image_text = (
+                    "изображение" if image_count % 10 == 1 and image_count % 100 != 11
+                    else "изображения" if 2 <= image_count % 10 <= 4 and (image_count % 100 < 10 or image_count % 100 >= 20)
+                    else "изображений"
+                )
+
+                await message_to_reply.reply_text(
+                    f'====--- В статье {image_count} {image_text} ---====',
+                )
 
                 publish_data[user_id] = {
                     'title': title,
@@ -1983,8 +2155,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_create_article_button, pattern='create_article'))
     application.add_handler(CallbackQueryHandler(handle_help_text_button, pattern='help_command'))
     application.add_handler(CallbackQueryHandler(handle_restart_button, pattern='restart'))
-    application.add_handler(CallbackQueryHandler(handle_restart_button))
-    application.add_handler(CallbackQueryHandler(handle_edit_button))
+    application.add_handler(CallbackQueryHandler(handle_page_change, pattern='^page_')) 
+    application.add_handler(CallbackQueryHandler(handle_publish_button, pattern='^publish_'))  # Обработчик для публикации
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
@@ -1995,10 +2167,11 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений
     application.add_handler(CommandHandler('share', share))  # Добавляем обработчик для /share
     application.add_handler(conversation_handler)
+
     
-    logger.info("Bot started and polling...")  
-    keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
-    application.run_polling() #запуск бота
-    
+
+    logger.info("Bot started and polling...")
+    application.run_polling()  # Запуск бота
+
 if __name__ == '__main__':
     main()
