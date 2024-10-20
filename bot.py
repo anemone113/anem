@@ -107,8 +107,9 @@ async def start(update: Update, context: CallbackContext) -> int:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text("К сожалению, ничего не найдено. Возможно у бота сегодня уже исчерпан лимит обращений к Saucenao, возможно изображение сгенерировано, возможно автор малоизвестен, либо изображение слишком свежее\n \n Но вы можете попробовать найти самостоятельно на следующих ресурсах:", reply_markup=reply_markup)
-        
+            await update.message.reply_text("К сожалению, ничего не найдено. Возможно у бота сегодня уже исчерпан лимит обращений к Saucenao, возможно изображение сгенерировано, возможно автор малоизвестен, либо изображение слишком свежее\n \n Но вы можете попробовать найти самостоятельно на следующих ресурсах:", 
+                reply_markup=reply_markup)
+            
         return ASKING_FOR_FILE
 
 
@@ -292,8 +293,7 @@ async def ai_or_not(update: Update, context: CallbackContext):
 
                     await update.callback_query.answer()
                     await update.callback_query.message.reply_text(
-                        f"Изображение сгенерировано АИ с вероятностью: {ai_generated_score * 100:.2f}% \n\n Вы можете проверить другие изображения на следующих ресурсах:",
-                        reply_markup=reply_markup
+                        f"Изображение сгенерировано АИ с вероятностью: {ai_generated_score * 100:.2f}% \n\n Вы можете прислать другое изображение для проверки, либо проверить самостоятельно на следующих ресурсах:",                        reply_markup=reply_markup
                     )
 
                     return
@@ -573,6 +573,7 @@ def compress_image(file_path: str, output_path: str) -> None:
 async def upload_image_to_cloudinary(file_path: str) -> str:
     CLOUDINARY_URL = 'https://api.cloudinary.com/v1_1/dmacjjaho/image/upload'
     UPLOAD_PRESET = 'ml_default'
+    timeout = ClientTimeout(total=10)  # Таймаут в 10 секунд    
     
     async with aiohttp.ClientSession() as session:
         with open(file_path, 'rb') as f:
@@ -591,6 +592,7 @@ async def upload_image_to_cloudinary(file_path: str) -> str:
 
 # Функция для загрузки изображения на imgbb
 async def upload_image_to_imgbb(file_path: str) -> str:
+    timeout = ClientTimeout(total=4)  # Таймаут в 10 секунд
     async with aiohttp.ClientSession() as session:
         with open(file_path, 'rb') as f:
             form = aiohttp.FormData()
