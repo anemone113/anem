@@ -1,9 +1,9 @@
 from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDocument, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler, CallbackQueryHandler
 from PIL import Image
-from background import keep_alive
 from telegram.constants import ParseMode
 from tenacity import retry, wait_fixed, stop_after_attempt
+from background import keep_alive
 import asyncio
 import requests
 import logging
@@ -15,6 +15,7 @@ from tenacity import retry, wait_fixed, stop_after_attempt, RetryError
 import tempfile
 import re
 from requests.exceptions import Timeout
+from bs4 import BeautifulSoup
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -23,53 +24,378 @@ IMGBB_API_KEY = '25c8af109577638da9ba88a667be22b1'
 GROUP_CHAT_ID = -1002233281756
 
 # Состояния
-ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT = range(4)
+ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE = range(5)
 # Сохранение данных состояния пользователя
 user_data = {}
 publish_data = {}
 users_in_send_mode = set()
 media_group_storage = {}
+is_search_mode = {}
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: CallbackContext) -> int:
-    # Проверка, если событие пришло от текстового сообщения
+    user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
+
+    if is_search_mode.get(user_id, False):
+        if update.message.photo:
+            file = await update.message.photo[-1].get_file()
+            image_path = 'temp_image.jpg'
+        elif update.message.document:
+            if update.message.document.mime_type.startswith('image/'):
+                file = await update.message.document.get_file()
+                image_path = 'temp_image.jpg'
+            else:
+                await update.message.reply_text("Пожалуйста, отправьте изображение для поиска  ссылок на источники.")
+                return ASKING_FOR_FILE
+        else:
+            await update.message.reply_text("Пожалуйста, отправьте изображение для поиска источника.")
+            return ASKING_FOR_FILE
+        
+        await file.download_to_drive(image_path)
+
+        # Загружаем изображение на Catbox
+        img_url = await upload_catbox(image_path)
+
+        context.user_data['img_url'] = img_url 
+
+        # Создаем URL для поиска на Saucenao, Yandex, Google Images и Bing
+        search_url = f"https://saucenao.com/search.php?db=999&url={img_url}"
+        yandex_search_url = f"https://yandex.ru/images/search?source=collections&rpt=imageview&url={img_url}"
+        google_search_url = f"https://lens.google.com/uploadbyurl?url={img_url}"
+        bing_search_url = f"https://www.bing.com/images/search?view=detailv2&iss=sbi&form=SBIVSP&sbisrc=UrlPaste&q=imgurl:{img_url}"
+
+        # Получаем авторов и ссылки
+        authors, external_links = await search_image_saucenao(image_path)
+        os.remove(image_path)
+
+        if authors:
+            authors_text = ', '.join(authors)
+            links_text = "\n".join(f"{i + 1}. {link}" for i, link in enumerate(external_links))
+
+            reply_text = f"Авторы: {authors_text}\nСсылки:\n{links_text}"
+
+            keyboard = [
+                [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],            
+                [InlineKeyboardButton("Все результаты на Saucenao", url=search_url)],
+                [InlineKeyboardButton("Поиск через Yandex Images", url=yandex_search_url)],
+                [InlineKeyboardButton("Поиск через Google Images", url=google_search_url)],
+                [InlineKeyboardButton("Поиск через Bing Images", url=bing_search_url)],
+                [InlineKeyboardButton("Завершить поиск", callback_data='finish_search')],
+                [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            yandex_similar_images = await parse_yandex_results(img_url)
+
+            if yandex_similar_images:
+                yandex_similar_text = '\n'.join(yandex_similar_images)
+                reply_text += f"\nПохожие изображения с Yandex:\n{yandex_similar_text}"
+
+            await update.message.reply_text(reply_text, reply_markup=reply_markup)
+        else:
+            keyboard = [
+                [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],            
+                [InlineKeyboardButton("Все результаты на Saucenao", url=search_url)],
+                [InlineKeyboardButton("Поиск через Yandex Images", url=yandex_search_url)],
+                [InlineKeyboardButton("Поиск через Google Images", url=google_search_url)],
+                [InlineKeyboardButton("Поиск через Bing Images", url=bing_search_url)],
+                [InlineKeyboardButton("Завершить поиск", callback_data='finish_search')],
+                [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text("К сожалению, ничего не найдено. Возможно у бота сегодня уже исчерпан лимит обращений к Saucenao, возможно изображение сгенерировано, возможно автор малоизвестен, либо изображение слишком свежее\n \n Но вы можете попробовать найти самостоятельно на следующих ресурсах:", reply_markup=reply_markup)
+        
+        return ASKING_FOR_FILE
+
+
+    # Основная логика для работы с изображениями
     if update.message:
-        user_id = update.message.from_user.id
         message_to_reply = update.message
+
+        # Проверка, если пользователь отправил изображение как файл (document)
+        if update.message.document and update.message.document.mime_type.startswith('image/'):
+            caption = update.message.caption.strip() if update.message.caption else ''
+            parts = caption.split(maxsplit=1)
+            if len(parts) > 0:
+                artist_link = parts[0]  # Первая часть - это ссылка
+                author_name = parts[1] if len(parts) > 1 else ''  # Остальная часть - это текст
+
+                # Сохраняем имя автора как заголовок статьи напрямую
+                user_data[user_id] = {
+                    'status': 'awaiting_image',
+                    'artist_link': artist_link,
+                    'author_name': author_name,
+                    'title': author_name,  # Используем как заголовок
+                    'media': [],
+                    'image_counter': 0,
+                }
+                # Обработка изображения
+                await handle_image(update, context)
+
+                # Вызов команды /publish после обработки изображения
+                await publish(update, context)
+
+                # Завершение процесса для данного пользователя
+                del user_data[user_id]  # Очистка данных пользователя, если нужно
+
+        # Проверка, если пользователь отправил изображение как фото (photo)
+        elif update.message.photo:
+            await message_to_reply.reply_text(
+                "Пожалуйста отправьте файл документом /restart"
+            )
+            return ConversationHandler.END
+
     # Проверка, если событие пришло от callback_query
     elif update.callback_query:
-        user_id = update.callback_query.from_user.id
         message_to_reply = update.callback_query.message
     else:
-        # Если нет ни сообщения, ни callback_query
         return ConversationHandler.END
 
     # Если пользователя еще нет в данных, инициализируем процесс
     if user_id not in user_data:
         logger.info(f"User {user_id} started the process.")
+        
+        # Создаем кнопку "Начать поиск"
+        keyboard = [
+            [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Отправляем сообщение с кнопкой
         await message_to_reply.reply_text(
             '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
             'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
-            '<i>В боте есть команда /restart, которая перезапускает процесс на любом этапе</i>\n',
+            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения</i>\n',
+            reply_markup=reply_markup,
             parse_mode='HTML'
         )
-        user_data[user_id] = {'status': 'awaiting_artist_link'}  # Инициализация данных для пользователя
+        
+        user_data[user_id] = {'status': 'awaiting_artist_link'}
         return ASKING_FOR_ARTIST_LINK
+
+    # Обработка состояний пользователя
+    status = user_data[user_id].get('status')
+    if status == 'awaiting_artist_link':
+        return await handle_artist_link(update, context)
+    elif status == 'awaiting_author_name':
+        return await handle_author_name(update, context)
+    elif status == 'awaiting_image':
+        return await handle_image(update, context)
     else:
-        # Обработка состояний пользователя
-        status = user_data[user_id].get('status')
-        if status == 'awaiting_artist_link':
-            return await handle_artist_link(update, context)
-        elif status == 'awaiting_author_name':
-            return await handle_author_name(update, context)
-        elif status == 'awaiting_image':
-            return await handle_image(update, context)
+        await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
+        return ConversationHandler.END
+
+async def search_image_saucenao(image_path: str):
+    url = 'https://saucenao.com/search.php'
+    params = {
+        'api_key': '9e1532e031fd8afa2568b659f5f8b97a895cddda',
+        'output_type': 2,
+        'numres': 5,
+        'db': 999
+    }
+
+    async with aiohttp.ClientSession() as session:
+        with open(image_path, 'rb') as image_file:
+            files = {'file': image_file}
+
+            async with session.post(url, params=params, data=files) as response:
+                if response.status == 200:
+                    results = await response.json()
+                    if results['results']:
+                        authors = []
+                        external_links = []
+
+                        for result in results['results']:
+                            similarity = float(result['header']['similarity'])
+                            if similarity > 75:  # Используем условие для фильтрации по сходству
+                                # Предполагаем, что creator может быть строкой или списком
+                                creator = result['data'].get('creator', 'Поле не заполнено')
+                                if isinstance(creator, list):
+                                    authors.extend(creator)  # Если это список, добавляем его элементы
+                                else:
+                                    authors.append(creator)  # Если строка, добавляем её
+
+                                links = result['data'].get('ext_urls', [])
+                                external_links.extend(links)
+
+                        return authors, external_links  # Возвращаем списки авторов и ссылок
+                    else:
+                        return None, None
+                else:
+                    print(f"Ошибка {response.status}: {await response.text()}")
+                    return None, None
+
+async def upload_catbox(file_path: str) -> str:
+    async with aiohttp.ClientSession() as session:
+        with open(file_path, 'rb') as f:
+            form = aiohttp.FormData()
+            form.add_field('reqtype', 'fileupload')
+            form.add_field('fileToUpload', f)
+            
+            # Добавляем ваш userhash
+            form.add_field('userhash', '1f68d2a125c66f6ab79a4f89c')  # Замените на ваш реальный userhash
+
+            async with session.post('https://catbox.moe/user/api.php', data=form) as response:
+                if response.status == 200:
+                    return await response.text()  # возвращает URL загруженного файла
+                else:
+                    raise Exception(f"Ошибка загрузки на Catbox: {response.status}")
+
+
+async def parse_yandex_results(img_url):
+    search_url = f"https://yandex.ru/images/search?source=collections&rpt=imageview&url={img_url}"
+    response = requests.get(search_url)
+    soup = BeautifulSoup(response.text, 'lxml')
+    
+    similar_images = soup.find_all('li', class_='cbir-similar__thumb')
+    result_links = []
+    for i in similar_images:
+        result_links.append(f"https://yandex.ru{i.find('a').get('href')}")
+    
+    return result_links
+
+
+async def ai_or_not(update: Update, context: CallbackContext):
+    img_url = context.user_data.get('img_url')
+
+    if img_url is None:
+        await update.callback_query.answer("Не удалось найти URL изображения.")
+        return
+
+    api_user = '1334786424'  # Ваш api_user
+    api_secret = 'HaC88eFy4NLhyo86Md9aTKkkKaQyZeEU'  # Ваш api_secret
+
+    params = {
+        'url': img_url,
+        'models': 'genai',
+        'api_user': api_user,
+        'api_secret': api_secret
+    }
+
+    async with aiohttp.ClientSession() as session:
+        for attempt in range(5):  # Пять попыток
+            async with session.get('https://api.sightengine.com/1.0/check.json', params=params) as response:
+                if response.status == 200:
+                    output = await response.json()
+                    ai_generated_score = output['type']['ai_generated']
+
+                    keyboard = [
+                        [InlineKeyboardButton("Sightengine", url="https://sightengine.com/detect-ai-generated-images")],
+                        [InlineKeyboardButton("Illuminarty AI", url="https://app.illuminarty.ai/#/")]
+                    ]
+
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await update.callback_query.answer()
+                    await update.callback_query.message.reply_text(
+                        f"Изображение сгенерировано АИ с вероятностью: {ai_generated_score * 100:.2f}% \n\n Вы можете проверить другие изображения на следующих ресурсах:",
+                        reply_markup=reply_markup
+                    )
+
+                    return
+                elif response.status == 429:
+                    await asyncio.sleep(5)  # Ждем 5 секунд перед следующей попыткой
+                else:
+                    error_message = await response.text()
+                    await update.callback_query.answer("Ошибка при обращении к API Sightengine.")
+                    print(f"Ошибка API: {response.status} - {error_message}")
+                    return
+
+    await update.callback_query.answer("Не удалось обработать изображение после нескольких попыток.")
+
+
+
+
+
+async def start_search(update: Update, context: CallbackContext) -> int:
+    if update.message:
+        user_id = update.message.from_user.id  # Когда вызвано командой /search
+        message_to_reply = update.message
+    elif update.callback_query:
+        user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
+        message_to_reply = update.callback_query.message
+    
+    is_search_mode[user_id] = True  # Устанавливаем флаг для пользователя в режим поиска
+
+    # Создаем кнопку "Отменить поиск"
+    keyboard = [
+        [InlineKeyboardButton("Отменить поиск", callback_data='finish_search')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем сообщение с кнопкой
+    await message_to_reply.reply_text(
+        "Пожалуйста, отправьте изображение для поиска источника или для проверки, сгенерировано ли оно нейросетью.",
+        reply_markup=reply_markup
+    )
+    
+    return ASKING_FOR_FILE
+
+async def handle_file(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+
+    # Проверка состояния, если пользователь уже находится в режиме поиска
+    if user_id in is_search_mode and is_search_mode[user_id]:
+        if update.message.photo:
+            # Ваш текущий код для обработки фото
+            file = await update.message.photo[-1].get_file()
+            image_path = 'temp_image.jpg'
+            await file.download_to_drive(image_path)
+            # Здесь ваша логика после загрузки
+            return ASKING_FOR_FILE
+        elif update.message.document:
+            if update.message.document.mime_type.startswith('image/'):
+                # Ваш текущий код для обработки документа
+                file = await update.message.document.get_file()
+                image_path = 'temp_image.jpg'
+                await file.download_to_drive(image_path)
+                # Здесь ваша логика после загрузки
+                return ASKING_FOR_FILE
+            else:
+                await update.message.reply_text("Пожалуйста, отправьте изображение для поиска ссылок на источники.")
+                return ASKING_FOR_FILE
         else:
-            await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
-            return ConversationHandler.END
+            await update.message.reply_text("Пожалуйста, отправьте изображение для поиска источника.")
+            return ASKING_FOR_FILE
+    
+    # Если пользователь отправил команду /restart, сбрасываем состояние
+    if update.message.text == "/restart":
+        return await restart(update, context)  # Вызов функции перезапуска
+
+    await update.message.reply_text("Пожалуйста, отправьте файл документом или изображение.")
+    return ASKING_FOR_FILE
+
+async def finish_search(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    user_id = query.from_user.id
+    is_search_mode[user_id] = False  # Выключаем режим поиска
+    
+    await query.answer()  # Отвечаем на запрос, чтобы убрать индикатор загрузки на кнопке
+    await query.edit_message_text("Вы вышли из режима поиска и вернулись к основным функциям бота")  # Изменяем текст сообщения с кнопками
+
+    return ConversationHandler.END
+
+# Основная логика обработчика сообщений
+async def main_logic(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+
+    # Если пользователь находится в режиме поиска, игнорируем основную логику
+    if is_search_mode.get(user_id, False):
+        return
+
+    # Основная логика обработки сообщений
+    await update.message.reply_text("Обрабатываем сообщение в основной логике.")
+    return ConversationHandler.END
+
+# Добавим функцию для обработки неизвестных сообщений в режиме поиска
+async def unknown_search_message(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("Пожалуйста, отправьте фото или документ.")
+    return ASKING_FOR_FILE
+
 
 async def restart(update: Update, context: CallbackContext) -> int:
     # Проверка типа события
@@ -82,13 +408,26 @@ async def restart(update: Update, context: CallbackContext) -> int:
     else:
         return ConversationHandler.END
 
+    # Удаляем все данные пользователя
     if user_id in user_data:
         del user_data[user_id]  # Удаляем старые данные пользователя  
+
+    if user_id in is_search_mode:
+        del is_search_mode[user_id]  # Выключаем режим поиска, если он включен
+
     logger.info(f"User {user_id} restarted the process.") 
     
     # Инициализируем новое состояние пользователя
-    user_data[user_id] = {'status': 'awaiting_artist_link'}
-    await message_to_reply.reply_text('✅Процесс сброшен. Пожалуйста, начните заново. \nОтправьте ссылку на автора.')
+    keyboard = [
+        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("Помощь и разметка", callback_data='help_command')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await message_to_reply.reply_text(
+        '✅Процесс сброшен. Для запуска создания новой публикации отправьте боту любой текст. Либо воспользуйтесь одной из команд ниже',
+        reply_markup=reply_markup  # Добавляем клавиатуру
+    )
     
     return ASKING_FOR_ARTIST_LINK
 
@@ -109,8 +448,12 @@ async def handle_artist_link(update: Update, context: CallbackContext) -> int:
     if user_id in user_data and user_data[user_id]['status'] == 'awaiting_artist_link':
         user_data[user_id]['artist_link'] = update.message.text
         logger.info(f"User {user_id} provided author link: {update.message.text}")
-        await update.message.reply_text('Теперь отправьте имя автора. \n\n <i>Чтобы скрыть слово "Автор:", используйте символ "^" в начале и конце сообщения. Например: ^Имя^</i>',
-    parse_mode='HTML')
+
+
+        await update.message.reply_text(
+            '🌟Хорошо. Теперь отправьте имя автора. \n\n <i>Чтобы скрыть слово "Автор:", используйте символ "^" в начале и конце сообщения. Например: ^Имя^</i>',
+            parse_mode='HTML' # Добавляем клавиатуру
+        )
         user_data[user_id]['status'] = 'awaiting_author_name'
         return ASKING_FOR_AUTHOR_NAME
     else:
@@ -120,43 +463,75 @@ async def handle_artist_link(update: Update, context: CallbackContext) -> int:
 # Ввод имени художника
 async def handle_author_name(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
+
+    # Проверка, что пользователь находится в нужном состоянии
     if user_id in user_data and user_data[user_id].get('status') == 'awaiting_author_name':
-        author_input = update.message.text.strip()
 
-        # Проверка на то, заключен ли весь текст в "^...^" с учётом переносов строк
-        if re.match(r'^\^(.*)\^$', author_input, re.S):
-            # Извлекаем текст без символов "^", сохраняя переносы строк
-            title = author_input[1:-1].strip()
-            user_data[user_id]['title'] = title
-            user_data[user_id]['author_name'] = ""  # Убираем имя автора
-            user_data[user_id]['extra_phrase'] = ""  # Пустая фраза, если ничего не найдено
-        else:
-            # Проверка на наличие фразы в "^...^" в начале текста с учётом переносов строк
-            match = re.match(r'^\^(.*?)\^\s*(.*)', author_input, re.S)
-            if match:
-                phrase = match.group(1).strip()  # Извлекаем фразу из "^...^", сохраняя переносы строк
-                author_name = match.group(2).strip()  # Извлекаем остальное имя автора
-                user_data[user_id]['extra_phrase'] = phrase  # Сохраняем фразу отдельно
+        # Если авторское имя ещё не сохранено
+        if 'author_name' not in user_data[user_id]:
+            author_input = update.message.text.strip()
+
+            # Проверяем, если авторское имя обернуто в "^...^"
+            match_full = re.match(r'^\^(.*)\^$', author_input, re.S)
+            if match_full:
+                # Если весь текст внутри "^...^", используем его как заголовок и убираем авторское имя
+                title = match_full.group(1).strip()
+                user_data[user_id]['title'] = title
+                user_data[user_id]['author_name'] = ""  # Очищаем author_name
+                user_data[user_id]['extra_phrase'] = ""  # Нет доп. фразы
             else:
-                author_name = author_input.strip()  # Если нет фразы в "^...^", сохраняем как есть
-                user_data[user_id]['extra_phrase'] = ""  # Пустая фраза, если ничего не найдено
+                # Проверка на наличие фразы в начале текста "^...^"
+                match_partial = re.match(r'^\^(.*?)\^\s*(.*)', author_input, re.S)
+                if match_partial:
+                    # Извлекаем фразу и имя автора
+                    phrase = match_partial.group(1).strip()  # Фраза из "^...^"
+                    author_name = match_partial.group(2).strip()  # Остаток текста как автор
+                    user_data[user_id]['extra_phrase'] = phrase  # Сохраняем фразу
+                    user_data[user_id]['author_name'] = author_name  # Имя автора
+                    user_data[user_id]['title'] = author_name  # Используем как заголовок
+                else:
+                    # Если нет фразы в "^...^", сохраняем всё как имя автора
+                    author_name = author_input
+                    user_data[user_id]['author_name'] = author_name
+                    user_data[user_id]['title'] = author_name  # Заголовок статьи
 
-            # Сохраняем имя автора как заголовок статьи
-            user_data[user_id]['author_name'] = author_name
-            user_data[user_id]['title'] = author_name  # Используем только имя автора для заголовка
+            logger.info(f"User {user_id} provided author name or title: {author_input}")
+        else:
+            # Если author_name уже есть, просто используем его для заголовка
+            author_name = user_data[user_id]['author_name']
+            user_data[user_id]['title'] = author_name  # Обновляем заголовок
 
-        logger.info(f"User {user_id} provided author name or title: {author_input}")
+        # Переход к следующему этапу
+        keyboard = [
+            [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+            [InlineKeyboardButton("Помощь и разметка", callback_data='help_command')],
+            [InlineKeyboardButton("‼️Полный сброс процесса‼️", callback_data='restart')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text('Отлично \n🌌Теперь приступим к наполнению публикации контентом, для этого отправьте изображения файлом (без сжатия) или текст. Если вы отправите изображение с подписью, то в статье телеграф текст тоже будет отображаться как подпись под изображением \n\n Текст поддерживает различное форматирование. Для получения списка тэгов и помощи введите /help. \n\n <i>Так же вы можете отправить содержание путем пересылки сообщений. Просто перешлите в бот сообщения содержащие текст и/или изображения в виде файлов и бот автоматически перенесёт всё это в статью в той же очерёдности</i>',    parse_mode='HTML')
+        await update.message.reply_text(
+            'Отлично \n🌌Теперь приступим к наполнению публикации контентом. Отправьте изображения файлом (без сжатия) или текст. Если вы отправите изображение с подписью, то в статье телеграф текст будет так же отображаться как подпись под изображением.\n\n'
+            'Текст поддерживает различное форматирование. Для получения списка тэгов нажмите на кнопку помощи.\n\n'
+            '<i>Так же вы можете переслать в бот сообщения с текстом и/или изображениями, и бот тут же автоматически перенесет всё это в статью в той же очерёдности</i>',
+            parse_mode='HTML',
+            reply_markup=reply_markup  # Добавляем клавиатуру
+        )
         user_data[user_id]['status'] = 'awaiting_image'
         return ASKING_FOR_IMAGE
+
     else:
-        await update.message.reply_text('🚫Ошибка: данные не найдены. Попробуйте снова или нажмите /restart')
+        await update.message.reply_text('🚫Ошибка: данные не найдены. Попробуйте снова или нажмите /restart.')
         return ConversationHandler.END
+
+
 
 def compress_image(file_path: str, output_path: str) -> None:
     # Определяем максимальный размер файла в байтах (5 МБ)
     max_size = 5 * 1024 * 1024
+
+    # Проверяем, является ли файл GIF или .rar
+    if file_path.endswith('.gif') or file_path.endswith('.rar'):
+        return
 
     # Открываем изображение
     with Image.open(file_path) as img:
@@ -309,9 +684,9 @@ async def upload_image(file_path: str) -> str:
                         logging.error(f"Ошибка загрузки на Imgur: {e}")
                         raise Exception("Не удалось загрузить изображение на все сервисы.")
 
-
 import re
 
+# Определяем разметку тегов
 markup_tags = {
     '*': 'strong',  # Жирный текст
     '_': 'em',      # Курсив
@@ -443,7 +818,6 @@ def apply_markup_to_content(content: str) -> list:
             nodes.append(node)
 
     return nodes
-    
 
 async def edit_article(update: Update, context: CallbackContext) -> None:
     # Проверяем, является ли обновление запросом обратного вызова (нажатие кнопки)
@@ -508,10 +882,10 @@ async def edit_article(update: Update, context: CallbackContext) -> None:
     if current_page < total_pages - 1:
         keyboard.append([InlineKeyboardButton("Вперёд ➡️", callback_data='page_up')])
     
-    keyboard.append([
-        InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')
-    ])    
-
+    keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
+    keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
+    keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+    keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
     # Отправляем новое сообщение и сохраняем его ID
     sent_message = await (query.message if update.callback_query else update.message).reply_text(
         "Выберите фрагмент для редактирования или удаления:", 
@@ -520,7 +894,6 @@ async def edit_article(update: Update, context: CallbackContext) -> None:
     # Сохраняем ID нового сообщения с кнопками
     user_data[user_id]['last_content_message_id'] = sent_message.message_id
     user_data[user_id]['current_page'] = current_page  # Сохраняем текущую страницу
-
 
 
 
@@ -608,7 +981,10 @@ async def handle_edit_delete(update: Update, context: CallbackContext) -> None:
                 keyboard.append(navigation_buttons)
 
             # Добавляем кнопку предпросмотра
-            keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')])
+            keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
+            keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
+            keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+            keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
 
             # Отправляем новое сообщение с обновлённым списком кнопок
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -616,6 +992,9 @@ async def handle_edit_delete(update: Update, context: CallbackContext) -> None:
 
             await query.message.reply_text("✅ Фрагмент удалён.")
         return
+
+
+
 
 
 async def handle_new_text(update: Update, context: CallbackContext) -> int:
@@ -870,7 +1249,7 @@ async def handle_new_image(update: Update, context: CallbackContext, index: int,
                             
                             preview_text = (text[:12] + '...') if len(text) > 12 else text
                         else:  # Если элемент — это изображение
-                            preview_text = f"Обн изображение"  # Нумерация только для изображений
+                            preview_text = f"Обн изобр-ие"  # Нумерация только для изображений
                             image_counter += 1  # Увеличиваем счётчик только для изображений
                         
                         # Добавляем кнопки для предпросмотра, редактирования и удаления
@@ -932,7 +1311,7 @@ async def handle_new_image(update: Update, context: CallbackContext, index: int,
 
 
 
-# Обновленная функция handle_image для обработки изображений
+
 async def handle_image(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     caption = update.message.caption
@@ -1066,14 +1445,66 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
                                             print(f"Ошибка при удалении сообщения: {e}")
 
                                     # Отправляем новое сообщение
-                                    sent_message = await context.bot.send_message(
+                                    keyboard = []
+                                    image_counter = 1  # Счётчик для изображений
+
+                                    # Настройки пагинации
+                                    items_per_page = 30  # Количество кнопок на странице
+                                    total_pages = (len(media) + items_per_page - 1) // items_per_page  # Общее количество страниц
+                                    current_page = user_data[user_id].get('current_page', 0)  # Текущая страница
+
+                                    # Ограничиваем текущую страницу
+                                    current_page = max(0, min(current_page, total_pages - 1))
+
+                                    # Создаём новый список кнопок для содержания статьи
+                                    start_idx = current_page * items_per_page
+                                    end_idx = min(start_idx + items_per_page, len(media))
+                                    for idx in range(start_idx, end_idx):
+                                        item = media[idx]
+                                        if item['type'] == 'text':
+                                            text = item['content']
+                                            
+                                            # Извлечение текста, если нужно
+                                            if isinstance(text, dict) and 'children' in text:
+                                                text = ''.join(child['children'][0] for child in text['children'] if isinstance(child, dict) and 'children' in child)
+                                            
+                                            preview_text = (text[:12] + '...') if len(text) > 12 else text
+                                        else:  # Если элемент — это изображение
+                                            preview_text = f"{image_counter} изображение"  # Нумерация только для изображений
+                                            image_counter += 1  # Увеличиваем счётчик только для изображений
+                                        
+                                        # Добавляем кнопки для предпросмотра, редактирования и удаления
+                                        keyboard.append([
+                                            InlineKeyboardButton(text=str(preview_text), callback_data=f"preview_{idx}"),
+                                            InlineKeyboardButton(text="Редактировать", callback_data=f"edit_{idx}"),
+                                            InlineKeyboardButton(text="Удалить", callback_data=f"delete_{idx}"),
+                                        ])
+
+                                    # Добавляем кнопки навигации, если это не первая страница
+                                    if current_page > 0:
+                                        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data='page_down')])
+
+                                    # Добавляем кнопки навигации, если это не последняя страница
+                                    if current_page < total_pages - 1:
+                                        keyboard.append([InlineKeyboardButton("Вперёд ➡️", callback_data='page_up')])
+
+                                    keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
+                                    keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
+                                    keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+                                    keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
+
+
+                                    # Отправляем новое сообщение с обновлённым списком кнопок
+                                    reply_markup = InlineKeyboardMarkup(keyboard)
+                                    sent_message_with_buttons = await context.bot.send_message(
                                         chat_id=update.message.chat_id,
-                                        text='✅ Изображение Заменено.',
-                                        reply_to_message_id=message_id
+                                        text='✅ Изображение Заменено. \n📝 Текущее содержание статьи:',
+                                        reply_markup=reply_markup
                                     )
 
-                                    # Сохраняем ID нового сообщения
-                                    user_data[user_id]['last_image_message_id'] = sent_message.message_id
+                                    # Сохраняем ID нового сообщения с кнопками
+                                    user_data[user_id]['last_image_message_id'] = sent_message_with_buttons.message_id
+                                    user_data[user_id]['current_page'] = current_page
 
                                     # Удаляем индекс редактирования после завершения
                                     del context.user_data['editing_index']
@@ -1162,6 +1593,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         keyboard = [
                             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
+                            [InlineKeyboardButton("Найти автора или проверить на ИИ ", callback_data='start_search')],                            
                             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
                             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
                             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -1224,6 +1656,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         keyboard = [
                             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
+                            [InlineKeyboardButton(" Найти автора или проверить на ИИ ", callback_data='start_search')],
                             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
                             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
                             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -1289,6 +1722,8 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
         )
         return ConversationHandler.END
 
+
+        
 # Функция для обработки текстовых сообщений
 async def handle_text(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
@@ -1326,6 +1761,7 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
 
         keyboard = [
             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
+            [InlineKeyboardButton("Найти автора или проверить на ИИ ", callback_data='start_search')],
             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -1359,7 +1795,9 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
     else:
         await update.message.reply_text('🚫 Ошибка: данные не найдены. Попробуйте отправить снова. Или нажмите /restart')
         return ConversationHandler.END
-        
+
+
+
 
 async def handle_new_text_from_image(update: Update, context: CallbackContext, index, media) -> int:
     user_id = update.message.from_user.id
@@ -1454,10 +1892,10 @@ async def handle_new_text_from_image(update: Update, context: CallbackContext, i
     if current_page < total_pages - 1:
         keyboard.append([InlineKeyboardButton("Вперёд ➡️", callback_data='page_up')])
     
-    keyboard.append([
-        InlineKeyboardButton("🌌 Предпросмотр 🌌 ", callback_data='preview_article')
-    ])       
-
+    keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
+    keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
+    keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+    keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
     # Отправляем новое сообщение с обновлённым списком кнопок
     reply_markup = InlineKeyboardMarkup(keyboard)
     sent_message = await context.bot.send_message(
@@ -1473,7 +1911,8 @@ async def handle_new_text_from_image(update: Update, context: CallbackContext, i
     del context.user_data['editing_index']
 
     return ASKING_FOR_IMAGE
-    
+        
+
 
 @retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
 def make_request(url, data):
@@ -1524,6 +1963,7 @@ async def send_media_group_with_retries(update, media_group, max_retries=3, dela
                 await asyncio.sleep(delay)
     return False  # Если все попытки не удались
 
+
 # Метод для отправки одного изображения с повторными попытками и задержкой
 async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_markup=None, max_retries=3, delay=2):
     retries = 0
@@ -1552,17 +1992,6 @@ async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_
                 await asyncio.sleep(delay)
     return False  # Если все попытки не удались
 
-# Функция для рекурсивного поиска изображений
-def count_images_in_content(content):
-    image_count = 0
-    for item in content:
-        if isinstance(item, dict):
-            if item.get('tag') == 'img':
-                image_count += 1
-            elif item.get('tag') == 'figure' and 'children' in item:
-                # Если есть тег figure, проверяем его содержимое
-                image_count += count_images_in_content(item['children'])
-    return image_count
 
 
 async def delete_last(update: Update, context: CallbackContext) -> None:
@@ -1598,8 +2027,11 @@ async def delete_last(update: Update, context: CallbackContext) -> None:
             chat_id=chat_id,
             text="У вас нет активной статьи для редактирования. Используйте /start для начала.",
             reply_to_message_id=message_id
-        )   
+        )
 
+
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 async def preview_article(update: Update, context: CallbackContext) -> None:
     # Проверяем, вызвано ли через сообщение или инлайн-кнопку
@@ -1678,6 +2110,9 @@ async def preview_article(update: Update, context: CallbackContext) -> None:
             await update.callback_query.message.reply_text('Нет данных для предпросмотра. Начните с отправки текста или изображений.')
 
 
+
+
+
 async def handle_preview_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()  # Подтверждаем нажатие
@@ -1721,7 +2156,7 @@ async def handle_edit_button(update: Update, context: CallbackContext) -> None:
     await query.answer()  # Подтверждаем нажатие
 
     if query.data == 'edit_article':
-        await edit_article(update, context)  
+        await edit_article(update, context)   
 
 # Добавьте обработчик для переключения страниц
 async def handle_page_change(update: Update, context: CallbackContext) -> None:
@@ -1734,8 +2169,6 @@ async def handle_page_change(update: Update, context: CallbackContext) -> None:
         user_data[user_id]['current_page'] += 1
 
     await edit_article(update, context)  # Повторно вызываем функцию редактирования
-
-
 
 
 # Функция для рекурсивного поиска изображений
@@ -1886,6 +2319,12 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             await message_to_reply.reply_text(f'🚫Ошибка при отправке медиа-группы.')
                             return
 
+                        if caption:
+                            await message_to_reply.reply_text(
+                                f"✅ Медиагруппа отправлена с подписью.",
+                                disable_web_page_preview=True
+                            )
+
                     media_group_storage[user_id] = media_group_data
 
 
@@ -1923,7 +2362,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 )
 
                 await message_to_reply.reply_text(
-                    f'====--- В статье {image_count} {image_text} ---====',
+                    f'====--- В статье {image_count} {image_text} ---===='
                 )
 
                 publish_data[user_id] = {
@@ -1935,12 +2374,22 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
                 del user_data[user_id]
                 await message_to_reply.reply_text(
-                    '✅Все данные для публикации успешно созданы.\n Но сейчас они видны только вам, чтобы поделиться ими с администрацией просто нажмите /share (эта кнопка будет работать только до вашего следующего нажатия команды publish) \n\n Либо создайте другую публикацию если что-то пошло не так. \n\nВы так же можете ввести команду /send чтобы перейти в режим прямой связи с администрацией. Просто нажмите на эту команду и после этого любые ваши сообщения отправленные боту будут сразу дублироваться администрации. Таким образом вы можете задать вопросы, отправить дополнительные файлы, изображения и пояснения касательно вашей публикации, сообщить об обнаруженных багах или что-то ещё. \n\n  ✅*Бот перезапущен успешно.*\n\n(=^・ェ・^=)',
+                    '✅Все данные для публикации успешно созданы.\n'
+                    'Но сейчас они видны только вам, чтобы поделиться ими с администрацией просто нажмите /share '
+                    '(эта кнопка будет работать только до вашего следующего нажатия команды publish).\n\n'
+                    'Либо создайте другую публикацию, если что-то пошло не так.\n\n'
+                    '<i>Вы так же можете ввести команду /send, чтобы перейти в режим прямой связи с администрацией. '
+                    'Просто нажмите на эту команду, и после этого любые ваши сообщения, отправленные боту, будут сразу дублироваться администрации. '
+                    'Таким образом, вы можете задать вопросы, отправить дополнительные файлы, изображения и пояснения касательно вашей публикации, '
+                    'сообщить об обнаруженных багах или что-то ещё.</i>\n\n'
+                    '✅*Бот перезапущен успешно.*\n\n'
+                    '(=^・ェ・^=)',
+                    parse_mode='HTML',  # Добавляем parse_mode
                     reply_markup=ReplyKeyboardRemove()
                 )
                 logger.info(f"User {user_id}'s data cleared and process completed.")
                 await message_to_reply.reply_text('********************************************************')
-                await start(update, context)
+                await restart(update, context)
                 return ConversationHandler.END
             else:
                 await message_to_reply.reply_text('🚫Ошибка при создании статьи. /restart')
@@ -1959,6 +2408,9 @@ async def publish(update: Update, context: CallbackContext) -> None:
         return ConversationHandler.END
 
 
+import ast
+
+
 
 async def unknown_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
@@ -1973,6 +2425,7 @@ async def unknown_message(update: Update, context: CallbackContext) -> None:
         elif user_data[user_id]['status'] == 'awaiting_image':
             await handle_image(update, context)
             
+# Функция для разбиения списка изображений на группы по 10
 def chunk_images(images, chunk_size=10):
     for i in range(0, len(images), chunk_size):
         yield images[i:i + chunk_size]
@@ -2042,10 +2495,6 @@ async def fin_mode(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text('✅ Режим пересылки сообщений администрации отключен. Бот вернулся к своему основному режиму работы.')
     else:
         await update.message.reply_text('❗ Вы не активировали режим дублирования.')
-
-from telegram import InputMediaPhoto, InputMediaVideo
-
-
 
 from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
 
@@ -2126,24 +2575,40 @@ async def duplicate_message(update: Update, context: CallbackContext) -> None:
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Настройка ConversationHandler
+    # Настройка ConversationHandler для основной логики
     conversation_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
-            CommandHandler('edit', edit_article),  # Обработчик для команды /edit
-            MessageHandler(filters.TEXT & ~filters.COMMAND, start)
+            CommandHandler('edit', edit_article),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, main_logic)  # Основная логика
         ],
         states={
             ASKING_FOR_ARTIST_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_artist_link)],
             ASKING_FOR_AUTHOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_author_name)],
-            EDITING_FRAGMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_text)],  # Обрабатываем новый текст
+            EDITING_FRAGMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_text)],
             ASKING_FOR_IMAGE: [
                 MessageHandler(filters.PHOTO | filters.Document.ALL, handle_new_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)  # Добавляем обработку текста
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
             ],
         },
         fallbacks=[MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message)],
         per_user=True
+    )
+
+    search_handler = ConversationHandler(
+        entry_points=[CommandHandler('search', start_search)],
+        states={
+            ASKING_FOR_FILE: [
+                MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file),
+                MessageHandler(filters.ALL & ~filters.COMMAND, unknown_search_message),
+            ],
+        },
+        fallbacks=[
+            CommandHandler('fin_search', finish_search),
+            CommandHandler('restart', restart),  # Добавлен обработчик для /restart
+        ],
+        per_user=True,
+        allow_reentry=True
     )
 
     # Добавляем обработчики команд
@@ -2155,6 +2620,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_help_text_button, pattern='help_command'))
     application.add_handler(CallbackQueryHandler(handle_restart_button, pattern='restart'))
     application.add_handler(CallbackQueryHandler(handle_page_change, pattern='^page_')) 
+    application.add_handler(CallbackQueryHandler(ai_or_not, pattern='ai_or_not'))
+    application.add_handler(CallbackQueryHandler(finish_search, pattern='finish_search')) 
+    application.add_handler(CallbackQueryHandler(start_search, pattern='start_search'))
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
@@ -2164,12 +2632,17 @@ def main() -> None:
     application.add_handler(CommandHandler('delete', delete_last))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений
     application.add_handler(CommandHandler('share', share))  # Добавляем обработчик для /share
+
+    # Добавляем обработчики для команд /search и /fin_search
+    application.add_handler(search_handler)
+    application.add_handler(CommandHandler('fin_search', finish_search))  # Обработчик команды /fin_search
+
+    # Добавляем основной conversation_handler
     application.add_handler(conversation_handler)
 
-    
     logger.info("Bot started and polling...")  
     keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
-    application.run_polling() #запуск бота
+    application.run_polling() #запуск бота    
 
 if __name__ == '__main__':
     main()
