@@ -1,4 +1,4 @@
-from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDocument, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDocument, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup, Message, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler, CallbackQueryHandler
 from PIL import Image
 from telegram.constants import ParseMode
@@ -16,6 +16,8 @@ import tempfile
 import re
 from requests.exceptions import Timeout
 from bs4 import BeautifulSoup
+import wikipediaapi
+import wikipedia
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -24,13 +26,15 @@ IMGBB_API_KEY = '25c8af109577638da9ba88a667be22b1'
 GROUP_CHAT_ID = -1002233281756
 
 # Состояния
-ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE = range(5)
+# Состояния
+ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE, ASKING_FOR_OCR = range(6)
 # Сохранение данных состояния пользователя
 user_data = {}
 publish_data = {}
 users_in_send_mode = set()
 media_group_storage = {}
 is_search_mode = {}
+is_ocr_mode = {}
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -39,6 +43,41 @@ logger = logging.getLogger(__name__)
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
 
+    # Проверяем, есть ли пользователь в данных
+    if update.message:
+        message_to_reply = update.message
+        user_id = update.message.from_user.id
+    elif update.callback_query:
+        message_to_reply = update.callback_query.message
+        user_id = update.callback_query.from_user.id
+    else:
+        return ConversationHandler.END  # На случай, если ни одно условие не выполнится
+
+    # Проверяем, есть ли пользователь в данных
+    if user_id not in user_data:
+        logger.info(f"User {user_id} started the process.")
+        
+        # Создаем кнопку "Начать поиск"
+        # Создаем кнопку "Начать поиск"
+        keyboard = [
+            [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+            [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')]            
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Отправляем сообщение с кнопкой
+        await message_to_reply.reply_text(
+            '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
+            'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
+            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения</i>\n',
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+        user_data[user_id] = {'status': 'awaiting_artist_link'}
+        return ASKING_FOR_ARTIST_LINK
+
+    # Проверяем, если бот в режиме поиска
     if is_search_mode.get(user_id, False):
         if update.message.photo:
             file = await update.message.photo[-1].get_file()
@@ -48,7 +87,7 @@ async def start(update: Update, context: CallbackContext) -> int:
                 file = await update.message.document.get_file()
                 image_path = 'temp_image.jpg'
             else:
-                await update.message.reply_text("Пожалуйста, отправьте изображение для поиска  ссылок на источники.")
+                await update.message.reply_text("Пожалуйста, отправьте изображение для поиска ссылок на источники.")
                 return ASKING_FOR_FILE
         else:
             await update.message.reply_text("Пожалуйста, отправьте изображение для поиска источника.")
@@ -109,8 +148,50 @@ async def start(update: Update, context: CallbackContext) -> int:
 
             await update.message.reply_text("К сожалению, ничего не найдено. Возможно у бота сегодня уже исчерпан лимит обращений к Saucenao, возможно изображение сгенерировано, возможно автор малоизвестен, либо изображение слишком свежее\n \n Но вы можете попробовать найти самостоятельно на следующих ресурсах:", 
                 reply_markup=reply_markup)
-            
+        
         return ASKING_FOR_FILE
+
+
+
+    # Проверяем, если бот в режиме ocr
+    if is_ocr_mode.get(user_id, False):
+        if update.message.photo:
+            file = await update.message.photo[-1].get_file()
+            image_path = 'temp_image.jpg'
+        elif update.message.document:
+            if update.message.document.mime_type.startswith('image/'):
+                file = await update.message.document.get_file()
+                image_path = 'temp_image.jpg'
+            else:
+                await update.message.reply_text("Пожалуйста, отправьте изображение для распознавания")
+                return ASKING_FOR_OCR
+        else:
+            await update.message.reply_text("Пожалуйста, отправьте изображение для распознавания")
+            return ASKING_FOR_OCR
+        
+        await file.download_to_drive(image_path)
+
+        # Загружаем изображение на Catbox
+        img_url = await upload_catbox(image_path)
+
+        context.user_data['img_url'] = img_url 
+
+
+        # Создаем кнопку "Распознать текст"
+        keyboard = [
+            [InlineKeyboardButton("📃Распознать текст📃", callback_data='recognize_text')],
+            [InlineKeyboardButton("🌸Распознать растение🌸", callback_data='recognize_plant')],
+            [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"Изображение успешно загружено! Что именно вы желаете распознать? Обычно обработка запроса занимает до 10-15 секунд",
+            reply_markup=reply_markup
+        )
+        
+        return ASKING_FOR_OCR
+
 
 
     # Основная логика для работы с изображениями
@@ -141,7 +222,10 @@ async def start(update: Update, context: CallbackContext) -> int:
                 await publish(update, context)
 
                 # Завершение процесса для данного пользователя
-                del user_data[user_id]  # Очистка данных пользователя, если нужно
+                if user_id in user_data:
+                    del user_data[user_id]  # Очистка данных пользователя, если нужно
+                else:
+                    logger.warning(f"Попытка удалить несуществующий ключ: {user_id}") # Очистка данных пользователя, если нужно
 
         # Проверка, если пользователь отправил изображение как фото (photo)
         elif update.message.photo:
@@ -155,28 +239,6 @@ async def start(update: Update, context: CallbackContext) -> int:
         message_to_reply = update.callback_query.message
     else:
         return ConversationHandler.END
-
-    # Если пользователя еще нет в данных, инициализируем процесс
-    if user_id not in user_data:
-        logger.info(f"User {user_id} started the process.")
-        
-        # Создаем кнопку "Начать поиск"
-        keyboard = [
-            [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Отправляем сообщение с кнопкой
-        await message_to_reply.reply_text(
-            '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
-            'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
-            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения</i>\n',
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        
-        user_data[user_id] = {'status': 'awaiting_artist_link'}
-        return ASKING_FOR_ARTIST_LINK
 
     # Обработка состояний пользователя
     status = user_data[user_id].get('status')
@@ -232,19 +294,36 @@ async def search_image_saucenao(image_path: str):
 
 async def upload_catbox(file_path: str) -> str:
     async with aiohttp.ClientSession() as session:
+        # Первая попытка загрузки на Catbox
         with open(file_path, 'rb') as f:
             form = aiohttp.FormData()
             form.add_field('reqtype', 'fileupload')
             form.add_field('fileToUpload', f)
-            
+
             # Добавляем ваш userhash
             form.add_field('userhash', '1f68d2a125c66f6ab79a4f89c')  # Замените на ваш реальный userhash
 
             async with session.post('https://catbox.moe/user/api.php', data=form) as response:
                 if response.status == 200:
                     return await response.text()  # возвращает URL загруженного файла
+
+        # Если загрузка на Catbox не удалась, пробуем FreeImage
+        with open(file_path, 'rb') as f:  # Открываем файл заново
+            form = aiohttp.FormData()
+            form.add_field('key', '6d207e02198a847aa98d0a2a901485a5')  # Ваш API ключ для freeimage.host
+            form.add_field('action', 'upload')
+            form.add_field('source', f)  # Используем файл для загрузки
+
+            async with session.post('https://freeimage.host/api/1/upload', data=form) as free_image_response:
+                if free_image_response.status == 200:
+                    response_json = await free_image_response.json()
+                    return response_json['image']['url']  # Проверьте правильность пути к URL в ответе
+                elif free_image_response.status == 400:
+                    response_text = await free_image_response.text()
+                    raise Exception(f"Ошибка загрузки на Free Image Hosting: {response_text}")
                 else:
-                    raise Exception(f"Ошибка загрузки на Catbox: {response.status}")
+                    raise Exception(f"Ошибка загрузки на Free Image Hosting: {free_image_response.status}")
+
 
 
 async def parse_yandex_results(img_url):
@@ -293,7 +372,8 @@ async def ai_or_not(update: Update, context: CallbackContext):
 
                     await update.callback_query.answer()
                     await update.callback_query.message.reply_text(
-                        f"Изображение сгенерировано АИ с вероятностью: {ai_generated_score * 100:.2f}% \n\n Вы можете прислать другое изображение для проверки, либо проверить самостоятельно на следующих ресурсах:",                        reply_markup=reply_markup
+                        f"Изображение сгенерировано АИ с вероятностью: {ai_generated_score * 100:.2f}% \n\n Вы можете прислать другое изображение для проверки, либо проверить самостоятельно на следующих ресурсах:",
+                        reply_markup=reply_markup
                     )
 
                     return
@@ -306,6 +386,7 @@ async def ai_or_not(update: Update, context: CallbackContext):
                     return
 
     await update.callback_query.answer("Не удалось обработать изображение после нескольких попыток.")
+
 
 
 
@@ -338,33 +419,52 @@ async def start_search(update: Update, context: CallbackContext) -> int:
 async def handle_file(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
 
-    # Проверка состояния, если пользователь уже находится в режиме поиска
+    # Проверка, если пользователь находится в режиме поиска
     if user_id in is_search_mode and is_search_mode[user_id]:
         if update.message.photo:
-            # Ваш текущий код для обработки фото
             file = await update.message.photo[-1].get_file()
             image_path = 'temp_image.jpg'
             await file.download_to_drive(image_path)
-            # Здесь ваша логика после загрузки
+            # Здесь логика для поиска по изображению
             return ASKING_FOR_FILE
         elif update.message.document:
             if update.message.document.mime_type.startswith('image/'):
-                # Ваш текущий код для обработки документа
                 file = await update.message.document.get_file()
                 image_path = 'temp_image.jpg'
                 await file.download_to_drive(image_path)
-                # Здесь ваша логика после загрузки
+                # Логика для обработки документов
                 return ASKING_FOR_FILE
             else:
-                await update.message.reply_text("Пожалуйста, отправьте изображение для поиска ссылок на источники.")
+                await update.message.reply_text("Пожалуйста, отправьте изображение для поиска источников.")
                 return ASKING_FOR_FILE
         else:
-            await update.message.reply_text("Пожалуйста, отправьте изображение для поиска источника.")
+            await update.message.reply_text("Пожалуйста, отправьте изображение для поиска источников.")
             return ASKING_FOR_FILE
     
+    # Проверка, если пользователь находится в режиме OCR
+    if user_id in is_ocr_mode and is_ocr_mode[user_id]:
+        if update.message.photo:
+            file = await update.message.photo[-1].get_file()
+            image_path = 'temp_image.jpg'
+            await file.download_to_drive(image_path)
+            # Логика для OCR-обработки
+            return ASKING_FOR_OCR
+        elif update.message.document:
+            if update.message.document.mime_type.startswith('image/'):
+                file = await update.message.document.get_file()
+                image_path = 'temp_image.jpg'
+                await file.download_to_drive(image_path)
+                return ASKING_FOR_OCR
+            else:
+                await update.message.reply_text("Пожалуйста, отправьте изображение для OCR.")
+                return ASKING_FOR_OCR
+        else:
+            await update.message.reply_text("Пожалуйста, отправьте изображение для OCR.")
+            return ASKING_FOR_OCR
+
     # Если пользователь отправил команду /restart, сбрасываем состояние
     if update.message.text == "/restart":
-        return await restart(update, context)  # Вызов функции перезапуска
+        return await restart(update, context)
 
     await update.message.reply_text("Пожалуйста, отправьте файл документом или изображение.")
     return ASKING_FOR_FILE
@@ -373,9 +473,22 @@ async def finish_search(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     user_id = query.from_user.id
     is_search_mode[user_id] = False  # Выключаем режим поиска
-    
+
     await query.answer()  # Отвечаем на запрос, чтобы убрать индикатор загрузки на кнопке
-    await query.edit_message_text("Вы вышли из режима поиска и вернулись к основным функциям бота")  # Изменяем текст сообщения с кнопками
+    
+    # Создаем клавиатуру с кнопками
+    keyboard = [
+        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+        [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Изменяем текст сообщения с кнопками
+    await query.edit_message_text(
+        "Вы вышли из режима поиска и вернулись к основным функциям бота", 
+        reply_markup=reply_markup  # Добавляем клавиатуру с кнопками
+    )
 
     return ConversationHandler.END
 
@@ -387,9 +500,18 @@ async def main_logic(update: Update, context: CallbackContext) -> int:
     if is_search_mode.get(user_id, False):
         return
 
+    # Если пользователь находится в режиме OCR, игнорируем основную логику
+    if is_ocr_mode.get(user_id, False):
+        return ASKING_FOR_OCR
+
     # Основная логика обработки сообщений
     await update.message.reply_text("Обрабатываем сообщение в основной логике.")
     return ConversationHandler.END
+
+# Добавим функцию для обработки неизвестных сообщений в режиме поиска
+async def unknown_search_message(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("Пожалуйста, отправьте фото или документ.")
+    return ASKING_FOR_FILE
 
 # Добавим функцию для обработки неизвестных сообщений в режиме поиска
 async def unknown_search_message(update: Update, context: CallbackContext) -> int:
@@ -415,21 +537,381 @@ async def restart(update: Update, context: CallbackContext) -> int:
     if user_id in is_search_mode:
         del is_search_mode[user_id]  # Выключаем режим поиска, если он включен
 
+    if user_id in is_ocr_mode:
+        del is_ocr_mode[user_id]
+
     logger.info(f"User {user_id} restarted the process.") 
     
     # Инициализируем новое состояние пользователя
     keyboard = [
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
         [InlineKeyboardButton("Помощь и разметка", callback_data='help_command')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await message_to_reply.reply_text(
-        '✅Процесс сброшен. Для запуска создания новой публикации отправьте боту любой текст. Либо воспользуйтесь одной из команд ниже',
+        '✅Процесс сброшен. \n\n✅Для запуска создания новой публикации отправьте боту любой текст. \n\nЛибо воспользуйтесь одной из команд ниже',
         reply_markup=reply_markup  # Добавляем клавиатуру
     )
     
     return ASKING_FOR_ARTIST_LINK
+
+async def start_ocr(update: Update, context: CallbackContext) -> int:
+    if update.message:
+        user_id = update.message.from_user.id  # Когда вызвано командой /search
+        message_to_reply = update.message
+    elif update.callback_query:
+        user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
+        message_to_reply = update.callback_query.message
+    
+    is_ocr_mode[user_id] = True  # Устанавливаем флаг для пользователя в режим поиска
+
+    # Создаем кнопку "Отменить поиск"
+    keyboard = [
+        [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем сообщение с кнопкой
+    await message_to_reply.reply_text(
+        "Пожалуйста, отправьте изображение для поиска или распознавания. Лучше отправлять сжатые изображения, тогда бот работает быстрее. Оригиналы в виде файлов отправляйте только по необходимости (мелкий текст, мелкие растения и тд)",
+        reply_markup=reply_markup
+    )
+    
+    return ASKING_FOR_OCR
+
+async def finish_ocr(update: Update, context: CallbackContext) -> int:
+    keyboard = [
+        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+        [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:  # Если функция вызвана через нажатие кнопки
+        query = update.callback_query
+        user_id = query.from_user.id
+        is_ocr_mode[user_id] = False  # Выключаем режим поиска
+        
+        await query.answer()  # Отвечаем на запрос, чтобы убрать индикатор загрузки на кнопке
+        await query.edit_message_text(
+            "Вы вышли из режима распознавания и вернулись к основным функциям бота. Вы можете продолжить заполнять статью на том моменте на котором остановились, либо воспользоваться одной из кнопок:", 
+            reply_markup=reply_markup  # Добавляем кнопки
+        )
+    
+    elif update.message:  # Если функция вызвана через команду /fin_ocr
+        user_id = update.message.from_user.id
+        is_ocr_mode[user_id] = False  # Выключаем режим поиска
+        
+        await update.message.reply_text(
+            "Вы вышли из режима распознавания и вернулись к основным функциям бота. Вы можете продолжить заполнять статью на том моменте на котором остановились, либо воспользоваться одной из кнопок:", 
+            reply_markup=reply_markup  # Добавляем кнопки
+        )
+
+    return ConversationHandler.END
+
+async def unknown_ocr_message(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("Пожалуйста, отправьте фото или документ.")
+    return ASKING_FOR_OCR
+
+# Обработчик нажатия на кнопку "Распознать текст"
+async def ocr_space_with_url(img_url, api_key):
+    ocr_url = "https://api.ocr.space/parse/imageurl"
+
+    async with aiohttp.ClientSession() as session:
+        params = {
+            'apikey': api_key,
+            'url': img_url,
+            'language': 'rus',  # Указываем язык
+            'isOverlayRequired': 'False',  # Нужно ли накладывать текст на изображение
+            'detectOrientation': 'True',  # Определять ориентацию текста
+            'scale': 'True'  # Масштабировать изображение
+        }
+
+        async with session.get(ocr_url, params=params) as response:
+            if response.status == 200:
+                result = await response.json()
+                try:
+                    return result["ParsedResults"][0]["ParsedText"]
+                except (KeyError, IndexError):
+                    return "Текст не был распознан."
+            else:
+                return f"Ошибка API OCR.space: {response.status}"
+
+
+# Измененный обработчик кнопки для OCR
+async def button_ocr(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    # Получаем URL изображения с Catbox
+    img_url = context.user_data.get('img_url')
+
+    if query.data == 'recognize_text':
+        if img_url:
+            # Вызов функции для распознавания текста через Google Cloud Vision API с использованием URL
+            api_key = 'K86410931988957'  # Ваш ключ API
+            recognized_text = await ocr_space_with_url(img_url, api_key)
+            keyboard = [
+                [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            # Отправляем распознанный текст пользователю
+            await query.message.reply_text(
+                f"Распознанный текст:\n{recognized_text}\n\nОтправьте следующее изображение для распознавания либо нажмите кнопку ниже",
+                reply_markup=reply_markup  # Добавляем кнопку к последнему сообщению
+            )
+        else:
+            # Отправляем сообщение об ошибке с кнопкой
+            await query.message.reply_text(
+                "URL изображения не найден. Попробуйте ещё раз.",
+                reply_markup=reply_markup  # Добавляем кнопку к этому сообщению
+            )
+
+    elif query.data == 'recognize_plant':
+        await recognize_plant(update, context)  # Вызов функции для распознавания растения
+    else:
+        await query.message.reply_text("Неизвестная команда.")
+
+async def recognize_plant(update: Update, context: CallbackContext) -> None:
+    user_id = update.callback_query.from_user.id
+    img_url = context.user_data.get('img_url')
+
+    if not img_url:
+        await update.callback_query.answer("Сначала загрузите изображение.")
+        return
+
+    logger.info(f"URL изображения: {img_url}")
+
+    api_key = "2b10C744schFhHigMMjMsDmV"
+    project = "all"  
+    lang = "ru"   
+    include_related_images = "true"  
+
+    # URL-кодирование для изображения
+    encoded_image_url = aiohttp.helpers.quote(img_url)
+
+    # Формирование URL для запроса
+    api_url = (
+        f"https://my-api.plantnet.org/v2/identify/{project}?"
+        f"images={encoded_image_url}&"
+        f"organs=auto&"
+        f"lang={lang}&"
+        f"include-related-images={include_related_images}&"
+        f"api-key={api_key}"
+    )
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(api_url) as response:
+            status = response.status
+            logger.info(f"Статус ответа: {status}")
+
+            if status == 200:
+                prediction = await response.json()
+                logger.info(f"Полный ответ от PlantNet: {prediction}")
+
+                if prediction.get('results'):
+                    keyboard = []
+                    for idx, plant in enumerate(prediction['results'][:3]):
+                        species = plant.get('species', {})
+                        scientific_name = species.get('scientificNameWithoutAuthor', 'Неизвестное растение')
+                        common_names = species.get('commonNames', [])
+                        common_name_str = ', '.join(common_names) if common_names else 'Название отсутствует'
+                        
+                        # Извлекаем процент сходства
+                        similarity_score = plant.get('score', 0) * 100  # Предполагаем, что значение score от 0 до 1
+                        similarity_text = f"{similarity_score:.2f}%"  # Форматируем до двух знаков после запятой
+                        
+                        # Сохраняем данные о растениях в context.user_data для обработки нажатий
+                        images = plant.get('images', [])
+                        context.user_data[f"plant_{idx}"] = {
+                            "scientific_name": scientific_name,
+                            "common_names": common_name_str,
+                            "images": images  # Теперь изображения корректно извлекаются
+                        }
+
+                        logger.info(f"Plant {idx}: {scientific_name}, Images: {context.user_data[f'plant_{idx}']['images']}")
+
+                        # Создаем кнопку для каждого растения с процентом сходства в начале
+                        keyboard.append([InlineKeyboardButton(
+                            text=f"{similarity_text} - {scientific_name} ({common_name_str})",
+                            callback_data=f"plant_{idx}"
+                        )])
+
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await update.callback_query.message.reply_text(
+                        "Выберите одно из предложенных растений:",
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await update.callback_query.message.reply_text("Растение не найдено.")
+            else:
+                error_message = await response.text()
+                logger.error(f"Ошибка от API PlantNet: {error_message}")
+                await update.callback_query.message.reply_text("Ошибка при распознавании растения.")
+
+
+
+
+import wikipediaapi  # Импортируем библиотеку
+
+# Инициализация Wikipedia API с User-Agent
+user_agent = "MyPlantBot/1.0 sylar1907942@gmail.com)"
+wiki_wiki = wikipediaapi.Wikipedia(language='ru', user_agent=user_agent)  
+
+
+wikipedia.set_lang('ru')  # Установите язык на русский
+
+async def get_wikipedia_link(scientific_name: str, common_names: list) -> tuple:
+    try:
+        # Выполняем поиск по научному названию
+        search_results = wikipedia.search(scientific_name)
+        logger.info(f"Search results for '{scientific_name}': {search_results}")
+
+        # Проверяем, есть ли результаты поиска
+        if search_results:
+            for article_title in search_results:
+                # Проверяем, относится ли статья к категории "растения"
+                page = wiki_wiki.page(article_title)
+                if page.exists():
+                    categories = page.categories
+                    # Проверяем наличие ключевых категорий
+                    if any('растения' in cat.lower() for cat in categories):
+                        logger.info(f"Found article '{article_title}' in category 'plants'")
+                        # Формируем и возвращаем ссылку на статью
+                        return (f"https://ru.wikipedia.org/wiki/{article_title.replace(' ', '_')}", article_title)
+
+        # Если результаты по научному названию не найдены, ищем по общим названиям
+        for name in common_names:
+            search_results = wikipedia.search(name)
+            logger.info(f"Search results for '{name}': {search_results}")
+            if search_results:
+                for article_title in search_results:
+                    # Проверяем, относится ли статья к категории "растения"
+                    page = wiki_wiki.page(article_title)
+                    if page.exists():
+                        categories = page.categories
+                        if any('растения' in cat.lower() for cat in categories):
+                            logger.info(f"Found article '{article_title}' in category 'plants'")
+                            # Формируем и возвращаем ссылку на статью
+                            return (f"https://ru.wikipedia.org/wiki/{article_title.replace(' ', '_')}", article_title)
+    
+    except Exception as e:
+        logger.error(f"Error fetching Wikipedia link: {e}")
+
+    # Если ничего не найдено или статья не относится к растениям, возвращаем None
+    return (None, None)
+
+
+import wikipedia
+
+def escape_markdown_v2(text: str) -> str:
+    # Экранирование специальных символов в MarkdownV2, включая символ '='
+    return re.sub(r'([_*\[\]()~`>#+\-.!=])', r'\\\1', text)
+
+
+async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    plant_key = query.data  # Получаем callback_data, например 'plant_0'
+    
+    logger.info(f"Looking for plant data with key: {plant_key}")
+
+    plant_data = context.user_data.get(plant_key)
+    if plant_data:
+        scientific_name = plant_data['scientific_name']
+        common_names = plant_data['common_names']
+
+        if isinstance(common_names, str):
+            common_names = [common_names]  # Преобразуем в список, если это строка
+        
+        wikipedia_link, article_title = await get_wikipedia_link(scientific_name, common_names)
+
+        description = ""
+        if wikipedia_link:
+            try:
+                # Получаем краткое описание статьи по найденному названию статьи
+                summary = wikipedia.summary(article_title, sentences=12)
+                description += f"{escape_markdown_v2(summary)}\n\n"
+            except Exception as e:
+                logger.error(f"Error fetching summary for {article_title}: {e}")
+                description += "Краткое описание недоступно\n\n"
+
+            # Добавляем ссылку на статью без экранирования
+            logger.info(f"Wikipedia link found: {wikipedia_link}")
+        else:
+            logger.warning(f"No Wikipedia page found for: {scientific_name} or common names")
+            description = "\n\nИнформация по данному растению не найдена\n\n"
+
+        images = plant_data.get('images', [])
+        
+        logger.info(f"Retrieved plant data: {plant_data}")
+
+        if images:
+            media = []  # Список для хранения объектов медиа
+            for idx, img in enumerate(images):
+                img_url = img['url']['o'] if 'url' in img else None
+                if img_url:
+                    if idx == 0:
+                        # Объедините описание с единственной ссылкой
+                        caption = f"Растение: {escape_markdown_v2(scientific_name)}\nОбщие названия: {', '.join(map(escape_markdown_v2, common_names))}\n{truncate_text_with_link(description, 960, wikipedia_link, scientific_name)}"
+                        media.append(InputMediaPhoto(media=img_url, caption=caption, parse_mode='MarkdownV2'))
+                    else:
+                        media.append(InputMediaPhoto(media=img_url))
+            
+            if media:
+                logger.info(f"Media before sending: {media}")
+                logger.info(f"Number of media items: {len(media)}")
+                await query.message.reply_media_group(media)  # Отправляем медиагруппу
+            else:
+                await query.message.reply_text("Изображения не найдены")
+        else:
+            await query.message.reply_text("Изображений нет")
+        
+        # Теперь отправляем сообщение с инструкцией и кнопкой
+        keyboard = [
+            [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.message.reply_text(
+            "Теперь вы можете отправить ещё изображения для распознавания, либо завершить процесс кнопкой ниже",
+            reply_markup=reply_markup  # Добавляем кнопку к этому сообщению
+        )
+    else:
+        await query.message.reply_text("Данные о растении не найдены")
+    
+    await query.answer()
+
+
+def truncate_text_with_link(text: str, max_length: int, link: str, scientific_name: str) -> str:
+    """Обрезает текст до max_length символов, добавляет ссылку на статью или Google-поиск."""
+    ellipsis = '\.\.\.'
+    
+    # Если ссылка на Википедию отсутствует, формируем ссылку на Google-поиск
+    if link:
+        link_text = f"\n[Узнать больше]({escape_markdown_v2(link)})\n\nОтправьте следующее изображение либо завершите поиск"  # Экранируем ссылку на Википедию
+    else:
+        google_search_link = f"https://www.google.com/search?q={scientific_name.replace(' ', '+')}"
+        link_text = f"\n[Найти в Google]({escape_markdown_v2(google_search_link)})"  # Ссылка на Google
+    
+    # Вычисляем допустимую длину для текста без учета ссылки
+    available_length = max_length - len(link_text) - len(ellipsis)
+
+    # Если текст нужно обрезать
+    if len(text) > available_length:
+        truncated_text = text[:available_length] + ellipsis
+    else:
+        truncated_text = text
+
+    # Добавляем ссылку в конце
+    return truncated_text + link_text
+
+
+
+
+
+
 
 
 HELP_TEXT = """
@@ -2613,6 +3095,22 @@ def main() -> None:
         allow_reentry=True
     )
 
+    ocr_handler = ConversationHandler(
+        entry_points=[CommandHandler('ocr', start_ocr)],
+        states={
+            ASKING_FOR_FILE: [
+                MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file),
+                MessageHandler(filters.ALL & ~filters.COMMAND, unknown_ocr_message),
+            ],
+        },
+        fallbacks=[
+            CommandHandler('fin_ocr', finish_ocr),
+            CommandHandler('restart', restart),  # Добавлен обработчик для /restart
+        ],
+        per_user=True,
+        allow_reentry=True
+    )
+
     # Добавляем обработчики команд
     application.add_handler(CallbackQueryHandler(handle_edit_button, pattern='edit_article'))
     application.add_handler(CallbackQueryHandler(handle_delete_button, pattern='delete_last'))
@@ -2622,9 +3120,15 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_help_text_button, pattern='help_command'))
     application.add_handler(CallbackQueryHandler(handle_restart_button, pattern='restart'))
     application.add_handler(CallbackQueryHandler(handle_page_change, pattern='^page_')) 
+    application.add_handler(CallbackQueryHandler(handle_publish_button, pattern='^publish_'))
     application.add_handler(CallbackQueryHandler(ai_or_not, pattern='ai_or_not'))
     application.add_handler(CallbackQueryHandler(finish_search, pattern='finish_search')) 
+    application.add_handler(CallbackQueryHandler(finish_ocr, pattern='finish_ocr')) 
     application.add_handler(CallbackQueryHandler(start_search, pattern='start_search'))
+    application.add_handler(CallbackQueryHandler(start_ocr, pattern='start_ocr'))
+    application.add_handler(CallbackQueryHandler(button_ocr, pattern='recognize_text'))
+    application.add_handler(CallbackQueryHandler(button_ocr, pattern='recognize_plant'))
+    application.add_handler(CallbackQueryHandler(button_more_plants_handler, pattern='plant_\\d+'))
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
@@ -2638,6 +3142,10 @@ def main() -> None:
     # Добавляем обработчики для команд /search и /fin_search
     application.add_handler(search_handler)
     application.add_handler(CommandHandler('fin_search', finish_search))  # Обработчик команды /fin_search
+
+    # Добавляем обработчики для команд /ocr и /fin_ocr
+    application.add_handler(ocr_handler)
+    application.add_handler(CommandHandler('fin_ocr', finish_ocr)) 
 
     # Добавляем основной conversation_handler
     application.add_handler(conversation_handler)
