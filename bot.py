@@ -40,6 +40,12 @@ is_ocr_mode = {}
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+async def get_public_ip():
+    async with aiohttp.ClientSession() as session:
+        async with session.get('https://httpbin.org/ip') as response:
+            data = await response.json()
+            return data['origin']
+
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
 
@@ -3056,8 +3062,14 @@ async def duplicate_message(update: Update, context: CallbackContext) -> None:
 
 
 
+
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Получаем и выводим публичный IP с дополнительным сообщением
+    loop = asyncio.get_event_loop()
+    ip_address = loop.run_until_complete(get_public_ip())
+    logger.info(f"Public IP address (PlantNet): {ip_address}") 
 
     # Настройка ConversationHandler для основной логики
     conversation_handler = ConversationHandler(
