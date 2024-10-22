@@ -3120,7 +3120,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_help_text_button, pattern='help_command'))
     application.add_handler(CallbackQueryHandler(handle_restart_button, pattern='restart'))
     application.add_handler(CallbackQueryHandler(handle_page_change, pattern='^page_')) 
-    application.add_handler(CallbackQueryHandler(handle_publish_button, pattern='^publish_'))
     application.add_handler(CallbackQueryHandler(ai_or_not, pattern='ai_or_not'))
     application.add_handler(CallbackQueryHandler(finish_search, pattern='finish_search')) 
     application.add_handler(CallbackQueryHandler(finish_ocr, pattern='finish_ocr')) 
