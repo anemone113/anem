@@ -339,7 +339,7 @@ async def search_image_saucenao(image_path: str):
                     jp_name = None
                     details_text = None
                     ep_name = None
-                    ep_time = "Таймметка не найдена"
+                    ep_time = None
                     dA_id = None
                     full_author_text = None
                     pixiv_id = None
@@ -413,7 +413,7 @@ async def search_image_saucenao(image_path: str):
 
                         return authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id, twitter_id
                     else:
-                        return None, [], None, None, None, None, None, None, None
+                        return None, [], None, None, None, None, None, None, None, None
                 else:
                     logging.error(f"Ошибка {response.status}: {await response.text()}")
                     return None, [], None, None, None, None, None, None, None
