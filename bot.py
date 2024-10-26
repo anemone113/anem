@@ -120,7 +120,7 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         try:
             # Получаем авторов и ссылки через SauceNAO
-            authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id = await search_image_saucenao(image_path)
+            authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id, twitter_id = await search_image_saucenao(image_path)
         except Exception as e:
             # Обработка ошибок, например, превышение лимита запросов
             if str(e) == "Лимит превышен":
@@ -147,6 +147,8 @@ async def start(update: Update, context: CallbackContext) -> int:
             reply_text += f"{ep_name}\n"
         if dA_id:
             reply_text += f"dA ID: {dA_id}\n"
+        if twitter_id:
+            reply_text += f"Твиттер:\n{twitter_id}"               
         if pixiv_id:
             reply_text += f"Pixiv: {pixiv_id}\n"
         if full_author_text:
@@ -155,6 +157,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             reply_text += f"{ep_time}\n\n"
         if links_text:
             reply_text += f"Ссылки:\n{links_text}"
+
 
 
         # Если нет данных, отправляем сообщение о том, что ничего не найдено
@@ -340,6 +343,7 @@ async def search_image_saucenao(image_path: str):
                     dA_id = None
                     full_author_text = None
                     pixiv_id = None
+                    twitter_id = None
 
                     if results:
                         results.sort(key=lambda x: x[0], reverse=True)
@@ -385,7 +389,12 @@ async def search_image_saucenao(image_path: str):
                                 dA_id = dA_id_link['href']
                             pixiv_id_link = result_content_div.find('a', href=True)
                             if pixiv_id_link and "pixiv" in pixiv_id_link['href']:
-                                pixiv_id = pixiv_id_link['href']                        
+                                pixiv_id = pixiv_id_link['href']   
+                            twitter_id_link = result_content_div.find('a', href=True)
+                            if twitter_id_link and "twitter.com" in twitter_id_link['href']: 
+                                twitter_id = twitter_id_link['href']  # Формируем строку в нужном формате
+                            else:
+                                twitter_id = None                                              
 
                             full_author_text = ""
                             author_tag = result_content_div.find('strong', string=lambda text: text.strip() == "Author:")
@@ -402,7 +411,7 @@ async def search_image_saucenao(image_path: str):
                             jp_name_div = result_content_div.find('span', class_='subtext', string="JP")
                             jp_name = jp_name_div.find_next_sibling(text=True).strip() if jp_name_div else None
 
-                        return authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id
+                        return authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id, twitter_id
                     else:
                         return None, [], None, None, None, None, None, None, None
                 else:
