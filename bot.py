@@ -82,114 +82,143 @@ async def start(update: Update, context: CallbackContext) -> int:
         if update.message.photo:
             file = await update.message.photo[-1].get_file()
             image_path = 'temp_image.jpg'
-        elif update.message.document:
-            if update.message.document.mime_type.startswith('image/'):
-                file = await update.message.document.get_file()
-                image_path = 'temp_image.jpg'
-            else:
-                await update.message.reply_text("Пожалуйста, отправьте изображение для поиска ссылок на источники.")
-                return ASKING_FOR_FILE
+        elif update.message.document and update.message.document.mime_type.startswith('image/'):
+            file = await update.message.document.get_file()
+            image_path = 'temp_image.jpg'
         else:
-            await update.message.reply_text("Пожалуйста, отправьте изображение для поиска источника.")
+            await update.message.reply_text("Пожалуйста, отправьте изображение для поиска.")
             return ASKING_FOR_FILE
-        
+
         await file.download_to_drive(image_path)
+
+        # Отправляем первоначальное сообщение о загрузке файла
+        loading_message = await update.message.reply_text("Загрузка файла на хостинг...")
 
         # Загружаем изображение на Catbox
         img_url = await upload_catbox(image_path)
-
         context.user_data['img_url'] = img_url 
 
-        # Создаем URL для поиска на Saucenao, Yandex, Google Images и Bing
+        # Обновляем сообщение о статусе загрузки
+        await loading_message.edit_text("Файл успешно загружен! Ожидание ответа от SauceNAO...обычно это занимает до 5 секунд")
+
+        # Создаем URL для поиска
         search_url = f"https://saucenao.com/search.php?db=999&url={img_url}"
         yandex_search_url = f"https://yandex.ru/images/search?source=collections&rpt=imageview&url={img_url}"
         google_search_url = f"https://lens.google.com/uploadbyurl?url={img_url}"
         bing_search_url = f"https://www.bing.com/images/search?view=detailv2&iss=sbi&form=SBIVSP&sbisrc=UrlPaste&q=imgurl:{img_url}"
 
-        # Получаем авторов и ссылки
-        authors, external_links = await search_image_saucenao(image_path)
+        keyboard = [
+            [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],
+            [InlineKeyboardButton("Все результаты на SauceNAO", url=search_url)],
+            [InlineKeyboardButton("Поиск через Yandex Images", url=yandex_search_url)],
+            [InlineKeyboardButton("Поиск через Google Images", url=google_search_url)],
+            [InlineKeyboardButton("Поиск через Bing Images", url=bing_search_url)],
+            [InlineKeyboardButton("Завершить поиск", callback_data='finish_search')],
+            [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)        
+
+        try:
+            # Получаем авторов и ссылки через SauceNAO
+            authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id = await search_image_saucenao(image_path)
+        except Exception as e:
+            # Обработка ошибок, например, превышение лимита запросов
+            if str(e) == "Лимит превышен":
+                await loading_message.edit_text("Лимит запросов к SauceNAO у бота на сегодня исчерпан. Всего их 100 запросов на всех пользователей бота в сутки. Попробуйте через пару часов, либо воспользуйтесь одной из кнопок ниже чтобы поискать источники самостоятельно.", reply_markup=reply_markup)
+            else:
+                await loading_message.edit_text(f"Произошла ошибка при обращении к SauceNAO: {str(e)}", reply_markup=reply_markup)
+            os.remove(image_path)
+            return ASKING_FOR_FILE
+
         os.remove(image_path)
 
-        if authors:
-            authors_text = ', '.join(authors)
-            links_text = "\n".join(f"{i + 1}. {link}" for i, link in enumerate(external_links))
-
-            reply_text = f"Авторы: {authors_text}\nСсылки:\n{links_text}"
-
-            keyboard = [
-                [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],            
-                [InlineKeyboardButton("Все результаты на Saucenao", url=search_url)],
-                [InlineKeyboardButton("Поиск через Yandex Images", url=yandex_search_url)],
-                [InlineKeyboardButton("Поиск через Google Images", url=google_search_url)],
-                [InlineKeyboardButton("Поиск через Bing Images", url=bing_search_url)],
-                [InlineKeyboardButton("Завершить поиск", callback_data='finish_search')],
-                [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            yandex_similar_images = await parse_yandex_results(img_url)
-
-            if yandex_similar_images:
-                yandex_similar_text = '\n'.join(yandex_similar_images)
-                reply_text += f"\nПохожие изображения с Yandex:\n{yandex_similar_text}"
-
-            await update.message.reply_text(reply_text, reply_markup=reply_markup)
-        else:
-            keyboard = [
-                [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],            
-                [InlineKeyboardButton("Все результаты на Saucenao", url=search_url)],
-                [InlineKeyboardButton("Поиск через Yandex Images", url=yandex_search_url)],
-                [InlineKeyboardButton("Поиск через Google Images", url=google_search_url)],
-                [InlineKeyboardButton("Поиск через Bing Images", url=bing_search_url)],
-                [InlineKeyboardButton("Завершить поиск", callback_data='finish_search')],
-                [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await update.message.reply_text("К сожалению, ничего не найдено. Возможно у бота сегодня уже исчерпан лимит обращений к Saucenao, возможно изображение сгенерировано, возможно автор малоизвестен, либо изображение слишком свежее\n \n Но вы можете попробовать найти самостоятельно на следующих ресурсах:", 
-                reply_markup=reply_markup)
+        # Подготовка ссылок в удобном для чтения формате
+        links_text = "\n".join(f"{i + 1}. {link}" for i, link in enumerate(external_links)) if isinstance(external_links, list) else None
         
+        # Формируем сообщение
+        reply_text = "Результаты поиска:\n"
+        if authors_text:
+            reply_text += f"Название: {authors_text}\n"
+        if details_text:
+            reply_text += f"Детали: {details_text}\n\n"
+        if jp_name:
+            reply_text += f"JP Название: {jp_name}\n"
+        if ep_name:
+            reply_text += f"{ep_name}\n"
+        if dA_id:
+            reply_text += f"dA ID: {dA_id}\n"
+        if pixiv_id:
+            reply_text += f"Pixiv: {pixiv_id}\n"
+        if full_author_text:
+            reply_text += f"Автор: {full_author_text}\n"
+        if ep_time:
+            reply_text += f"{ep_time}\n\n"
+        if links_text:
+            reply_text += f"Ссылки:\n{links_text}"
+
+
+        # Если нет данных, отправляем сообщение о том, что ничего не найдено
+        if not authors_text and not links_text:
+            reply_text = (
+                "К сожалению, ничего не найдено. "
+                "Возможно изображение сгенерировано, возможно автор малоизвестен или изображение слишком свежее. Отправьте другое изображение или завершите поиск"
+            )
+
+        # Обновляем сообщение результатами поиска с кнопками
+        await loading_message.edit_text(reply_text.strip(), reply_markup=reply_markup)
+
         return ASKING_FOR_FILE
 
 
 
     # Проверяем, если бот в режиме ocr
     if is_ocr_mode.get(user_id, False):
+        # Проверяем, отправил ли пользователь фото или документ
         if update.message.photo:
             file = await update.message.photo[-1].get_file()
             image_path = 'temp_image.jpg'
-        elif update.message.document:
-            if update.message.document.mime_type.startswith('image/'):
-                file = await update.message.document.get_file()
-                image_path = 'temp_image.jpg'
-            else:
-                await update.message.reply_text("Пожалуйста, отправьте изображение для распознавания")
-                return ASKING_FOR_OCR
+        elif update.message.document and update.message.document.mime_type.startswith('image/'):
+            file = await update.message.document.get_file()
+            image_path = 'temp_image.jpg'
         else:
-            await update.message.reply_text("Пожалуйста, отправьте изображение для распознавания")
+            keyboard = [
+                [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')],
+                [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "Пожалуйста, отправьте изображение для распознавания",
+                reply_markup=reply_markup
+            )
             return ASKING_FOR_OCR
-        
+
+        # Загружаем файл и отправляем сообщение о процессе
+        loading_message = await update.message.reply_text("Загрузка изображения...")
+
         await file.download_to_drive(image_path)
 
-        # Загружаем изображение на Catbox
+        # Загружаем изображение на Catbox и обновляем сообщение
+        await loading_message.edit_text("Изображение загружается на Catbox...")
         img_url = await upload_catbox(image_path)
+        inat_url = "https://www.inaturalist.org/computer_vision_demo"
 
-        context.user_data['img_url'] = img_url 
+        context.user_data['img_url'] = img_url
 
-
-        # Создаем кнопку "Распознать текст"
+        # Формируем клавиатуру с кнопками для распознавания
         keyboard = [
             [InlineKeyboardButton("📃Распознать текст📃", callback_data='recognize_text')],
             [InlineKeyboardButton("🌸Распознать растение🌸", callback_data='recognize_plant')],
+            [InlineKeyboardButton("Распознать на iNaturalist", url=inat_url)],
             [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
-            f"Изображение успешно загружено! Что именно вы желаете распознать? Обычно обработка запроса занимает до 10-15 секунд",
+        # Обновляем сообщение с кнопками после успешной загрузки
+        await loading_message.edit_text(
+            "Изображение успешно загружено! Что именно вы желаете распознать? Обычно обработка запроса занимает до 10-15 секунд.",
             reply_markup=reply_markup
         )
-        
+
         return ASKING_FOR_OCR
 
 
@@ -252,13 +281,18 @@ async def start(update: Update, context: CallbackContext) -> int:
         await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
         return ConversationHandler.END
 
+import re
+from bs4 import BeautifulSoup
+import aiohttp
+
+
 async def search_image_saucenao(image_path: str):
     url = 'https://saucenao.com/search.php'
     params = {
-        'api_key': '9e1532e031fd8afa2568b659f5f8b97a895cddda',
-        'output_type': 2,
-        'numres': 5,
-        'db': 999
+        'api_key': 'd3d3b527510c50ca559d38901614b0da7c86db75',
+        'output_type': 0,
+        'numres': 10,
+        'db': 999,
     }
 
     async with aiohttp.ClientSession() as session:
@@ -266,31 +300,116 @@ async def search_image_saucenao(image_path: str):
             files = {'file': image_file}
 
             async with session.post(url, params=params, data=files) as response:
-                if response.status == 200:
-                    results = await response.json()
-                    if results['results']:
-                        authors = []
-                        external_links = []
-
-                        for result in results['results']:
-                            similarity = float(result['header']['similarity'])
-                            if similarity > 75:  # Используем условие для фильтрации по сходству
-                                # Предполагаем, что creator может быть строкой или списком
-                                creator = result['data'].get('creator', 'Поле не заполнено')
-                                if isinstance(creator, list):
-                                    authors.extend(creator)  # Если это список, добавляем его элементы
-                                else:
-                                    authors.append(creator)  # Если строка, добавляем её
-
-                                links = result['data'].get('ext_urls', [])
-                                external_links.extend(links)
-
-                        return authors, external_links  # Возвращаем списки авторов и ссылок
+                # Проверка на превышение лимита
+                if response.status == 429:
+                    html_content = await response.text()
+                    if "Daily Search Limit Exceeded" in html_content:
+                        raise Exception("Лимит превышен")  # Бросаем исключение, если превышен лимит
                     else:
-                        return None, None
+                        logging.error("Ошибка 429: неизвестная причина")
+                        return None, [], None, None, None, None, None, None, None
+                
+                # Проверка успешного ответа
+                if response.status == 200:
+                    html_content = await response.text()
+                    soup = BeautifulSoup(html_content, 'html.parser')
+
+                    # Находим все блоки результатов
+                    result_blocks = soup.find_all('td', class_='resulttablecontent')
+                    results = []
+
+                    # Проверяем, до какого места мы можем обрабатывать результаты
+                    for block in result_blocks:
+                        if block.find_parent(class_='result', id='result-hidden-notification'):
+                            break
+
+                        similarity_info = block.find('div', class_='resultsimilarityinfo')
+                        if similarity_info:
+                            similarity_percentage = float(similarity_info.text.replace('%', '').strip())
+                            
+                            if similarity_percentage >= 60:
+                                results.append((similarity_percentage, block))
+
+                    # Инициализируем переменные
+                    authors_text = None
+                    links = []
+                    jp_name = None
+                    details_text = None
+                    ep_name = None
+                    ep_time = "Таймметка не найдена"
+                    dA_id = None
+                    full_author_text = None
+                    pixiv_id = None
+
+                    if results:
+                        results.sort(key=lambda x: x[0], reverse=True)
+                        best_match = results[0][1]
+
+                        result_title_div = best_match.find('div', class_='resulttitle')
+                        authors_parts = []
+                        details_parts = []
+
+                        if result_title_div:
+                            for elem in result_title_div.children:
+                                if elem.name == "strong" and 'subtext' not in elem.get("class", []):
+                                    authors_text = elem.text.strip()
+                                    break
+                                elif elem.name == "small":
+                                    details_parts.append(elem.text.strip())
+                            
+                            if not authors_text:
+                                authors_text = " ".join(authors_parts).replace("  ", " ").strip()
+                            details_text = result_title_div.get_text(separator="\n", strip=True)
+                            details_text = "\n".join(details_text.splitlines()[1:]).strip()
+
+                        result_content_div = best_match.find('div', class_='resultcontentcolumn')
+
+                        if result_content_div:
+                            ep_name = ""
+                            ep_time = None
+
+                            ep_span = result_content_div.find('span', class_='subtext', string="EP")
+                            if ep_span:
+                                ep_name = ep_span.find_next('strong').next_sibling.strip()
+                                ep_name = f"Название эпизода: {ep_name}"
+
+                            subtext_spans = result_content_div.find_all('span', class_='subtext')
+                            for span in subtext_spans:
+                                if "Est Time:" in span.get_text():
+                                    ep_time = span.get_text().replace("Est Time:", "").strip()
+                                    ep_time = f"Таймметка скриншота в эпизоде: {ep_time}"
+                                    break
+
+                            dA_id_link = result_content_div.find('a', href=True)
+                            if dA_id_link and "deviantart" in dA_id_link['href']:
+                                dA_id = dA_id_link['href']
+                            pixiv_id_link = result_content_div.find('a', href=True)
+                            if pixiv_id_link and "pixiv" in pixiv_id_link['href']:
+                                pixiv_id = pixiv_id_link['href']                        
+
+                            full_author_text = ""
+                            author_tag = result_content_div.find('strong', string=lambda text: text.strip() == "Author:")
+                            if author_tag:
+                                author_link_tag = author_tag.find_next('a', class_='linkify')
+                                if author_link_tag:
+                                    author_name = author_link_tag.text.strip()
+                                    author_url = author_link_tag['href']
+                                    full_author_text = f"{author_name} - {author_url}"
+
+                            result_miscinfo_div = best_match.find('div', class_='resultmiscinfo')
+                            external_links = [a['href'] for a in result_miscinfo_div.find_all('a', href=True)] if result_miscinfo_div else []
+
+                            jp_name_div = result_content_div.find('span', class_='subtext', string="JP")
+                            jp_name = jp_name_div.find_next_sibling(text=True).strip() if jp_name_div else None
+
+                        return authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id
+                    else:
+                        return None, [], None, None, None, None, None, None, None
                 else:
-                    print(f"Ошибка {response.status}: {await response.text()}")
-                    return None, None
+                    logging.error(f"Ошибка {response.status}: {await response.text()}")
+                    return None, [], None, None, None, None, None, None, None
+
+
 
 async def upload_catbox(file_path: str) -> str:
     async with aiohttp.ClientSession() as session:
@@ -386,7 +505,6 @@ async def ai_or_not(update: Update, context: CallbackContext):
                     return
 
     await update.callback_query.answer("Не удалось обработать изображение после нескольких попыток.")
-
 
 
 
@@ -616,6 +734,7 @@ async def finish_ocr(update: Update, context: CallbackContext) -> int:
 
     return ConversationHandler.END
 
+# Добавим функцию для обработки неизвестных сообщений в режиме поиска
 async def unknown_ocr_message(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Пожалуйста, отправьте фото или документ.")
     return ASKING_FOR_OCR
@@ -707,6 +826,9 @@ async def recognize_plant(update: Update, context: CallbackContext) -> None:
         f"api-key={api_key}"
     )
     
+    # Отправляем сообщение с начальным текстом
+    initial_message = await update.callback_query.message.reply_text("Запрос принят...")
+
     async with aiohttp.ClientSession() as session:
         async with session.get(api_url) as response:
             status = response.status
@@ -733,7 +855,7 @@ async def recognize_plant(update: Update, context: CallbackContext) -> None:
                         context.user_data[f"plant_{idx}"] = {
                             "scientific_name": scientific_name,
                             "common_names": common_name_str,
-                            "images": images  # Теперь изображения корректно извлекаются
+                            "images": images
                         }
 
                         logger.info(f"Plant {idx}: {scientific_name}, Images: {context.user_data[f'plant_{idx}']['images']}")
@@ -745,16 +867,16 @@ async def recognize_plant(update: Update, context: CallbackContext) -> None:
                         )])
 
                     reply_markup = InlineKeyboardMarkup(keyboard)
-                    await update.callback_query.message.reply_text(
+                    await initial_message.edit_text(
                         "Выберите одно из предложенных растений:",
                         reply_markup=reply_markup
                     )
                 else:
-                    await update.callback_query.message.reply_text("Растение не найдено.")
+                    await initial_message.edit_text("Растение не найдено.")
             else:
                 error_message = await response.text()
                 logger.error(f"Ошибка от API PlantNet: {error_message}")
-                await update.callback_query.message.reply_text("Ошибка при распознавании растения.")
+                await initial_message.edit_text("Ошибка при распознавании растения.")
 
 
 
@@ -814,6 +936,7 @@ import wikipedia
 def escape_markdown_v2(text: str) -> str:
     # Экранирование специальных символов в MarkdownV2, включая символ '='
     return re.sub(r'([_*\[\]()~`>#+\-.!=])', r'\\\1', text)
+
 
 
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
@@ -887,7 +1010,7 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         await query.message.reply_text("Данные о растении не найдены")
     
     await query.answer()
-
+    
 
 def truncate_text_with_link(text: str, max_length: int, link: str, scientific_name: str) -> str:
     """Обрезает текст до max_length символов, добавляет ссылку на статью или Google-поиск."""
@@ -918,9 +1041,8 @@ def truncate_text_with_link(text: str, max_length: int, link: str, scientific_na
 
 
 
-
 HELP_TEXT = """
-▶️Пост в Анемоне формируется из двух частей \- непосредственно сам пост видимый в телеграме \, плюс статья Telagraph доступная по ссылке\(для примера посмотрите любой из последних постов в группе\) Бот позволяет сделать обе части\. \n\n  Изначально статья и всё её содержание видны только вам\, администрации она станет доступна только после того как вы нажмёте сначала кнопку \" К Завершению Публикации \" и затем \(по желанию\) кнопку \/share \(поделиться\)\. Если после публикации вы не захотите вводить команду share то публикация останется видна только вам\n\n ▶️Статья в Telegraph формируется в порядке отправки вами изображений и текста боту\.\n\n Во время создания статьи\, с помощью соответствующих кнопок вы можете\: \n\-открыть предросмотр\n \-удалить последний добавленный элемент \(работает неограниченное количество раз\, пока статья не станет пустой\)\n \-редактировать всё содержимое вашей статьи через список добавленных изображений и текста\. С любым фрагментом можно делать что угодно\, менять текст на изображение и наоборот\, удалять\,  исправлять\, однако только до тех пор пока вы не используете кнопку \" К Завершению Публикации \", послее её нажатия редактировать статью уже будет больше нельзя\, только наполнить новую\. \n\n▶️Поддерживаемые тэги разметки статьибез кавычек\)\n \- \"\*\*\*\" — горизонтальная линия\-разделитель \(отправьте три звёздочки отдельным сообщением\, в этом месте в статье телеграф появится разделитель\)\.\n\- \"\_текст\_\" — курсив\.\n\- \"\*текст\*\" — жирный текст\.\n\- \"\[текст ссылки\]\(ссылка\)\" — гиперссылка\.\n\- \"видео\: \" — вставка видео с Vimeo или YouTube\.\n\- \"цитата\:\" — цитата\.\n\- \"цитата по центру\:\" — центрированная цитата\.\n\- "заголовок:" — заголовок\\.\n\\- "подзаголовок:" — подзаголовок\\.\n\n Последние 5 тэгов пишутся в начале сообщения и применяются ко всему сообщению целиком\. Каждое новое сообщение — это новый абзац\. Сообщения без тэгов — обычный текст\.\n\n Пример\: \(без кавычек\)\n\- \"цитата\: \*Волк\* никогда не будет жить в загоне\, но загоны всегда будут жить в \*волке\*\" — в статье телеграф примет вид цитата\, в которой слово \"волк\" выделено жирным\.\n\- \"видео\: ссылка\_на\_видео\" — вставка интерактивного видео YouTube или Vimeo\.\n\n▶️Кроме того бот поддерживает загрузку GIF файлов\. Для этого переименуйте \.GIF в \.RAR \, затем отправьте файл боту во время оформления поста\. Это нужно для того чтобы телеграм не пережимал GIF файлы\, бот автоматически переименует файл обратно в GIF перед размещением в Телеграф\n\n▶️Так же вы можете отправить что\-то администрации напрямую\, в режиме прямой связи\. Для этого введите команду \/send и после неё все ваши сообщения отправленные боту тут же будут пересылаться администрации\. Это могут быть какие\-то пояснения\, дополнительные изображения или их правильное размещение в посте телеграм\, вопросы\, предложения\, ссылка на самостоятельно созданную статью телеграф\, пойманные в боте ошибки и что угодно ещё\. Для завершения этого режима просто введите \/fin и бот вернётся в свой обычный режим\. Просьба не спамить через этот режим\, писать или отправлять только нужную информацию  \n
+▶️Пост в Анемоне формируется из двух частей \- непосредственно сам пост видимый в телеграме \, плюс статья Telagraph доступная по ссылке\(для примера посмотрите любой из последних постов в группе\) Бот позволяет сделать обе части\. \n\n  Изначально статья и всё её содержание видны только вам\, администрации она станет доступна только после того как вы нажмёте сначала кнопку \" К Завершению Публикации \" и затем \(по желанию\) кнопку \/share \(поделиться\)\. Если после публикации вы не захотите вводить команду share то публикация останется видна только вам\n\n ▶️Статья в Telegraph формируется в порядке отправки вами изображений и текста боту\.\n\n Во время создания статьи\, с помощью соответствующих кнопок вы можете\: \n\-открыть предросмотр\n \-удалить последний добавленный элемент \(работает неограниченное количество раз\, пока статья не станет пустой\)\n \-редактировать всё содержимое вашей статьи через список добавленных изображений и текста\. С любым фрагментом можно делать что угодно\, менять текст на изображение и наоборот\, удалять\,  исправлять\, однако только до тех пор пока вы не используете кнопку \" К Завершению Публикации \", послее её нажатия редактировать статью уже будет больше нельзя\, только наполнить новую\. \n\n▶️Поддерживаемые тэги разметки статьи\(без кавычек\)\n \- \"\*\*\*\" — горизонтальная линия\-разделитель \(отправьте три звёздочки отдельным сообщением\, в этом месте в статье телеграф появится разделитель\)\.\n\- \"\_текст\_\" — курсив\.\n\- \"\*текст\*\" — жирный текст\.\n\- \"\[текст ссылки\]\(ссылка\)\" — гиперссылка\.\n\- \"видео\: \" — вставка видео с Vimeo или YouTube\.\n\- \"цитата\:\" — цитата\.\n\- \"цитата по центру\:\" — центрированная цитата\.\n\- "заголовок:" — заголовок\\.\n\\- "подзаголовок:" — подзаголовок\\.\n\n Последние 5 тэгов пишутся в начале сообщения и применяются ко всему сообщению целиком\. Каждое новое сообщение — это новый абзац\. Сообщения без тэгов — обычный текст\.\n\n Пример\: \(без кавычек\)\n\- \"цитата\: \*Волк\* никогда не будет жить в загоне\, но загоны всегда будут жить в \*волке\*\" — в статье телеграф примет вид цитата\, в которой слово \"волк\" выделено жирным\.\n\- \"видео\: ссылка\_на\_видео\" — вставка интерактивного видео YouTube или Vimeo\.\n\n▶️Кроме того бот поддерживает загрузку GIF файлов\. Для этого переименуйте \.GIF в \.RAR \, затем отправьте файл боту во время оформления поста\. Это нужно для того чтобы телеграм не пережимал GIF файлы\, бот автоматически переименует файл обратно в GIF перед размещением в Телеграф\n\n▶️Так же вы можете отправить что\-то администрации напрямую\, в режиме прямой связи\. Для этого введите команду \/send и после неё все ваши сообщения отправленные боту тут же будут пересылаться администрации\. Это могут быть какие\-то пояснения\, дополнительные изображения или их правильное размещение в посте телеграм\, вопросы\, предложения\, ссылка на самостоятельно созданную статью телеграф\, пойманные в боте ошибки и что угодно ещё\. Для завершения этого режима просто введите \/fin и бот вернётся в свой обычный режим\. Просьба не спамить через этот режим\, писать или отправлять только нужную информацию  \n
 """
 
 async def help_command(update: Update, context: CallbackContext) -> None:
