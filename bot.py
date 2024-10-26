@@ -60,7 +60,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         # Создаем кнопку "Начать поиск"
         # Создаем кнопку "Начать поиск"
         keyboard = [
-            [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+            [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
             [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')]            
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -69,7 +69,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         await message_to_reply.reply_text(
             '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
             'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
-            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения</i>\n',
+            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения. Так же доступен поиск аниме по скриншоту</i>\n',
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
@@ -605,7 +605,7 @@ async def finish_search(update: Update, context: CallbackContext) -> int:
     
     # Создаем клавиатуру с кнопками
     keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
         [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
         [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
     ]
@@ -671,7 +671,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
 
     # Отправляем сообщение с кнопками
     keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
         [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')]            
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -715,7 +715,7 @@ async def start_ocr(update: Update, context: CallbackContext) -> int:
 
 async def finish_ocr(update: Update, context: CallbackContext) -> int:
     keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
         [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
         [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
     ]
@@ -1121,7 +1121,7 @@ async def handle_author_name(update: Update, context: CallbackContext) -> int:
 
         # Переход к следующему этапу
         keyboard = [
-            [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+            [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
             [InlineKeyboardButton("Помощь и разметка", callback_data='help_command')],
             [InlineKeyboardButton("‼️Полный сброс процесса‼️", callback_data='restart')],
         ]
@@ -1504,7 +1504,7 @@ async def edit_article(update: Update, context: CallbackContext) -> None:
     
     keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
     keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
-    keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+    keyboard.append([InlineKeyboardButton("Найти автора, аниме или проверить на ИИ", callback_data='start_search')])
     keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
     # Отправляем новое сообщение и сохраняем его ID
     sent_message = await (query.message if update.callback_query else update.message).reply_text(
@@ -1603,7 +1603,7 @@ async def handle_edit_delete(update: Update, context: CallbackContext) -> None:
             # Добавляем кнопку предпросмотра
             keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
             keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
-            keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+            keyboard.append([InlineKeyboardButton("Найти автора, аниме или проверить на ИИ", callback_data='start_search')])
             keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
 
             # Отправляем новое сообщение с обновлённым списком кнопок
@@ -2110,7 +2110,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                                     keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
                                     keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
-                                    keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+                                    keyboard.append([InlineKeyboardButton("Найти автора, аниме или проверить на ИИ", callback_data='start_search')])
                                     keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
 
 
@@ -2213,7 +2213,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         keyboard = [
                             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
-                            [InlineKeyboardButton("Найти автора или проверить на ИИ ", callback_data='start_search')],                            
+                            [InlineKeyboardButton("Найти автора, аниме или проверить на ИИ ", callback_data='start_search')],                            
                             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
                             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
                             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -2276,7 +2276,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         keyboard = [
                             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
-                            [InlineKeyboardButton(" Найти автора или проверить на ИИ ", callback_data='start_search')],
+                            [InlineKeyboardButton(" Найти автора, аниме или проверить на ИИ ", callback_data='start_search')],
                             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
                             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
                             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -2381,7 +2381,7 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
 
         keyboard = [
             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
-            [InlineKeyboardButton("Найти автора или проверить на ИИ ", callback_data='start_search')],
+            [InlineKeyboardButton("Найти автора, аниме или проверить на ИИ ", callback_data='start_search')],
             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -2514,7 +2514,7 @@ async def handle_new_text_from_image(update: Update, context: CallbackContext, i
     
     keyboard.append([InlineKeyboardButton("🌌 Предпросмотр 🌌", callback_data='preview_article')])
     keyboard.append([InlineKeyboardButton("Помощь и разметка", callback_data='help_command')])
-    keyboard.append([InlineKeyboardButton("Найти автора или проверить на ИИ", callback_data='start_search')])
+    keyboard.append([InlineKeyboardButton("Найти автора, аниме или проверить на ИИ", callback_data='start_search')])
     keyboard.append([InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')])
     # Отправляем новое сообщение с обновлённым списком кнопок
     reply_markup = InlineKeyboardMarkup(keyboard)
