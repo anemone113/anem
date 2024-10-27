@@ -18,6 +18,7 @@ from requests.exceptions import Timeout
 from bs4 import BeautifulSoup
 import wikipediaapi
 import wikipedia
+from gpt_helper import add_to_context, generate_gemini_response, limit_response_length
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -60,7 +61,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         # Создаем кнопку "Начать поиск"
         # Создаем кнопку "Начать поиск"
         keyboard = [
-            [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
+            [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
             [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')]            
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -69,7 +70,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         await message_to_reply.reply_text(
             '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
             'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
-            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения. Так же доступен поиск аниме по скриншоту</i>\n',
+            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения</i>\n',
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
@@ -202,7 +203,7 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         # Загружаем изображение на Catbox и обновляем сообщение
         await loading_message.edit_text("Изображение загружается на Catbox...")
-        img_url = await upload_catbox(image_path)
+        img_url = await second_upload_image(image_path)
         inat_url = "https://www.inaturalist.org/computer_vision_demo"
 
         context.user_data['img_url'] = img_url
@@ -420,22 +421,33 @@ async def search_image_saucenao(image_path: str):
 
 
 
+async def second_upload_image(file_path: str) -> str:
+    try:
+        # Попытка загрузки на Catbox с таймаутом 5 секунд
+        return await asyncio.wait_for(upload_catbox(file_path), timeout=5)
+    except asyncio.TimeoutError:
+        print("Таймаут при загрузке на Catbox. Переход к FreeImage.")
+        return await upload_free_image(file_path)
+    except Exception as e:
+        print(f"Ошибка при загрузке на Catbox: {e}")
+        return await upload_free_image(file_path)
+
 async def upload_catbox(file_path: str) -> str:
     async with aiohttp.ClientSession() as session:
-        # Первая попытка загрузки на Catbox
         with open(file_path, 'rb') as f:
             form = aiohttp.FormData()
             form.add_field('reqtype', 'fileupload')
             form.add_field('fileToUpload', f)
-
-            # Добавляем ваш userhash
             form.add_field('userhash', '1f68d2a125c66f6ab79a4f89c')  # Замените на ваш реальный userhash
 
             async with session.post('https://catbox.moe/user/api.php', data=form) as response:
                 if response.status == 200:
                     return await response.text()  # возвращает URL загруженного файла
+                else:
+                    raise Exception(f"Ошибка загрузки на Catbox: {response.status}")
 
-        # Если загрузка на Catbox не удалась, пробуем FreeImage
+async def upload_free_image(file_path: str) -> str:
+    async with aiohttp.ClientSession() as session:
         with open(file_path, 'rb') as f:  # Открываем файл заново
             form = aiohttp.FormData()
             form.add_field('key', '6d207e02198a847aa98d0a2a901485a5')  # Ваш API ключ для freeimage.host
@@ -446,9 +458,6 @@ async def upload_catbox(file_path: str) -> str:
                 if free_image_response.status == 200:
                     response_json = await free_image_response.json()
                     return response_json['image']['url']  # Проверьте правильность пути к URL в ответе
-                elif free_image_response.status == 400:
-                    response_text = await free_image_response.text()
-                    raise Exception(f"Ошибка загрузки на Free Image Hosting: {response_text}")
                 else:
                     raise Exception(f"Ошибка загрузки на Free Image Hosting: {free_image_response.status}")
 
@@ -944,8 +953,7 @@ import wikipedia
 
 def escape_markdown_v2(text: str) -> str:
     # Экранирование специальных символов в MarkdownV2, включая символ '='
-    return re.sub(r'([_*\[\]()~`>#+\-.!=])', r'\\\1', text)
-
+    return re.sub(r'([_*[\]()~`>#+-=|{}.!])', r'\\\1', text)
 
 
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
@@ -958,6 +966,7 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
     if plant_data:
         scientific_name = plant_data['scientific_name']
         common_names = plant_data['common_names']
+        context.user_data['scientific_name'] = scientific_name
 
         if isinstance(common_names, str):
             common_names = [common_names]  # Преобразуем в список, если это строка
@@ -973,15 +982,11 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
             except Exception as e:
                 logger.error(f"Error fetching summary for {article_title}: {e}")
                 description += "Краткое описание недоступно\n\n"
-
-            # Добавляем ссылку на статью без экранирования
-            logger.info(f"Wikipedia link found: {wikipedia_link}")
         else:
             logger.warning(f"No Wikipedia page found for: {scientific_name} or common names")
             description = "\n\nИнформация по данному растению не найдена\n\n"
 
         images = plant_data.get('images', [])
-        
         logger.info(f"Retrieved plant data: {plant_data}")
 
         if images:
@@ -990,44 +995,87 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
                 img_url = img['url']['o'] if 'url' in img else None
                 if img_url:
                     if idx == 0:
-                        # Объедините описание с единственной ссылкой
-                        caption = f"Растение: {escape_markdown_v2(scientific_name)}\nОбщие названия: {', '.join(map(escape_markdown_v2, common_names))}\n{truncate_text_with_link(description, 960, wikipedia_link, scientific_name)}"
+                        # Подготавливаем подпись и добавляем в лог
+                        caption = (
+                            f"Растение: {escape_markdown_v2(scientific_name)}\n"
+                            f"Общие названия: {', '.join(map(escape_markdown_v2, common_names))}\n"
+                            f"{truncate_text_with_link(description, 950, wikipedia_link, scientific_name)}"
+                        )
+                        logger.info(f"Caption for first image: {caption}")
                         media.append(InputMediaPhoto(media=img_url, caption=caption, parse_mode='MarkdownV2'))
                     else:
                         media.append(InputMediaPhoto(media=img_url))
-            
+
             if media:
-                logger.info(f"Media before sending: {media}")
+                logger.info(f"Media items ready for sending: {media}")
                 logger.info(f"Number of media items: {len(media)}")
-                await query.message.reply_media_group(media)  # Отправляем медиагруппу
+                
+                try:
+                    await query.message.reply_media_group(media)  # Отправляем медиагруппу
+                    logger.info("Media group sent successfully.")
+                except Exception as e:
+                    logger.error(f"Error sending media group: {e}")
+                    await query.message.reply_text("Ошибка при отправке изображений. Проверьте форматирование текста.")
             else:
                 await query.message.reply_text("Изображения не найдены")
         else:
             await query.message.reply_text("Изображений нет")
         
-        # Теперь отправляем сообщение с инструкцией и кнопкой
+        # Отправляем сообщение с кнопками после медиа
         keyboard = [
+            [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],        
             [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.message.reply_text(
-            "Теперь вы можете отправить ещё изображения для распознавания, либо завершить процесс кнопкой ниже",
+            "Для получения более подробной информации об уходе по этому растению воспользуйтесь кнопкой нижк. Либо отправьте следующее изображение",
             reply_markup=reply_markup  # Добавляем кнопку к этому сообщению
         )
     else:
         await query.message.reply_text("Данные о растении не найдены")
     
     await query.answer()
-    
+
+
+async def gpt_plants_help_handler(update, context):
+    """Асинхронный обработчик для запроса ухода за растением по научному названию."""
+    user_id = update.callback_query.from_user.id
+    scientific_name = context.user_data.get("scientific_name")
+
+    if not scientific_name:
+        await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
+        return
+
+    # Формируем запрос с научным названием
+    query = f"Как ухаживать за {scientific_name}?"
+
+    # Генерация ответа без контекста
+    response_text = generate_gemini_response(user_id, query=query, use_context=False)
+
+    # Ограничиваем длину ответа, если он превышает лимит
+    response_text = limit_response_length(response_text)
+
+    keyboard = [
+        [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем ответ пользователю с кнопкой
+    await update.callback_query.message.reply_text(response_text, reply_markup=reply_markup)
+
+    # Очищаем scientific_name после отправки ответа
+    context.user_data.pop("scientific_name", None)
+
+
 
 def truncate_text_with_link(text: str, max_length: int, link: str, scientific_name: str) -> str:
     """Обрезает текст до max_length символов, добавляет ссылку на статью или Google-поиск."""
-    ellipsis = '\.\.\.'
+    ellipsis = 'далее по ссылкам'
     
     # Если ссылка на Википедию отсутствует, формируем ссылку на Google-поиск
     if link:
-        link_text = f"\n[Узнать больше]({escape_markdown_v2(link)})\n\nОтправьте следующее изображение либо завершите поиск"  # Экранируем ссылку на Википедию
+        link_text = f"\n[Узнать больше на википедии]({escape_markdown_v2(link)})"  # Экранируем ссылку на Википедию
     else:
         google_search_link = f"https://www.google.com/search?q={scientific_name.replace(' ', '+')}"
         link_text = f"\n[Найти в Google]({escape_markdown_v2(google_search_link)})"  # Ссылка на Google
@@ -3264,6 +3312,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_ocr, pattern='recognize_text'))
     application.add_handler(CallbackQueryHandler(button_ocr, pattern='recognize_plant'))
     application.add_handler(CallbackQueryHandler(button_more_plants_handler, pattern='plant_\\d+'))
+    application.add_handler(CallbackQueryHandler(gpt_plants_help_handler, pattern='^gpt_plants_help$'))
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
