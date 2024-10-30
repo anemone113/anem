@@ -21,6 +21,7 @@ import wikipedia
 from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
+import chardet
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -411,11 +412,22 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 file = await update.message.document.get_file()
                 file_data = io.BytesIO()
                 await file.download_to_memory(out=file_data)
-                
+
                 # Извлекаем текст в зависимости от типа файла
                 if file_extension == "txt":
                     file_data.seek(0)
-                    file_text = file_data.read().decode('utf-8')
+                    raw_data = file_data.read()
+                    result = chardet.detect(raw_data)  # Определяем кодировку
+                    encoding = result['encoding']
+                    file_data.seek(0)  # Возвращаемся в начало файла
+
+                    try:
+                        file_text = raw_data.decode(encoding)  # Декодируем текст
+                    except UnicodeDecodeError as e:
+                        logging.error(f"Ошибка декодирования файла: {e}")
+                        await update.message.reply_text("Ошибка при декодировании текстового файла. Попробуйте другой файл.")
+                        return RUNNING_GPT_MODE
+
                 elif file_extension == "pdf":
                     file_text = extract_text_from_pdf(file_data)
 
@@ -430,7 +442,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 else:
                     await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
 
-                return RUNNING_GPT_MODE  # <-- Добавьте return здесь
+                return RUNNING_GPT_MODE  # Возвращаем состояние
 
             except Exception as e:
                 logging.error(f"Ошибка при обработке текстового файла: {e}")
