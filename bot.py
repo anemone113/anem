@@ -18,7 +18,9 @@ from requests.exceptions import Timeout
 from bs4 import BeautifulSoup
 import wikipediaapi
 import wikipedia
-from gpt_helper import add_to_context, generate_gemini_response, limit_response_length
+from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts
+from collections import deque
+from aiohttp import ClientSession, ClientTimeout, FormData
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -28,7 +30,7 @@ GROUP_CHAT_ID = -1002233281756
 
 # Состояния
 # Состояния
-ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE, ASKING_FOR_OCR = range(6)
+ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE, ASKING_FOR_OCR, RUNNING_GPT_MODE = range(7)
 # Сохранение данных состояния пользователя
 user_data = {}
 publish_data = {}
@@ -36,6 +38,7 @@ users_in_send_mode = set()
 media_group_storage = {}
 is_search_mode = {}
 is_ocr_mode = {}
+is_gpt_mode = {}
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -62,7 +65,8 @@ async def start(update: Update, context: CallbackContext) -> int:
         # Создаем кнопку "Начать поиск"
         keyboard = [
             [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-            [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')]            
+            [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],            
+            [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -70,7 +74,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         await message_to_reply.reply_text(
             '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
             'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
-            '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения</i>\n',
+            '<i>Так же вы можете воспользоваться одной из кнопок ниже чтобы найти автора по изображению, найти серию и таймметку аниме по кадру из него, проверить вероятность использования ИИ для создания изображения, распознать текст или растение. либо поговорить с ботом</i>\n\n',
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
@@ -186,7 +190,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             image_path = 'temp_image.jpg'
         else:
             keyboard = [
-                [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')],
+                [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')],
                 [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -211,61 +215,67 @@ async def start(update: Update, context: CallbackContext) -> int:
         # Формируем клавиатуру с кнопками для распознавания
         keyboard = [
             [InlineKeyboardButton("📃Распознать текст📃", callback_data='recognize_text')],
+            [InlineKeyboardButton("🖼️Распознать текст через GPT🖼️", callback_data='text_rec_with_gpt')],  # Новая кнопка            
             [InlineKeyboardButton("🌸Распознать растение🌸", callback_data='recognize_plant')],
             [InlineKeyboardButton("Распознать на iNaturalist", url=inat_url)],
-            [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+            [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Обновляем сообщение с кнопками после успешной загрузки
         await loading_message.edit_text(
-            "Изображение успешно загружено! Что именно вы желаете распознать? Обычно обработка запроса занимает до 10-15 секунд.",
+            "Изображение успешно загружено! Что именно вы желаете распознать? Обычно обработка запроса занимает до 10-15 секунд. Распознавание через  GPT поддерживает текст написанный от руки, но читаемым почерком",
             reply_markup=reply_markup
         )
 
         return ASKING_FOR_OCR
 
 
+    # Проверяем, если бот в режиме GPT
+    if is_gpt_mode.get(user_id, False):
+        return await gpt_running(update, context)  # Вызываем функцию gpt_running
 
     # Основная логика для работы с изображениями
     if update.message:
         message_to_reply = update.message
 
-        # Проверка, если пользователь отправил изображение как файл (document)
-        if update.message.document and update.message.document.mime_type.startswith('image/'):
-            caption = update.message.caption.strip() if update.message.caption else ''
-            parts = caption.split(maxsplit=1)
-            if len(parts) > 0:
-                artist_link = parts[0]  # Первая часть - это ссылка
-                author_name = parts[1] if len(parts) > 1 else ''  # Остальная часть - это текст
+        # Проверяем состояние пользователя
+        if user_data.get(user_id, {}).get('status') == 'awaiting_artist_link':
+            # Проверка, если пользователь отправил изображение как файл (document)
+            if update.message.document and update.message.document.mime_type.startswith('image/'):
+                caption = update.message.caption.strip() if update.message.caption else ''
+                parts = caption.split(maxsplit=1)
+                if len(parts) > 0:
+                    artist_link = parts[0]  # Первая часть - это ссылка
+                    author_name = parts[1] if len(parts) > 1 else ''  # Остальная часть - это текст
 
-                # Сохраняем имя автора как заголовок статьи напрямую
-                user_data[user_id] = {
-                    'status': 'awaiting_image',
-                    'artist_link': artist_link,
-                    'author_name': author_name,
-                    'title': author_name,  # Используем как заголовок
-                    'media': [],
-                    'image_counter': 0,
-                }
-                # Обработка изображения
-                await handle_image(update, context)
+                    # Сохраняем имя автора как заголовок статьи напрямую
+                    user_data[user_id] = {
+                        'status': 'awaiting_image',
+                        'artist_link': artist_link,
+                        'author_name': author_name,
+                        'title': author_name,  # Используем как заголовок
+                        'media': [],
+                        'image_counter': 0,
+                    }
+                    # Обработка изображения
+                    await handle_image(update, context)
 
-                # Вызов команды /publish после обработки изображения
-                await publish(update, context)
+                    # Вызов команды /publish после обработки изображения
+                    await publish(update, context)
 
-                # Завершение процесса для данного пользователя
-                if user_id in user_data:
-                    del user_data[user_id]  # Очистка данных пользователя, если нужно
-                else:
-                    logger.warning(f"Попытка удалить несуществующий ключ: {user_id}") # Очистка данных пользователя, если нужно
+                    # Завершение процесса для данного пользователя
+                    if user_id in user_data:
+                        del user_data[user_id]  # Очистка данных пользователя, если нужно
+                    else:
+                        logger.warning(f"Попытка удалить несуществующий ключ: {user_id}") # Очистка данных пользователя, если нужно
 
-        # Проверка, если пользователь отправил изображение как фото (photo)
-        elif update.message.photo:
-            await message_to_reply.reply_text(
-                "Пожалуйста отправьте файл документом /restart"
-            )
-            return ConversationHandler.END
+            # Проверка, если пользователь отправил изображение как фото (photo)
+            elif update.message.photo:
+                await message_to_reply.reply_text(
+                    "Пожалуйста отправьте файл документом /restart"
+                )
+                return ConversationHandler.END
 
     # Проверка, если событие пришло от callback_query
     elif update.callback_query:
@@ -283,7 +293,252 @@ async def start(update: Update, context: CallbackContext) -> int:
         return await handle_image(update, context)
     else:
         await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
+
         return ConversationHandler.END
+
+async def run_gpt(update: Update, context: CallbackContext) -> int:
+    if update.message:
+        user_id = update.message.from_user.id  # Когда вызвано командой /search
+        message_to_reply = update.message
+    elif update.callback_query:
+        user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
+        message_to_reply = update.callback_query.message
+        
+        # Убираем индикатор загрузки на кнопке
+        await update.callback_query.answer()
+
+    # Устанавливаем флаг режима GPT и сбрасываем другие режимы
+    is_gpt_mode[user_id] = True
+    is_search_mode[user_id] = False
+    is_ocr_mode[user_id] = False
+    keyboard = [
+        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Отправляем сообщение о начале режима общения с GPT
+    await message_to_reply.reply_text("Режим общения с GPT активирован. Отправьте ваше сообщение для ответа.",  
+            reply_markup=reply_markup  # Добавляем кнопки
+        )
+    
+    return RUNNING_GPT_MODE
+
+async def stop_gpt(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    user_id = query.from_user.id
+    is_gpt_mode[user_id] = False  # Отключаем режим GPT для пользователя
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')], 
+        [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Режим общения с GPT отключен. Вы вернулись к основному режиму.", reply_markup=reply_markup)  # Используем query.message вместо update.message
+    return ConversationHandler.END
+
+async def unknown_gpt_message(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("Ощибка Gpt")
+    return RUNNING_GPT_MODE
+
+
+
+
+import re
+import logging
+
+async def send_reply_with_limit(update, text, reply_markup=None):
+    MAX_MESSAGE_LENGTH = 4096
+    # Разбиваем текст на части, если он превышает максимальную длину
+    text_parts = [text[i:i + MAX_MESSAGE_LENGTH] for i in range(0, len(text), MAX_MESSAGE_LENGTH)]
+    
+    for part in text_parts:
+        # Логируем текст перед отправкой
+        logging.info(f"Отправка текста в Telegram: {part[:200]}...")  # Логируем первые 200 символов
+        # Убираем обратные слэши перед специальными символами Markdown V2
+        part = escape_gpt_markdown_v2(part)
+        await update.message.reply_text(part, reply_markup=reply_markup, parse_mode='MarkdownV2')
+
+
+
+def escape_gpt_markdown_v2(text):
+    # Проверка на наличие экранирования и удаление, если оно присутствует
+    if re.search(r'\\[\\\*\[\]\(\)\{\}\.\!\?\-\#\@\&\$\%\^\&\+\=\~]', text):
+        # Убираем экранирование у всех специальных символов Markdown
+        text = re.sub(r'\\([\\\*\[\]\(\)\{\}\.\!\?\-\#\@\&\$\%\^\&\+\=\~])', r'\1', text)
+
+    # Временная замена ** на |TEMP| без экранирования
+    text = re.sub(r'\*\*(.*?)\*\*', r'|TEMP|\1|TEMP|', text)
+
+    # Временная замена ``` на |CODE_BLOCK| для исключения из экранирования
+    text = text.replace('```', '|CODE_BLOCK|')
+
+    # Временная замена ` на |INLINE_CODE| для исключения из экранирования
+    text = text.replace('`', '|INLINE_CODE|')
+
+    # Экранируем все специальные символы
+    text = re.sub(r'(?<!\\)([\\\*\[\]\(\)\{\}\.\_\!\?\-\#\@\&\$\%\^\&\+\=\~])', r'\\\1', text)
+
+    # Восстанавливаем |TEMP| обратно на *
+    text = text.replace('|TEMP|', '*')
+
+    # Восстанавливаем |CODE_BLOCK| обратно на ```
+    text = text.replace('|CODE_BLOCK|', '```')
+
+    # Восстанавливаем |INLINE_CODE| обратно на `
+    text = text.replace('|INLINE_CODE|', '`')
+
+    return text
+
+async def gpt_running(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    user_message = update.message.text
+    user_image = None
+
+    reset_button = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
+        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')]
+    ])
+
+    # Проверка, отправил ли пользователь текстовый файл
+    if update.message.document:
+        file_name = update.message.document.file_name
+        file_extension = file_name.split('.')[-1].lower()
+        caption_text = update.message.caption or "Текст из файла"
+
+        if file_extension in ["txt", "pdf"]:
+            try:
+                # Скачиваем файл
+                file = await update.message.document.get_file()
+                file_data = io.BytesIO()
+                await file.download_to_memory(out=file_data)
+                
+                # Извлекаем текст в зависимости от типа файла
+                if file_extension == "txt":
+                    file_data.seek(0)
+                    file_text = file_data.read().decode('utf-8')
+                elif file_extension == "pdf":
+                    file_text = extract_text_from_pdf(file_data)
+
+                # Логируем текст перед отправкой
+                logging.info(f"Текст из файла: {file_text[:200]}")  # Логирование первых 200 символов
+
+                # Генерация ответа с текстом из файла
+                response_text = generate_gemini_response(user_id, query=caption_text, text=file_text)
+
+                if response_text:
+                    await send_reply_with_limit(update, response_text, reply_markup=reset_button)
+                else:
+                    await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
+
+                return RUNNING_GPT_MODE  # <-- Добавьте return здесь
+
+            except Exception as e:
+                logging.error(f"Ошибка при обработке текстового файла: {e}")
+                await update.message.reply_text("Ошибка при обработке текстового файла. Попробуйте снова.")
+                return RUNNING_GPT_MODE
+        else:
+            await update.message.reply_text("Поддерживаются только текстовые файлы в формате .txt и .pdf.")
+            return RUNNING_GPT_MODE
+
+    # Проверка, отправил ли пользователь изображение
+    if update.message.photo:
+        try:
+            photo_file = await update.message.photo[-1].get_file()
+            img_data = io.BytesIO()
+            await photo_file.download_to_memory(out=img_data)
+            img = Image.open(img_data)
+
+            # Получение текстового описания от пользователя
+            user_message = update.message.caption or "Изображение без описания"
+            add_to_context(user_id, f"[Изображение] {user_message}", message_type="image_description")
+
+            # Генерация ответа с изображением
+            response_text = generate_gemini_response(user_id, query=user_message, image=img)
+
+            # Логируем ответ перед отправкой
+            logging.info(f"Ответ с изображением, который пытается отправить бот: {response_text}")
+
+            # Добавление ответа в контекст и отправка пользователю
+            if response_text:
+                add_to_context(user_id, response_text, message_type="bot_response")
+                await send_reply_with_limit(update, response_text, reply_markup=reset_button)
+            else:
+                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
+
+            return RUNNING_GPT_MODE  # <-- Добавьте return здесь
+
+        except Exception as e:
+            logging.error(f"Ошибка при загрузке изображения: {e}")
+            await update.message.reply_text("Ошибка при обработке изображения. Попробуйте снова.")
+            return RUNNING_GPT_MODE
+    else:
+        # Обработка текстового запроса без изображения
+        add_to_context(user_id, user_message, message_type="user_message")
+        response_text = generate_gemini_response(user_id, query=user_message)
+        
+        # Логируем ответ перед отправкой
+        logging.info(f"Текстовый ответ, который пытается отправить бот: {response_text}")
+        
+        # Добавление ответа в контекст и отправка пользователю
+        if response_text:
+            add_to_context(user_id, response_text, message_type="bot_response")
+            await send_reply_with_limit(update, response_text, reply_markup=reset_button)
+        else:
+            await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
+
+    return RUNNING_GPT_MODE
+
+# Функция для обработки нажатия кнопки "Сбросить диалог"
+async def reset_dialog(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+    user_contexts[user_id] = deque(maxlen=50)  # Очищаем контекст пользователя
+    await query.answer("Диалог сброшен.")
+    keyboard = [
+        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text="Диалог сброшен. Вы можете начать новый разговор.", reply_markup=reply_markup)
+
+
+
+
+
+
+async def text_rec_with_gpt(update, context):
+    user_id = update.effective_user.id
+    img_url = context.user_data.get('img_url')
+
+    # Проверяем наличие изображения в контексте
+    if not img_url:
+        await update.callback_query.answer("Изображение не найдено.")
+        return
+
+    try:
+        # Открываем файл temp_image.jpg для обработки
+        file = open('temp_image.jpg', 'rb')
+        
+        # Загружаем изображение как объект PIL.Image
+        image = Image.open(file)
+        image.load()  # Загружаем изображение полностью
+        
+        # Запрос для Gemini с указанием распознавания текста
+        query = "Распознай текст на данном изображении. В ответ пришли только распознанный текст либо если распознать не вышло то сообщи об этом"
+        
+        # Генерация ответа через Gemini
+        response = generate_gemini_response(user_id, query=query, image=image, use_context=False)
+        
+        # Закрываем файл после использования
+        file.close()
+        
+        # Проверяем и отправляем ответ пользователю
+        await update.callback_query.message.reply_text(response or "Ошибка при распознавании текста.")
+    
+    except Exception:
+        await update.callback_query.message.reply_text("Произошла ошибка при обработке изображения.")
+
+
+
 
 import re
 from bs4 import BeautifulSoup
@@ -535,8 +790,12 @@ async def start_search(update: Update, context: CallbackContext) -> int:
     elif update.callback_query:
         user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
         message_to_reply = update.callback_query.message
-    
-    is_search_mode[user_id] = True  # Устанавливаем флаг для пользователя в режим поиска
+        await update.callback_query.answer()
+
+    # Устанавливаем флаг для режима поиска и сбрасываем другие флаги
+    is_search_mode[user_id] = True
+    is_gpt_mode[user_id] = False
+    is_ocr_mode[user_id] = False
 
     # Создаем кнопку "Отменить поиск"
     keyboard = [
@@ -598,6 +857,18 @@ async def handle_file(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text("Пожалуйста, отправьте изображение для OCR.")
             return ASKING_FOR_OCR
 
+
+    if user_id in is_gpt_mode and is_gpt_mode[user_id]:
+        if update.message.text:
+            # Обрабатываем текст сообщения через GPT
+            user_message = update.message.text
+            response = generate_gemini_response(user_id, query=user_message)
+            await update.message.reply_text(response)
+            return RUNNING_GPT_MODE
+        elif update.message.photo or update.message.document:
+            await update.message.reply_text("В режиме GPT поддерживается только текстовый ввод.")
+            return RUNNING_GPT_MODE            
+
     # Если пользователь отправил команду /restart, сбрасываем состояние
     if update.message.text == "/restart":
         return await restart(update, context)
@@ -614,8 +885,9 @@ async def finish_search(update: Update, context: CallbackContext) -> int:
     
     # Создаем клавиатуру с кнопками
     keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
         [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+        [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -640,6 +912,9 @@ async def main_logic(update: Update, context: CallbackContext) -> int:
     if is_ocr_mode.get(user_id, False):
         return ASKING_FOR_OCR
 
+    if is_gpt_mode.get(user_id, False):
+        return RUNNING_GPT_MODE        
+
     # Основная логика обработки сообщений
     await update.message.reply_text("Обрабатываем сообщение в основной логике.")
     return ConversationHandler.END
@@ -648,12 +923,6 @@ async def main_logic(update: Update, context: CallbackContext) -> int:
 async def unknown_search_message(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Пожалуйста, отправьте фото или документ.")
     return ASKING_FOR_FILE
-
-# Добавим функцию для обработки неизвестных сообщений в режиме поиска
-async def unknown_search_message(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Пожалуйста, отправьте фото или документ.")
-    return ASKING_FOR_FILE
-
 
 async def restart(update: Update, context: CallbackContext) -> int:
     # Проверка типа события
@@ -676,19 +945,25 @@ async def restart(update: Update, context: CallbackContext) -> int:
     if user_id in is_ocr_mode:
         del is_ocr_mode[user_id]
 
+    if user_id in is_gpt_mode:
+        del is_gpt_mode[user_id]
+
     logger.info(f"User {user_id} restarted the process.") 
 
     # Отправляем сообщение с кнопками
     keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')]            
+        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+        [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')]
+
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await message_to_reply.reply_text(
+        '✅Бот успешно перезапущен.\n\n'
         '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
         'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
-        '<i>Так же вы можете воспользоваться кнопкой ниже чтобы найти автора по изображению, либо проверить вероятность использования ИИ для создания изображения</i>\n',
+        '<i>Так же вы можете воспользоваться одной из кнопок ниже чтобы найти автора по изображению, найти серию и таймметку аниме по кадру из него, проверить вероятность использования ИИ для создания изображения, распознать текст или растение. либо поговорить с ботом</i>\n\n',
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
@@ -705,12 +980,16 @@ async def start_ocr(update: Update, context: CallbackContext) -> int:
     elif update.callback_query:
         user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
         message_to_reply = update.callback_query.message
-    
-    is_ocr_mode[user_id] = True  # Устанавливаем флаг для пользователя в режим поиска
+    await update.callback_query.answer()    
+
+    is_ocr_mode[user_id] = True    
+    is_search_mode[user_id] = False
+    is_gpt_mode[user_id] = False
+  # Устанавливаем флаг для пользователя в режим поиска
 
     # Создаем кнопку "Отменить поиск"
     keyboard = [
-        [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+        [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -724,9 +1003,11 @@ async def start_ocr(update: Update, context: CallbackContext) -> int:
 
 async def finish_ocr(update: Update, context: CallbackContext) -> int:
     keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
+        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
         [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+        [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
+
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -796,7 +1077,7 @@ async def button_ocr(update, context):
             api_key = 'K86410931988957'  # Ваш ключ API
             recognized_text = await ocr_space_with_url(img_url, api_key)
             keyboard = [
-                [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+                [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             # Отправляем распознанный текст пользователю
@@ -894,7 +1175,9 @@ async def recognize_plant(update: Update, context: CallbackContext) -> None:
             else:
                 error_message = await response.text()
                 logger.error(f"Ошибка от API PlantNet: {error_message}")
-                await initial_message.edit_text("Ошибка при распознавании растения.")
+                await initial_message.edit_text("Ошибка при распознавании растения. Данное растение в базе не обнаружено, убедитесь что это именно растение, цветок, фрукт или овощь а не что-то иное. Так же можете попробовать сфотографировать под иным ракурсом")
+
+
 
 
 
@@ -953,7 +1236,7 @@ import wikipedia
 
 def escape_markdown_v2(text: str) -> str:
     # Экранирование специальных символов в MarkdownV2, включая символ '='
-    return re.sub(r'([_*[\]()~`>#+-=|{}.!])', r'\\\1', text)
+    return re.sub(r'([\_\*\[\]\(\)\~\`\>\#\+\-\.\!\=])', r'\\\1', text)
 
 
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
@@ -999,7 +1282,7 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
                         caption = (
                             f"Растение: {escape_markdown_v2(scientific_name)}\n"
                             f"Общие названия: {', '.join(map(escape_markdown_v2, common_names))}\n"
-                            f"{truncate_text_with_link(description, 950, wikipedia_link, scientific_name)}"
+                            f"{truncate_text_with_link(description, 300, wikipedia_link, scientific_name)}"
                         )
                         logger.info(f"Caption for first image: {caption}")
                         media.append(InputMediaPhoto(media=img_url, caption=caption, parse_mode='MarkdownV2'))
@@ -1023,13 +1306,14 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         
         # Отправляем сообщение с кнопками после медиа
         keyboard = [
+            [InlineKeyboardButton("Подробнее об этом растении", callback_data='gpt_plants_more')],         
             [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],        
-            [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')]
+            [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.message.reply_text(
-            "Для получения более подробной информации об уходе по этому растению воспользуйтесь кнопкой нижк. Либо отправьте следующее изображение",
+            "Для получения более подробной информации об этом растении либо об уходе за ним, воспользуйтесь кнопками ниже. Либо отправьте следующее изображение",
             reply_markup=reply_markup  # Добавляем кнопку к этому сообщению
         )
     else:
@@ -1037,11 +1321,39 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
     
     await query.answer()
 
+async def gpt_plants_more_handler(update, context):
+    """Асинхронный обработчик для запроса ухода за растением по научному названию."""
+    user_id = update.callback_query.from_user.id
+    scientific_name = context.user_data.get("scientific_name")
+    await update.callback_query.answer()
+
+    if not scientific_name:
+        await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
+        return
+
+    # Формируем запрос с научным названием
+    query = f"Расскажи больше про {scientific_name}, например, интересные факты, способы применения, особенности и прочее."
+
+    # Генерация ответа без контекста
+    response_text = generate_gemini_response(user_id, query=query, use_context=False)
+    response_text = limit_response_length(response_text)
+    response_text = escape_gpt_markdown_v2(response_text)
+
+    keyboard = [
+        [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],        
+        [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Редактируем существующее сообщение с новым ответом и кнопками
+    await update.callback_query.message.edit_text(response_text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+
 
 async def gpt_plants_help_handler(update, context):
     """Асинхронный обработчик для запроса ухода за растением по научному названию."""
     user_id = update.callback_query.from_user.id
     scientific_name = context.user_data.get("scientific_name")
+    await update.callback_query.answer()
 
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
@@ -1052,26 +1364,23 @@ async def gpt_plants_help_handler(update, context):
 
     # Генерация ответа без контекста
     response_text = generate_gemini_response(user_id, query=query, use_context=False)
-
-    # Ограничиваем длину ответа, если он превышает лимит
     response_text = limit_response_length(response_text)
+    response_text = escape_gpt_markdown_v2(response_text)
 
     keyboard = [
-        [InlineKeyboardButton("Отменить поиск", callback_data='finish_ocr')],
+        [InlineKeyboardButton("Подробнее об этом растении", callback_data='gpt_plants_more')],         
+        [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Отправляем ответ пользователю с кнопкой
-    await update.callback_query.message.reply_text(response_text, reply_markup=reply_markup)
-
-    # Очищаем scientific_name после отправки ответа
-    context.user_data.pop("scientific_name", None)
+    # Редактируем существующее сообщение с новым ответом и кнопками
+    await update.callback_query.message.edit_text(response_text, reply_markup=reply_markup, parse_mode='MarkdownV2')
 
 
 
 def truncate_text_with_link(text: str, max_length: int, link: str, scientific_name: str) -> str:
     """Обрезает текст до max_length символов, добавляет ссылку на статью или Google-поиск."""
-    ellipsis = 'далее по ссылкам'
+    ellipsis = escape_markdown_v2('...')
     
     # Если ссылка на Википедию отсутствует, формируем ссылку на Google-поиск
     if link:
@@ -1169,7 +1478,6 @@ async def handle_author_name(update: Update, context: CallbackContext) -> int:
 
         # Переход к следующему этапу
         keyboard = [
-            [InlineKeyboardButton("🎨 Найти автора, аниме или проверить на ИИ 🎨", callback_data='start_search')],
             [InlineKeyboardButton("Помощь и разметка", callback_data='help_command')],
             [InlineKeyboardButton("‼️Полный сброс процесса‼️", callback_data='restart')],
         ]
@@ -2261,7 +2569,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         keyboard = [
                             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
-                            [InlineKeyboardButton("Найти автора, аниме или проверить на ИИ ", callback_data='start_search')],                            
+                            [InlineKeyboardButton("📝 Проверить последний текст на ошибки 📝", callback_data='check_text')],  # Новая кнопка                           
                             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
                             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
                             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -2324,7 +2632,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
                         keyboard = [
                             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
-                            [InlineKeyboardButton(" Найти автора, аниме или проверить на ИИ ", callback_data='start_search')],
+                            [InlineKeyboardButton("📝 Проверить последний текст на ошибки 📝", callback_data='check_text')],  # Новая кнопка                           
                             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
                             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
                             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
@@ -2429,13 +2737,12 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
 
         keyboard = [
             [InlineKeyboardButton("‼️Сброс Публикации и Возврат к Началу‼️", callback_data='restart')],
-            [InlineKeyboardButton("Найти автора, аниме или проверить на ИИ ", callback_data='start_search')],
+            [InlineKeyboardButton("📝 Проверить последний текст на ошибки 📝", callback_data='check_text')],  # Новая кнопка
             [InlineKeyboardButton("Удалить последний элемент", callback_data='delete_last')],
             [InlineKeyboardButton("Предпросмотр", callback_data='preview_article')],
             [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
             [InlineKeyboardButton("Помощь и разметка", callback_data='help_command')],
-            [InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')]
- # Новая кнопка
+            [InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')],
         ]
 
         reply_markup = InlineKeyboardMarkup(keyboard) 
@@ -2464,7 +2771,58 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text('🚫 Ошибка: данные не найдены. Попробуйте отправить снова. Или нажмите /restart')
         return ConversationHandler.END
 
+def extract_text_from_json(data):
+    if isinstance(data, dict):
+        # Если текущий элемент - это словарь, рекурсивно обрабатываем его ключ 'children'
+        return ''.join(extract_text_from_json(child) for child in data.get('children', []))
+    elif isinstance(data, list):
+        # Если текущий элемент - это список, обрабатываем каждый элемент списка
+        return ''.join(extract_text_from_json(item) for item in data)
+    elif isinstance(data, str):
+        # Если текущий элемент - это строка, возвращаем её
+        return data
+    return ''
 
+async def handle_check_text(update, context):
+    user_id = update.effective_user.id
+    user_data_entry = user_data.get(user_id, {})
+
+    # Проверяем, есть ли текстовые сообщения в данных пользователя
+    if 'media' in user_data_entry and user_data_entry['media']:
+        # Ищем последний введенный текст
+        last_text_entry = next((entry['content'] for entry in reversed(user_data_entry['media']) if entry['type'] == 'text'), None)
+
+        # Проверяем, извлечен ли последний текст корректно
+        if last_text_entry:
+            # Извлекаем текстовое содержание из JSON-объекта
+            plain_text = extract_text_from_json(last_text_entry)
+
+            # Логируем содержание plain_text
+            logging.info(f"Extracted text for user {user_id}: {plain_text}")
+
+            # Формируем запрос для Gemini с текстом для проверки
+            query = (
+                f"Проверь данный текст в первую очередь на орфографические и пунктуационные ошибки. "
+                f"Сначала перечисли самые грубые и очевидные ошибки, такие как пропущенные буквы или очевидные опечатки "
+                f"(например, 'даска' вместо 'доска'), перечисли их, либо напиши что явных ошибок в тексте не найдено "
+                f"Затем представь полностью исправленный вариант текста. "
+                f"В конце добавь любые менее значительные рекомендации по улучшению текста, если они есть. "
+                f"Если ошибок не найдено и замечаний нет, укажи, что текст полностью корректен.\n\n{plain_text}"
+)            
+            # Логируем сформированный запрос
+            logging.info(f"Generated query for Gemini: {query}")
+
+            # Отправка запроса в модель Gemini для проверки
+            response = generate_gemini_response(user_id, query=query, use_context=False)
+
+            # Проверяем, что модель вернула ответ, и отправляем его пользователю
+            await update.callback_query.message.reply_text(response or "Не удалось выполнить проверку текста.")
+        else:
+            # Ответ пользователю, если текст не найден
+            await update.callback_query.answer("Последний текст не найден.")
+    else:
+        # Ответ пользователю, если нет текстовых сообщений
+        await update.callback_query.answer("Тексты для проверки отсутствуют.")
 
 
 async def handle_new_text_from_image(update: Update, context: CallbackContext, index, media) -> int:
@@ -3057,7 +3415,9 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 )
                 logger.info(f"User {user_id}'s data cleared and process completed.")
                 await message_to_reply.reply_text('********************************************************')
+                # Вызов команды restart
                 await restart(update, context)
+
                 return ConversationHandler.END
             else:
                 await message_to_reply.reply_text('🚫Ошибка при создании статьи. /restart')
@@ -3066,14 +3426,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
             await message_to_reply.reply_text('🚫Ошибка при создании статьи. /restart')
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
-            await message_to_reply.reply_text(f'🚫Произошла непредвиденная ошибка: {e}')
-
-        del user_data[user_id]
-        logger.info(f"Error occurred. User {user_id}'s data cleared.")
-        return ConversationHandler.END
-    else:
-        await message_to_reply.reply_text('🚫Ошибка: данные не найдены. /restart')
-        return ConversationHandler.END
+            await message_to_reply.reply_text('🚫Произошла неожиданная ошибка. /restart')
 
 
 import ast
@@ -3295,6 +3648,22 @@ def main() -> None:
         allow_reentry=True
     )
 
+    gpt_handler = ConversationHandler(
+        entry_points=[CommandHandler('gpt', run_gpt)],
+        states={
+            ASKING_FOR_FILE: [
+                MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file),
+                MessageHandler(filters.ALL & ~filters.COMMAND, unknown_ocr_message),
+            ],
+        },
+        fallbacks=[
+            CommandHandler('fin_gpt', stop_gpt),
+            CommandHandler('restart', restart),  # Добавлен обработчик для /restart
+        ],
+        per_user=True,
+        allow_reentry=True
+    )
+
     # Добавляем обработчики команд
     application.add_handler(CallbackQueryHandler(handle_edit_button, pattern='edit_article'))
     application.add_handler(CallbackQueryHandler(handle_delete_button, pattern='delete_last'))
@@ -3306,13 +3675,19 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_page_change, pattern='^page_')) 
     application.add_handler(CallbackQueryHandler(ai_or_not, pattern='ai_or_not'))
     application.add_handler(CallbackQueryHandler(finish_search, pattern='finish_search')) 
-    application.add_handler(CallbackQueryHandler(finish_ocr, pattern='finish_ocr')) 
+    application.add_handler(CallbackQueryHandler(finish_ocr, pattern='finish_ocr'))
+    application.add_handler(CallbackQueryHandler(stop_gpt, pattern='stop_gpt'))      
     application.add_handler(CallbackQueryHandler(start_search, pattern='start_search'))
     application.add_handler(CallbackQueryHandler(start_ocr, pattern='start_ocr'))
     application.add_handler(CallbackQueryHandler(button_ocr, pattern='recognize_text'))
     application.add_handler(CallbackQueryHandler(button_ocr, pattern='recognize_plant'))
     application.add_handler(CallbackQueryHandler(button_more_plants_handler, pattern='plant_\\d+'))
     application.add_handler(CallbackQueryHandler(gpt_plants_help_handler, pattern='^gpt_plants_help$'))
+    application.add_handler(CallbackQueryHandler(gpt_plants_more_handler, pattern='^gpt_plants_more$'))
+    application.add_handler(CallbackQueryHandler(text_rec_with_gpt, pattern='text_rec_with_gpt$'))
+    application.add_handler(CallbackQueryHandler(handle_check_text, pattern='^check_text$'))
+    application.add_handler(CallbackQueryHandler(run_gpt, pattern='run_gpt')) 
+    application.add_handler(CallbackQueryHandler(reset_dialog, pattern='^reset_dialog$')) 
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
@@ -3330,6 +3705,10 @@ def main() -> None:
     # Добавляем обработчики для команд /ocr и /fin_ocr
     application.add_handler(ocr_handler)
     application.add_handler(CommandHandler('fin_ocr', finish_ocr)) 
+
+    # Добавляем обработчики для команд /gpt и /fin_gpt
+    application.add_handler(ocr_handler)
+    application.add_handler(CommandHandler('fin_gpt', stop_gpt))     
 
     # Добавляем основной conversation_handler
     application.add_handler(conversation_handler)
