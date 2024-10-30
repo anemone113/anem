@@ -1010,7 +1010,7 @@ async def start_ocr(update: Update, context: CallbackContext) -> int:
     elif update.callback_query:
         user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
         message_to_reply = update.callback_query.message
-    await update.callback_query.answer()    
+        await update.callback_query.answer()    
 
     is_ocr_mode[user_id] = True    
     is_search_mode[user_id] = False
