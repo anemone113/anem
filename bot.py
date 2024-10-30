@@ -324,22 +324,33 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     return RUNNING_GPT_MODE
 
 async def stop_gpt(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    user_id = query.from_user.id
-    is_gpt_mode[user_id] = False  # Отключаем режим GPT для пользователя
-    await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')], 
-        [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Режим общения с GPT отключен. Вы вернулись к основному режиму.", reply_markup=reply_markup)  # Используем query.message вместо update.message
-    return ConversationHandler.END
+    # Проверяем, был ли вызов через кнопку или команду
+    if update.callback_query:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()
+        await query.message.reply_text(
+            "Режим общения с GPT отключен. Вы вернулись к основному режиму.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+                [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')], 
+                [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
+            ])
+        )
+    else:
+        # Если вызов произошел через команду
+        user_id = update.message.from_user.id
+        await update.message.reply_text(
+            "Режим общения с GPT отключен. Вы вернулись к основному режиму.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+                [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')], 
+                [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
+            ])
+        )
 
-async def unknown_gpt_message(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Ощибка Gpt")
-    return RUNNING_GPT_MODE
+    is_gpt_mode[user_id] = False  # Отключаем режим GPT для пользователя
+    return ConversationHandler.END
 
 
 
@@ -889,27 +900,34 @@ async def handle_file(update: Update, context: CallbackContext) -> int:
     return ASKING_FOR_FILE
 
 async def finish_search(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    user_id = query.from_user.id
+    # Проверяем, вызвана ли функция через кнопку или командой
+    if update.callback_query:
+        query = update.callback_query
+        user_id = query.from_user.id
+        await query.answer()  # Отвечаем на запрос, чтобы убрать индикатор загрузки на кнопке
+        await query.edit_message_text(
+            "Вы вышли из режима поиска и вернулись к основным функциям бота",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+                [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+                [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
+                [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
+            ])
+        )
+    else:
+        # Если вызов произошел через команду
+        user_id = update.message.from_user.id
+        await update.message.reply_text(
+            "Вы вышли из режима поиска и вернулись к основным функциям бота",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
+                [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+                [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
+                [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
+            ])
+        )
+
     is_search_mode[user_id] = False  # Выключаем режим поиска
-
-    await query.answer()  # Отвечаем на запрос, чтобы убрать индикатор загрузки на кнопке
-    
-    # Создаем клавиатуру с кнопками
-    keyboard = [
-        [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
-        [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
-        [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Изменяем текст сообщения с кнопками
-    await query.edit_message_text(
-        "Вы вышли из режима поиска и вернулись к основным функциям бота", 
-        reply_markup=reply_markup  # Добавляем клавиатуру с кнопками
-    )
-
     return ConversationHandler.END
 
 # Основная логика обработчика сообщений
@@ -3719,7 +3737,7 @@ def main() -> None:
     application.add_handler(CommandHandler('fin_ocr', finish_ocr)) 
 
     # Добавляем обработчики для команд /gpt и /fin_gpt
-    application.add_handler(ocr_handler)
+    application.add_handler(gpt_handler)
     application.add_handler(CommandHandler('fin_gpt', stop_gpt))     
 
     # Добавляем основной conversation_handler
