@@ -11,7 +11,7 @@ GOOGLE_API_KEY = "AIzaSyB5UCCya5hXDO2q3n-K5tQY4FzWSB4dVQY"
 
 model_config = {
     "temperature": 0.3,          # Высокая температура для увеличения креативности
-    "max_output_tokens": 2000,    # Длинный ответ
+    "max_output_tokens": 10000,    # Длинный ответ
     "top_p": 0.4,               # Более широкий диапазон вероятностей для выбора токенов
     "top_k": 4,                # Большой выбор токенов для разнообразия
 }
@@ -24,6 +24,35 @@ model = genai.GenerativeModel('gemini-1.5-flash', generation_config=model_config
 
 # Хранилище для историй диалогов пользователей
 user_contexts = {}
+
+def generate_image_description(user_id, image):
+    """Создает текстовое описание изображения и добавляет его в контекст пользователя."""
+    # Преобразуем изображение в base64 для отправки в модель
+    img_byte_arr = io.BytesIO()
+    image.save(img_byte_arr, format='JPEG')
+    img_byte_arr = img_byte_arr.getvalue()
+    image_b64 = base64.b64encode(img_byte_arr).decode('utf-8')
+
+    # Формируем запрос для генерации описания
+    input_data = [
+        {"text": "Опиши изображение максимально подробно насколько это возможно. Выдели в текстовом виде все детали изображения. На русском языке."},
+        {"mime_type": "image/jpeg", "data": image_b64}
+    ]
+
+    try:
+        # Запрос на генерацию описания через модель
+        response = model.generate_content({"parts": input_data})
+        
+        if hasattr(response, 'parts') and response.parts:
+            description = response.parts[0].text.strip()
+            add_to_context(user_id, description, message_type="image_description")  # Сохранение в контексте
+            return description
+        else:
+            logging.warning("Ответ от модели не содержит текстового компонента для описания.")
+            return "Не удалось сгенерировать описание изображения."
+    except Exception as e:
+        logging.error(f"Ошибка при генерации описания изображения: {e}")
+        return "Ошибка при обработке изображения. Попробуйте снова."
 
 def get_relevant_context(user_id):
     """Получает явный контекст для пользователя."""
@@ -63,33 +92,28 @@ def add_to_context(user_id, message, message_type):
 def generate_gemini_response(user_id, query=None, text=None, image=None, use_context=True):
     input_data = [{"text": "Отвечай на русском языке, если не указано иное."}]
     
-    # Добавляем контекст
     if use_context:
         relevant_context = get_relevant_context(user_id)
         if relevant_context:
             input_data.append({"text": relevant_context})
 
-    # Добавляем последний запрос
     if query:
         input_data.append({"text": query})
         if use_context:
             add_to_context(user_id, query, message_type="user_message")
 
-    # Обработка текстового файла
     if text:
         input_data.append({"text": text})
         if use_context:
             add_to_context(user_id, text, message_type="file_content")
 
-    # Обработка изображения, если есть
     if image:
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format='JPEG')
-        img_byte_arr = img_byte_arr.getvalue()
-        image_b64 = base64.b64encode(img_byte_arr).decode('utf-8')
-        input_data.append({"mime_type": "image/jpeg", "data": image_b64})
+        # Генерация и сохранение описания изображения
+        description = generate_image_description(user_id, image)
+        input_data.append({"text": description})  # Включаем описание в контекст
+        if use_context:
+            add_to_context(user_id, description, message_type="image_description")
 
-    # Логирование входных данных
     logging.info(f"Отправка данных в Gemini: {json.dumps(input_data, ensure_ascii=False)}")
 
     try:
@@ -101,9 +125,8 @@ def generate_gemini_response(user_id, query=None, text=None, image=None, use_con
                 add_to_context(user_id, response_text, message_type="bot_response")
 
             if image:
-                add_to_context(user_id, response_text, message_type="image_analysis")
-            elif text:
-                add_to_context(user_id, response_text, message_type="file_analysis")
+                # Сохраняем полный ответ как описание изображения
+                add_to_context(user_id, response_text, message_type="image_full_description")
 
             return response_text
         else:
