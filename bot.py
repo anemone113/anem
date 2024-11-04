@@ -22,6 +22,8 @@ from gpt_helper import add_to_context, generate_gemini_response, limit_response_
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import chardet
+import json
+import os
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -388,7 +390,7 @@ def escape_gpt_markdown_v2(text):
     text = text.replace('`', '|INLINE_CODE|')
 
     # Экранируем все специальные символы
-    text = re.sub(r'(?<!\\)([\\\*\[\]\(\)\{\}\.\_\!\?\-\#\@\&\$\%\^\&\+\=\~])', r'\\\1', text)
+    text = re.sub(r'(?<!\\)([\\\*\[\]\(\)\{\}\.\_\!\|\?\-\#\@\&\$\%\^\&\+\=\~])', r'\\\1', text)
 
     # Восстанавливаем |TEMP| обратно на *
     text = text.replace('|TEMP|', '*')
@@ -484,7 +486,8 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             # Добавление ответа в контекст и отправка пользователю
             if response_text:
                 add_to_context(user_id, response_text, message_type="bot_response")
-                await send_reply_with_limit(update, response_text, reply_markup=reset_button)
+                clean_response = get_clean_response_text(response_text)
+                await send_reply_with_limit(update, clean_response, reply_markup=reset_button)
             else:
                 await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
 
@@ -505,7 +508,10 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         # Добавление ответа в контекст и отправка пользователю
         if response_text:
             add_to_context(user_id, response_text, message_type="bot_response")
-            await send_reply_with_limit(update, response_text, reply_markup=reset_button)
+            
+            # Убираем метку времени и тип сообщения для отображения пользователю
+            clean_response = get_clean_response_text(response_text)
+            await send_reply_with_limit(update, clean_response, reply_markup=reset_button)
         else:
             await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
 
@@ -515,7 +521,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 async def reset_dialog(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    user_contexts[user_id] = deque(maxlen=50)  # Очищаем контекст пользователя
+    user_contexts[user_id] = deque(maxlen=700)  # Очищаем контекст пользователя
     await query.answer("Диалог сброшен.")
     keyboard = [
         [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')]
@@ -3624,6 +3630,7 @@ async def duplicate_message(update: Update, context: CallbackContext) -> None:
 
 
 def main() -> None:
+    load_context_from_firebase()  # Загружаем историю чатов в user_contexts
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Настройка ConversationHandler для основной логики
