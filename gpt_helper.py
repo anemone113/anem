@@ -160,18 +160,28 @@ def get_relevant_context(user_id):
     
     return '\n'.join(explicit_context + unique_context)
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def add_to_context(user_id, message, message_type):
     """Добавляет сообщение с меткой времени в контекст пользователя, избегая повторов."""
     if user_id not in user_contexts:
-        user_contexts[user_id] = deque(maxlen=700)  # Максимум 50 сообщений
+        user_contexts[user_id] = deque(maxlen=700)  # Максимум 700 сообщений
     
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Добавляем 3 часа к текущему времени
+    timestamp = (datetime.now() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
     entry = f"{timestamp} | {message_type}: {message}"
     
     if entry not in user_contexts[user_id]:
         user_contexts[user_id].append(entry)
+
+def get_clean_response_text(response_text):
+    """Удаляет метку времени и тип сообщения для отображения пользователю."""
+    # Убираем метку времени и тип сообщения, если они есть
+    parts = response_text.split('|', 1)
+    if len(parts) > 1:
+        clean_text = parts[1].split(':', 1)[-1].strip()  # Убираем тип сообщения
+        return clean_text
+    return response_text
 
 def get_clean_response_text(response_text):
     """Удаляет метку времени и тип сообщения для отображения пользователю."""
