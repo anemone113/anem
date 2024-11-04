@@ -51,7 +51,7 @@ model = genai.GenerativeModel('gemini-1.5-flash-002',
                                   )
 
 # Инициализация Firebase
-cred = credentials.Certificate('config/anemone-60bbf-firebase-adminsdk-5y55s-1c84705060.json')  # Путь к вашему JSON файлу
+cred = credentials.Certificate('/etc/secrets/firebase-key.json')  # Путь к вашему JSON файлу
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://anemone-60bbf-default-rtdb.europe-west1.firebasedatabase.app/'  # Замените на URL вашей базы данных
 })
