@@ -18,7 +18,8 @@ from requests.exceptions import Timeout
 from bs4 import BeautifulSoup
 import wikipediaapi
 import wikipedia
-from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts
+import gpt_helper
+from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, get_clean_response_text
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import chardet
