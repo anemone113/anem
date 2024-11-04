@@ -1368,7 +1368,7 @@ async def gpt_plants_more_handler(update, context):
         return
 
     # Формируем запрос с научным названием
-    query = f"Расскажи больше про {scientific_name}, например, интересные факты, способы применения, особенности и прочее."
+    query = f"Расскажи больше про {scientific_name}, например, интересные факты, способы применения, особенности и прочее.В ответе используй разметку markdown_v2"
 
     # Генерация ответа без контекста
     response_text = generate_gemini_response(user_id, query=query, use_context=False)
@@ -1396,7 +1396,7 @@ async def gpt_plants_help_handler(update, context):
         return
 
     # Формируем запрос с научным названием
-    query = f"Как ухаживать за {scientific_name}?"
+    query = f"Как ухаживать за {scientific_name}?В ответе используй разметку markdown_v2"
 
     # Генерация ответа без контекста
     response_text = generate_gemini_response(user_id, query=query, use_context=False)
