@@ -1369,7 +1369,7 @@ async def gpt_plants_more_handler(update, context):
         return
 
     # Формируем запрос с научным названием
-    query = f"Расскажи больше про {scientific_name}, например, интересные факты, способы применения, особенности и прочее.В ответе используй разметку markdown_v2"
+    query = f"Расскажи больше про {scientific_name}, например, интересные факты, способы применения, особенности и прочее.В ответе используй разметку markdown_v2, например **текст** для жирного текста. Конструкции вроде  |TEMP| не используй"
 
     # Генерация ответа без контекста
     response_text = generate_gemini_response(user_id, query=query, use_context=False)
