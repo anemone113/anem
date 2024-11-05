@@ -391,7 +391,7 @@ def escape_gpt_markdown_v2(text):
     text = text.replace('`', '|INLINE_CODE|')
 
     # Экранируем все специальные символы
-    text = re.sub(r'(?<!\\)([\\\*\[\]\(\)\{\}\.\_\!\|\?\-\#\@\&\$\%\^\&\+\=\~])', r'\\\1', text)
+    text = re.sub(r'(?<!\\)([\\\*\[\]\(\)\{\}\.\_\!\?\-\#\@\&\$\%\^\&\+\=\~])', r'\\\1', text)
 
     # Восстанавливаем |TEMP| обратно на *
     text = text.replace('|TEMP|', '*')
@@ -401,6 +401,9 @@ def escape_gpt_markdown_v2(text):
 
     # Восстанавливаем |INLINE_CODE| обратно на `
     text = text.replace('|INLINE_CODE|', '`')
+
+    # Экранируем символ |
+    text = re.sub(r'(?<!\\)\|', r'\\|', text)
 
     return text
 
