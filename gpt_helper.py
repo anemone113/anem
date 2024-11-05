@@ -194,7 +194,7 @@ def get_clean_response_text(response_text):
 
 
 def generate_gemini_response(user_id, query=None, text=None, image=None, use_context=True):
-    input_data = [{"text": "Отвечай на русском языке, если не указано иное."}]
+    input_data = [{"text": "Отвечай на русском языке, если не указано иное. Используй разметку markdown v2 для telegram когда нужно и никакую иную"}]
     
     if use_context:
         relevant_context = get_relevant_context(user_id)
