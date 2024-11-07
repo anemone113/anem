@@ -19,12 +19,13 @@ from bs4 import BeautifulSoup
 import wikipediaapi
 import wikipedia
 import gpt_helper
-from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, get_clean_response_text
+from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, get_clean_response_text, set_user_role, generate_plant_issue_response, generate_text_rec_response, generate_plant_help_response
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import chardet
 import json
 import os
+from gpt_helper import user_roles
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -34,7 +35,7 @@ GROUP_CHAT_ID = -1002233281756
 
 # Состояния
 # Состояния
-ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE, ASKING_FOR_OCR, RUNNING_GPT_MODE = range(7)
+ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE, ASKING_FOR_OCR, RUNNING_GPT_MODE, ASKING_FOR_ROLE, ASKING_FOR_FOLLOWUP = range(9)
 # Сохранение данных состояния пользователя
 user_data = {}
 publish_data = {}
@@ -43,6 +44,8 @@ media_group_storage = {}
 is_search_mode = {}
 is_ocr_mode = {}
 is_gpt_mode = {}
+is_role_mode = {}
+is_asking_mode = {}
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -221,6 +224,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             [InlineKeyboardButton("📃Распознать текст📃", callback_data='recognize_text')],
             [InlineKeyboardButton("🖼️Распознать текст через GPT🖼️", callback_data='text_rec_with_gpt')],  # Новая кнопка            
             [InlineKeyboardButton("🌸Распознать растение🌸", callback_data='recognize_plant')],
+            [InlineKeyboardButton("🪴Что не так с Растением?🪴", callback_data='text_plant_help_with_gpt')],
             [InlineKeyboardButton("Распознать на iNaturalist", url=inat_url)],
             [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
         ]
@@ -238,6 +242,12 @@ async def start(update: Update, context: CallbackContext) -> int:
     # Проверяем, если бот в режиме GPT
     if is_gpt_mode.get(user_id, False):
         return await gpt_running(update, context)  # Вызываем функцию gpt_running
+
+    if is_role_mode.get(user_id, False):
+        return await receive_role_input(update, context)
+
+    if is_asking_mode.get(user_id, False):
+        return await receive_followup_question(update, context)
 
     # Основная логика для работы с изображениями
     if update.message:
@@ -273,6 +283,10 @@ async def start(update: Update, context: CallbackContext) -> int:
                         del user_data[user_id]  # Очистка данных пользователя, если нужно
                     else:
                         logger.warning(f"Попытка удалить несуществующий ключ: {user_id}") # Очистка данных пользователя, если нужно
+                    user_data[user_id] = {'status': 'awaiting_artist_link'}
+                    
+                    return ASKING_FOR_ARTIST_LINK
+
 
             # Проверка, если пользователь отправил изображение как фото (photo)
             elif update.message.photo:
@@ -300,6 +314,7 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         return ConversationHandler.END
 
+
 async def run_gpt(update: Update, context: CallbackContext) -> int:
     if update.message:
         user_id = update.message.from_user.id  # Когда вызвано командой /search
@@ -316,7 +331,9 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     is_search_mode[user_id] = False
     is_ocr_mode[user_id] = False
     keyboard = [
-        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')]
+        [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
+        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
+        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')]  # Новая кнопка для запроса роли
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправляем сообщение о начале режима общения с GPT
@@ -407,6 +424,49 @@ def escape_gpt_markdown_v2(text):
 
     return text
 
+async def set_role(update: Update, context: CallbackContext):
+    """Команда для установки новой роли пользователем."""
+    user_id = update.message.from_user.id
+    role_text = update.message.text.replace("/set_role", "").strip()
+    
+    if role_text:
+        set_user_role(user_id, role_text)
+        await update.message.reply_text(f"Ваша роль успешно изменена на: {role_text}")
+    else:
+        await update.message.reply_text("Пожалуйста, введите роль после команды /set_role.")
+
+async def handle_set_role_button(update: Update, context: CallbackContext):
+    """Обработчик для кнопки установки роли."""
+    user_id = update.callback_query.from_user.id
+    
+    # Завершаем текущий разговор с GPT, если он активен
+    if is_gpt_mode.get(user_id, False):
+        is_gpt_mode[user_id] = False  # Выключаем режим GPT
+    
+    # Включаем режим ролей
+    is_role_mode[user_id] = True
+    await update.callback_query.answer()  # Отправить ответ на нажатие кнопки
+    await update.callback_query.message.reply_text("Пожалуйста, введите роль, которую вы хотите установить.")
+    
+    return ASKING_FOR_ROLE
+
+async def receive_role_input(update: Update, context: CallbackContext):
+    """Обработчик для ввода роли пользователем."""
+    user_id = update.message.from_user.id
+    role_text = update.message.text.strip()
+
+    if role_text:
+        set_user_role(user_id, role_text)  # Устанавливаем роль
+        await update.message.reply_text(f"Ваша роль успешно изменена на: {role_text}")
+    else:
+        await update.message.reply_text("Пожалуйста, введите роль после команды /set_role.")
+    
+    # Отключаем режим ролей и возвращаемся в режим GPT
+    is_role_mode[user_id] = False
+    is_gpt_mode[user_id] = True  # Включаем режим GPT обратно
+    
+    return ConversationHandler.END  # Завершаем разговор, можно продолжить с основного состояния  
+
 async def gpt_running(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     user_message = update.message.text
@@ -414,7 +474,8 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 
     reset_button = InlineKeyboardMarkup([
         [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
-        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')]
+        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
+        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')]  # Новая кнопка для запроса роли
     ])
 
     # Проверка, отправил ли пользователь текстовый файл
@@ -501,6 +562,34 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             logging.error(f"Ошибка при загрузке изображения: {e}")
             await update.message.reply_text("Ошибка при обработке изображения. Попробуйте снова.")
             return RUNNING_GPT_MODE
+
+    if update.callback_query and update.callback_query.data == 'reset_dialog':
+        user_id = update.callback_query.from_user.id
+        user_roles[user_id] = (
+            "Ты играешь роль приятного собеседника - лисы хранительницы леса. Общение происходит в телеграм, тебе доступен журнал переписки, "
+            "используй его чтобы имитировать живое общение, старайся сделать это общение естественным, избегай повторений. "
+            "Так же собеседник может сам задать тебе личность, прислушивайся к его пожеланиям. "
+            "Время и тип сообщения формата 2024-11-04 13:07:50 | bot_message: используются только в журнале, в своих ответах их не указывай. "
+            "Ты стараешься подстроиться под собеседника и его увлечения, поддерживать абсолютно любую тему диалога какой бы она ни была. "
+            "Твой стиль общения дружелюбный, умный, тактичный, добрый, заботливый, но уверенный, ты не боишься высказывать своё мнение. "
+            "Ты ценишь природу, стараешься избегать повторов и бессмысленных фраз. Не задаёшь лишних вопросов, стараешься быть лаконичной. "
+            "Общение с тобой лёгкое, живое и непринуждённое, ты отвечаешь в литературном стиле, легко воспринимаемом собеседником. "
+            "Не используешь смайлики, кроме исключительных случаев когда они действительно уместны. Иногда уместны лёгкие шутки, сарказм, ирония "
+            "или философия в случае если тема серьёзна или по запросу собеседника. Так же иногда можешь переставать быть вежливой и начинать грубить, "
+            "особенно если кто-то общается неуважительно, донимает тебя, прямо или косвенно причиняет вред природе или ведёт себя бестактно. "
+            "Так же ты совсем не против обсуждения откровенных тем если их затравгивает собеседник. "
+            "Сохраняешь лаконичность и избегаешь пустых вежливых вопросов. Избегай повторений ранее использованных выражений или ответов. "
+            "При ответах используй разные формулировки и старайся добавить что-то новое в каждом ответе, например, другой ракурс на вопрос или новую деталь. "
+            "Если вопрос повторяется, попробуй использовать другие фразы или сделать ответ более лаконичным, добавляя детали или упоминая что-то новое, "
+            "связанное с природой, животными или философией. Учитывай всю доступную информацию из истории чтобы имитировать общение живого персонажа. "
+            "Включая время и дату. Избегай частого упоминания времени суток и сезона года; делай это лишь тогда, когда это органично вписывается в контекст ответа."
+        )
+        save_context_to_firebase()
+        
+        await update.callback_query.answer("Диалог и роль сброшены.")
+        return ASKING_FOR_ROLE  # Или другое состояние после сброса        
+
+
     else:
         # Обработка текстового запроса без изображения
         add_to_context(user_id, user_message, message_type="user_message")
@@ -525,16 +614,67 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 async def reset_dialog(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    user_contexts[user_id] = deque(maxlen=700)  # Очищаем контекст пользователя
+    
+    # Очищаем контекст пользователя
+    user_contexts[user_id] = deque(maxlen=50)
+    
+    # Очищаем роль пользователя
+    if user_id in user_roles:
+        del user_roles[user_id]
+    
     await query.answer("Диалог сброшен.")
+
+    # Обновляем клавиатуру
     keyboard = [
-        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')]
+        [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
+        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
+        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')]  # Новая кнопка для запроса роли
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text="Диалог сброшен. Вы можете начать новый разговор.", reply_markup=reply_markup)
 
 
 
+
+
+
+async def text_plant_help_with_gpt(update, context):
+    user_id = update.effective_user.id
+    img_url = context.user_data.get('img_url')
+
+    # Проверяем наличие изображения в контексте
+    if not img_url:
+        await update.callback_query.answer("Изображение не найдено.")
+        return
+
+    try:
+        # Открываем файл temp_image.jpg для обработки
+        with open('temp_image.jpg', 'rb') as file:
+            # Загружаем изображение как объект PIL.Image
+            image = Image.open(file)
+            image.load()  # Загружаем изображение полностью
+            
+            # Генерация ответа через Gemini
+            response = generate_plant_issue_response(user_id, image=image)
+            
+            # Экранируем текст для MarkdownV2
+            response_text = escape_gpt_markdown_v2(response or "Ошибка при определении проблемы с растением.")
+            
+            # Создаем клавиатуру
+            keyboard = [
+                [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Отправляем ответ пользователю с разметкой MarkdownV2
+            await update.callback_query.message.reply_text(
+                response_text,
+                reply_markup=reply_markup,
+                parse_mode='MarkdownV2'
+            )
+            await update.callback_query.answer()
+    except Exception:
+        await update.callback_query.message.reply_text("Произошла ошибка при обработке изображения.")
 
 
 
@@ -549,27 +689,74 @@ async def text_rec_with_gpt(update, context):
 
     try:
         # Открываем файл temp_image.jpg для обработки
-        file = open('temp_image.jpg', 'rb')
-        
-        # Загружаем изображение как объект PIL.Image
-        image = Image.open(file)
-        image.load()  # Загружаем изображение полностью
-        
-        # Запрос для Gemini с указанием распознавания текста
-        query = "Распознай текст на данном изображении. В ответ пришли только распознанный текст либо если распознать не вышло то сообщи об этом"
-        
-        # Генерация ответа через Gemini
-        response = generate_gemini_response(user_id, query=query, image=image, use_context=False)
-        
-        # Закрываем файл после использования
-        file.close()
-        
+        with open('temp_image.jpg', 'rb') as file:
+            # Загружаем изображение как объект PIL.Image
+            image = Image.open(file)
+            image.load()  # Загружаем изображение полностью
+            
+            # Запрос для Gemini с указанием распознавания текста            
+            # Генерация ответа через Gemini
+            response = generate_text_rec_response(user_id, image=image, query=None)
+            
+            # Сохраняем распознанный текст в context.user_data
+            context.user_data['recognized_text'] = response
+
         # Проверяем и отправляем ответ пользователю
         await update.callback_query.message.reply_text(response or "Ошибка при распознавании текста.")
-    
-    except Exception:
-        await update.callback_query.message.reply_text("Произошла ошибка при обработке изображения.")
+        await update.callback_query.answer()        
+        # Кнопка для уточнения вопроса
+        followup_button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Задать уточняющий вопрос", callback_data='ask_followup')]
+        ])
+        
+        # Предлагаем задать уточняющий вопрос
+        await update.callback_query.message.reply_text(
+            "Хотите задать уточняющий вопрос касательно распознанного текста?",
+            reply_markup=followup_button
+        )
 
+    except Exception as e:
+        await update.callback_query.message.reply_text("Произошла ошибка при обработке изображения.")
+        print(f"Error: {e}")
+
+async def handle_followup_question(update, context):
+    """Функция, обрабатывающая нажатие кнопки для уточняющего вопроса."""
+    user_id = update.callback_query.from_user.id
+    # Завершаем текущий разговор с GPT, если он активен
+    if is_ocr_mode.get(user_id, False):
+        is_ocr_mode[user_id] = False  # Выключаем режим GPT
+    
+    # Включаем режим ролей
+    is_asking_mode[user_id] = True    
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("Пожалуйста, введите ваш уточняющий вопрос.")
+    return ASKING_FOR_FOLLOWUP
+
+async def receive_followup_question(update, context):
+    """Обработка уточняющего вопроса после распознавания текста."""
+    user_id = update.message.from_user.id
+    followup_question = update.message.text
+
+    # Извлекаем распознанный текст из context.user_data
+    recognized_text = context.user_data.get('recognized_text', '')
+
+    # Объединяем распознанный текст с уточняющим вопросом
+    full_query = f"{recognized_text}\n\n{followup_question}"
+
+    # Отправляем вопрос с распознанным текстом в Gemini
+    response = generate_text_rec_response(user_id, query=full_query)
+
+    # Создаем клавиатуру с кнопкой "Отменить режим распознавания"
+    keyboard = [
+        [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Проверка и отправка ответа пользователю вместе с клавиатурой
+    await update.message.reply_text(response or "Ошибка при обработке уточняющего вопроса.", reply_markup=reply_markup)
+    is_role_mode[user_id] = False
+    is_ocr_mode[user_id] = True  # Включаем режим GPT обратно
+    return ConversationHandler.END  # Завершение уточняющего вопроса  
 
 
 
@@ -709,6 +896,7 @@ async def search_image_saucenao(image_path: str):
 
 
 
+
 async def second_upload_image(file_path: str) -> str:
     try:
         # Попытка загрузки на Catbox с таймаутом 5 секунд
@@ -748,6 +936,7 @@ async def upload_free_image(file_path: str) -> str:
                     return response_json['image']['url']  # Проверьте правильность пути к URL в ответе
                 else:
                     raise Exception(f"Ошибка загрузки на Free Image Hosting: {free_image_response.status}")
+
 
 
 
@@ -902,6 +1091,28 @@ async def handle_file(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text("В режиме GPT поддерживается только текстовый ввод.")
             return RUNNING_GPT_MODE            
 
+    if user_id in is_role_mode and is_role_mode[user_id]:
+        if update.message.text:
+            # Обрабатываем текст сообщения через GPT
+            user_message = update.message.text
+            response = generate_gemini_response(user_id, query=user_message)
+            await update.message.reply_text(response)
+            return RUNNING_GPT_MODE
+        elif update.message.photo or update.message.document:
+            await update.message.reply_text("В режиме GPT поддерживается только текстовый ввод.")
+            return RUNNING_GPT_MODE 
+
+    if user_id in is_asking_mode and is_asking_mode[user_id]:
+        if update.message.text:
+            # Обрабатываем текст сообщения через GPT
+            user_message = update.message.text
+            response = generate_gemini_response(user_id, query=user_message)
+            await update.message.reply_text(response)
+            return ASKING_FOR_FOLLOWUP
+        elif update.message.photo or update.message.document:
+            await update.message.reply_text("В режиме GPT поддерживается только текстовый ввод.")
+            return ASKING_FOR_FOLLOWUP
+
     # Если пользователь отправил команду /restart, сбрасываем состояние
     if update.message.text == "/restart":
         return await restart(update, context)
@@ -955,6 +1166,13 @@ async def main_logic(update: Update, context: CallbackContext) -> int:
     if is_gpt_mode.get(user_id, False):
         return RUNNING_GPT_MODE        
 
+    if is_role_mode.get(user_id, False):
+        return ASKING_FOR_ROLE 
+
+    if is_asking_mode.get(user_id, False):
+        return ASKING_FOR_FOLLOWUP
+
+
     # Основная логика обработки сообщений
     await update.message.reply_text("Обрабатываем сообщение в основной логике.")
     return ConversationHandler.END
@@ -1000,7 +1218,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await message_to_reply.reply_text(
-        '✅Бот успешно перезапущен.\n\n'
+        'Бот успешно перезапущен.\n\n'
         '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
         'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
         '<i>Так же вы можете воспользоваться одной из кнопок ниже чтобы найти автора по изображению, найти серию и таймметку аниме по кадру из него, проверить вероятность использования ИИ для создания изображения, распознать текст или растение. либо поговорить с ботом</i>\n\n',
@@ -1012,6 +1230,8 @@ async def restart(update: Update, context: CallbackContext) -> int:
     user_data[user_id] = {'status': 'awaiting_artist_link'}
     
     return ASKING_FOR_ARTIST_LINK
+
+
 
 async def start_ocr(update: Update, context: CallbackContext) -> int:
     if update.message:
@@ -1072,7 +1292,7 @@ async def finish_ocr(update: Update, context: CallbackContext) -> int:
         )
 
     return ConversationHandler.END
-
+    
 # Добавим функцию для обработки неизвестных сообщений в режиме поиска
 async def unknown_ocr_message(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Пожалуйста, отправьте фото или документ.")
@@ -1136,6 +1356,8 @@ async def button_ocr(update, context):
         await recognize_plant(update, context)  # Вызов функции для распознавания растения
     else:
         await query.message.reply_text("Неизвестная команда.")
+
+
 
 async def recognize_plant(update: Update, context: CallbackContext) -> None:
     user_id = update.callback_query.from_user.id
@@ -1220,8 +1442,6 @@ async def recognize_plant(update: Update, context: CallbackContext) -> None:
 
 
 
-
-
 import wikipediaapi  # Импортируем библиотеку
 
 # Инициализация Wikipedia API с User-Agent
@@ -1273,6 +1493,7 @@ async def get_wikipedia_link(scientific_name: str, common_names: list) -> tuple:
 
 
 import wikipedia
+
 
 def escape_markdown_v2(text: str) -> str:
     # Экранирование специальных символов в MarkdownV2, включая символ '='
@@ -1361,6 +1582,7 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
     
     await query.answer()
 
+
 async def gpt_plants_more_handler(update, context):
     """Асинхронный обработчик для запроса ухода за растением по научному названию."""
     user_id = update.callback_query.from_user.id
@@ -1372,10 +1594,10 @@ async def gpt_plants_more_handler(update, context):
         return
 
     # Формируем запрос с научным названием
-    query = f"Расскажи больше про {scientific_name}, например, интересные факты, способы применения, особенности и прочее.В ответе используй разметку markdown_v2"
+    query = f" Расскажи больше про {scientific_name}, например, интересные факты, способы применения, укажи если ядовито, какие-то особенности и прочее. При этом будь лаконичной. В ответе используй разметку markdown_v2"
 
     # Генерация ответа без контекста
-    response_text = generate_gemini_response(user_id, query=query, use_context=False)
+    response_text = generate_plant_help_response(user_id, query=query)
     response_text = limit_response_length(response_text)
     response_text = escape_gpt_markdown_v2(response_text)
 
@@ -1403,7 +1625,7 @@ async def gpt_plants_help_handler(update, context):
     query = f"Как ухаживать за {scientific_name}?В ответе используй разметку markdown_v2"
 
     # Генерация ответа без контекста
-    response_text = generate_gemini_response(user_id, query=query, use_context=False)
+    response_text = generate_plant_help_response(user_id, query=query)
     response_text = limit_response_length(response_text)
     response_text = escape_gpt_markdown_v2(response_text)
 
@@ -1415,6 +1637,8 @@ async def gpt_plants_help_handler(update, context):
 
     # Редактируем существующее сообщение с новым ответом и кнопками
     await update.callback_query.message.edit_text(response_text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+
+
 
 
 
@@ -3641,7 +3865,7 @@ def main() -> None:
     conversation_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
-            CommandHandler('edit', edit_article),
+            CommandHandler('edit', edit_article),            
             MessageHandler(filters.TEXT & ~filters.COMMAND, main_logic)  # Основная логика
         ],
         states={
@@ -3674,12 +3898,14 @@ def main() -> None:
     )
 
     ocr_handler = ConversationHandler(
-        entry_points=[CommandHandler('ocr', start_ocr)],
+        entry_points=[CommandHandler('ocr', start_ocr), CallbackQueryHandler(text_rec_with_gpt, pattern='^text_rec$')],
         states={
             ASKING_FOR_FILE: [
                 MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file),
                 MessageHandler(filters.ALL & ~filters.COMMAND, unknown_ocr_message),
             ],
+            ASKING_FOR_FOLLOWUP: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_followup_question),            ],        
         },
         fallbacks=[
             CommandHandler('fin_ocr', finish_ocr),
@@ -3690,8 +3916,11 @@ def main() -> None:
     )
 
     gpt_handler = ConversationHandler(
-        entry_points=[CommandHandler('gpt', run_gpt)],
+        entry_points=[CommandHandler('gpt', run_gpt), CommandHandler('set_role', handle_set_role_button)],
         states={
+            ASKING_FOR_ROLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_role_input),
+            ],
             ASKING_FOR_FILE: [
                 MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file),
                 MessageHandler(filters.ALL & ~filters.COMMAND, unknown_ocr_message),
@@ -3726,9 +3955,14 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(gpt_plants_help_handler, pattern='^gpt_plants_help$'))
     application.add_handler(CallbackQueryHandler(gpt_plants_more_handler, pattern='^gpt_plants_more$'))
     application.add_handler(CallbackQueryHandler(text_rec_with_gpt, pattern='text_rec_with_gpt$'))
+    application.add_handler(CallbackQueryHandler(text_plant_help_with_gpt, pattern='text_plant_help_with_gpt$'))    
     application.add_handler(CallbackQueryHandler(handle_check_text, pattern='^check_text$'))
     application.add_handler(CallbackQueryHandler(run_gpt, pattern='run_gpt')) 
     application.add_handler(CallbackQueryHandler(reset_dialog, pattern='^reset_dialog$')) 
+    application.add_handler(CallbackQueryHandler(handle_set_role_button, pattern='^set_role_button$'))  
+    application.add_handler(CallbackQueryHandler(handle_followup_question, pattern='^ask_followup'))    
+    
+    application.add_handler(CommandHandler('set_role', set_role ))          
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
