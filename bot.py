@@ -26,6 +26,7 @@ import chardet
 import json
 import os
 from gpt_helper import user_roles
+import base64
 
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -333,7 +334,8 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
         [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
-        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')]  # Новая кнопка для запроса роли
+        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')],
+        [InlineKeyboardButton("Помощь по GPT", callback_data='help_gpt')]  # Новая кнопка
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправляем сообщение о начале режима общения с GPT
@@ -342,6 +344,70 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
         )
     
     return RUNNING_GPT_MODE
+
+async def handle_gpt_help(update: Update, context: CallbackContext) -> None:
+    """Обработчик для кнопки 'Помощь по GPT'."""
+    await update.callback_query.answer()  # Убираем индикатор загрузки на кнопке
+    
+    help_text = (
+        "Диалог с ботом поддерживает следующие функции:\n"
+        "**- Беседа с контекстом на 300 сообщений.** Контекст хранится в отдельной библиотеке и потому "
+        "есть весомые гарантии, что ваша история общения с ботом будет храниться до тех пор, пока вы сами её не удалите.\n"
+        "**- Безлимитный анализ изображений.** Вы можете отправить боту любое изображение и в подписи "
+        "попросить его о чём-то, например, проанализировать, что-то рассказать об этом изображении, "
+        "распознать, дать советы о чём-то и т.д.\n"
+        "**- Поддержка документов .txt.** Вы можете отправить боту текстовый файл с длинным текстом и "
+        "попросить что-то сделать с ним.\n"
+        "**- Роли. Вы можете задавать боту самостоятельно прописанные роли.** Для этого просто нажмите "
+        "соответствующую кнопку и введите текст. Смена роли НЕ сбрасывает историю диалога, поэтому "
+        "бот может начать путаться. Если вам нужна новая роль и при этом новый диалог, то сначала "
+        "сбросьте его, затем уже введите роль. Если сбросить диалог, не указав роль, то будет "
+        "применена роль по умолчанию.\n"
+        "**- Также бот может рисовать и дорисовывать по наброскам изображения.** Для этого:\n\n"
+        "Во время диалога с GPT просто напишите **'Нарисуй: *'** и далее, вместо '*', на английском языке "
+        "напишите промт того, что именно вам нужно.\n\n"
+        "Либо отправьте боту изображение с подписью, начинающейся с **'Дорисуй: *'**, где вместо '*' опишите "
+        "ваше изображение на английском языке и укажите, что именно вы желаете видеть на конечном изображении, "
+        "опишите основные элементы, их расположение, желаемый стиль и т.д. Можете попробовать как коротко, "
+        "просто описав изображение, так и более длинные промты.\n\n"
+        "Если вам сложно писать на английском, то вы можете задать боту роль. Например:\n"
+        "``` Ты — профессиональный помощник написания промтов для генерации изображений. Я отправляю тебе описание на русском, ты возвращаешь готовый промт на английском```\n"
+        "И вам останется только копировать промты, которые за вас сделает бот.\n"
+        "По аналогии вы можете давать боту и иные полезные роли. Например, врача, редактора, юриста и т.д., "
+        "помня при этом, что GPT может ошибаться, конечно же.\n\n"
+        "Обе функции рисования поддерживают ввод параметров по необходимости. В функции **'Дорисовать'** "
+        "вы можете в конце, после промта, в скобках через запятую написать два числа. Первое — от 0 до 1 — "
+        "**denoising strength**, второе — от 0 до 25 — **cfg scale**. Например: **(0.4, 15)**.\n\n"
+        "Первое число отвечает за схожесть с оригиналом: чем ближе к 0, тем более похожим на оригинал будет "
+        "сгенерированное изображение, второе — за степень приближения к описанию, которое вы задали, "
+        "однако слишком высокие значения будут, наоборот, давать непредсказуемые результаты.\n"
+        "Вы можете указать в скобках только первое число; в таком случае у второго выставятся значения "
+        "по умолчанию. Если не указывать числа вовсе, то оба параметра будут использоваться со значениями "
+        "по умолчанию, равными:\n"
+        "- **denoising strength** = 0.5\n"
+        "- **cfg scale** = 8 для дорисовок и 3 для генераций\n\n"
+        "Рабочие диапазоны, при которых модель выдаёт адекватные результаты: у первого числа от 0.4 до 0.6, "
+        "у второго от 3 до 20.\n\n"
+        "Аналогично с функцией **'Нарисовать'**: в скобках вы можете задать два параметра через запятую — соотношение "
+        "сторон и cfg scale. Например, (1:2, 6). Если вы зададите только соотношение сторон, то cfg будет "
+        "выставлен по умолчанию, если ничего не укажете, то оба параметра будут по умолчанию, и изображение "
+        "будет квадратного формата.\n\n"
+        "**Примеры:**\n"
+        "``` Нарисуй: A cat sits on a windowsill, gazing out at a winter scene. Cozy atmosphere, warm light inside, soft snowfall outside. Oil painting (1:2, 8)```\n"
+        "Будет сгенерирован кот на подоконнике в соотношении сторон 1:2 и параметром cfg scale равным 8.\n\n"
+        "``` Нарисуй: A cat sits on a windowsill, gazing out at a winter scene. Cozy atmosphere, warm light inside, soft snowfall outside. Oil painting```\n"
+        "То же самое, но с параметрами по умолчанию: соотношение 1:1 и cfg scale 3.\n\n"
+        "``` Дорисуй: A boy and a girl sitting on a fallen tree in a forest, spring, early morning, light mist (0.5)```\n"
+        "Будет дорисован отправленный скетч, на котором мальчик и девочка сидят на упавшем дереве. "
+        "denoising strength имеет значение 0.5, cfg scale не указан и потому имеет стандартное значение "
+        "для дорисовок равное 8.\n"
+    )
+    formatted_help_text = escape_gpt_markdown_v2(help_text)  # Применяем функцию форматирования
+
+    await update.callback_query.message.reply_text(
+        formatted_help_text, parse_mode='MarkdownV2'
+    )
+
 
 async def stop_gpt(update: Update, context: CallbackContext) -> int:
     # Проверяем, был ли вызов через кнопку или команду
@@ -408,7 +474,7 @@ def escape_gpt_markdown_v2(text):
     text = text.replace('`', '|INLINE_CODE|')
 
     # Экранируем все специальные символы
-    text = re.sub(r'(?<!\\)([\\\*\[\]\(\)\{\}\.\_\!\?\-\#\@\&\$\%\^\&\+\=\~])', r'\\\1', text)
+    text = re.sub(r'(?<!\\)([\\\*\[\]\(\)\{\}\.\!\?\-\#\@\&\$\%\^\&\+\=\~])', r'\\\1', text)
 
     # Восстанавливаем |TEMP| обратно на *
     text = text.replace('|TEMP|', '*')
@@ -421,6 +487,9 @@ def escape_gpt_markdown_v2(text):
 
     # Экранируем символ |
     text = re.sub(r'(?<!\\)\|', r'\\|', text)
+
+    # Экранируем символ _ в самом конце
+    text = re.sub(r'(?<!\\)_', r'\\_', text)
 
     return text
 
@@ -529,26 +598,105 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         else:
             await update.message.reply_text("Поддерживаются только текстовые файлы в формате .txt и .pdf.")
             return RUNNING_GPT_MODE
+    # Проверка, начинается ли сообщение с "Нарисуй:"
+    if update.message.text and update.message.text.lower().startswith("нарисуй:"):
+        user_message = update.message.text
+        prompt = user_message[8:].strip()
 
+        # Ищем соотношение сторон и cfg_scale в конце текста
+        aspect_cfg_match = re.search(r"\((\d+:\d+)(?:,\s*(\d+))?\)$", prompt)
+        if aspect_cfg_match:
+            aspect_ratio_str = aspect_cfg_match.group(1)
+            cfg_scale = int(aspect_cfg_match.group(2)) if aspect_cfg_match.group(2) else 3  # Используем 3, если cfg_scale не указан
+            prompt = re.sub(r"\(\d+:\d+(?:,\s*\d+)?\)$", "", prompt).strip()
+            
+            width, height = calculate_gen_image(aspect_ratio_str)
+            if width is None or height is None:
+                await update.message.reply_text("Некорректное соотношение сторон. Пожалуйста, укажите допустимое соотношение.")
+                return
+        else:
+            width, height = 1024, 1024  # Стандартные размеры
+            cfg_scale = 3  # Значение по умолчанию
+
+        await update.message.reply_text("Изображение в процессе генерации...")
+
+        job_id = await def_prodia(prompt, width, height, cfg_scale)
+
+        if job_id:
+            image_url = await check_prodia_status(job_id)
+            if image_url:
+                await update.message.reply_photo(photo=image_url, caption="Вот ваше изображение!", reply_markup=reset_button)
+            else:
+                await update.message.reply_text("Не удалось получить изображение. Попробуйте снова.")
+        else:
+            await update.message.reply_text("Произошла ошибка при отправке запроса. Попробуйте снова.")
+
+        return RUNNING_GPT_MODE
     # Проверка, отправил ли пользователь изображение
     if update.message.photo:
         try:
+            # Загружаем изображение
             photo_file = await update.message.photo[-1].get_file()
             img_data = io.BytesIO()
             await photo_file.download_to_memory(out=img_data)
             img = Image.open(img_data)
+            width, height = img.size
 
-            # Получение текстового описания от пользователя
+            # Получаем caption изображения
             user_message = update.message.caption or "Изображение без описания"
-            add_to_context(user_id, f"[Изображение] {user_message}", message_type="image_description")
 
-            # Генерация ответа с изображением
+            # Если caption начинается с "Дорисуй:"
+            if user_message.lower().startswith("дорисуй:"):
+                # Основной промпт перед пользовательским
+                base_prompt = "finish sketch, add intricate details, realistic textures, smooth shading, clean lines, vibrant colors, high-definition, focused lighting"
+                
+                # Поиск чисел в скобках в конце сообщения
+                match = re.search(r"\((0(?:\.\d+)?|1(?:\.0)?)(?:\s*,\s*(\d{1,2}|50))?\)\s*$", user_message)
+                
+                # Проверяем результат регулярного выражения и извлекаем параметры
+                if match:
+                    denoising_strength = float(match.group(1))  # Первое число всегда denoising_strength
+                    cfg_scale = int(match.group(2)) if match.group(2) else 8  # Если второе число есть, оно для cfg_scale, иначе — значение по умолчанию
+                    user_prompt = user_message[8:match.start()].strip()  # Текст до скобок
+                else:
+                    denoising_strength = 0.5  # Значение по умолчанию для denoising_strength
+                    cfg_scale = 8  # Значение по умолчанию для cfg_scale
+                    user_prompt = user_message[8:].strip()  # Весь текст после "Дорисуй:"
+
+                prompt = f"{base_prompt}, {user_prompt}"  # Объединение основного промпта и пользовательского
+
+                # Отправляем сообщение "Ожидайте..."
+                waiting_message = await update.message.reply_text("Ожидайте, изображение генерируется...")
+
+                # Рассчитываем новые размеры
+                new_width, new_height = calculate_new_dimensions(width, height)
+
+                # Конвертируем изображение в base64
+                image_base64 = encode_image_to_base64(img)
+                
+                # Передаем изображение и комбинированный промпт в функцию prodia_paint с denoising_strength
+                job_id = await prodia_paint(prompt, image_base64, new_width, new_height, denoising_strength, cfg_scale)
+
+                if job_id:
+                    # Проверяем статус и дожидаемся завершения генерации
+                    image_url = await check_prodia_status(job_id)
+                    if image_url:
+                        await waiting_message.edit_text("Вот ваше изображение!")
+                        await update.message.reply_photo(photo=image_url, caption="Вот ваше изображение!", reply_markup=reset_button)
+                    else:
+                        await waiting_message.edit_text("Не удалось получить изображение. Попробуйте снова.")
+                else:
+                    await waiting_message.edit_text("Произошла ошибка при отправке запроса. Попробуйте снова.")
+
+                return RUNNING_GPT_MODE
+
+            # Если caption не начинается с "Дорисуй:", продолжаем обычную обработку
+            add_to_context(user_id, f"[Изображение] {user_message}", message_type="image_description")
             response_text = generate_gemini_response(user_id, query=user_message, image=img)
 
             # Логируем ответ перед отправкой
             logging.info(f"Ответ с изображением, который пытается отправить бот: {response_text}")
 
-            # Добавление ответа в контекст и отправка пользователю
             if response_text:
                 add_to_context(user_id, response_text, message_type="bot_response")
                 clean_response = get_clean_response_text(response_text)
@@ -609,6 +757,197 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
 
     return RUNNING_GPT_MODE
+
+
+def calculate_new_dimensions(width: int, height: int) -> (int, int):
+    """Рассчитывает новые размеры изображения с сохранением пропорций и учетом всех ограничений."""
+    max_dim = 1536
+    min_dim = 512
+    max_sum_dim = 2080
+
+    # Рассчитываем начальные новые размеры с учетом максимального и минимального ограничения
+    aspect_ratio = width / height
+    if width > height:
+        new_width = min(max(width, min_dim), max_dim)
+        new_height = int(new_width / aspect_ratio)
+        if new_height > max_dim:
+            new_height = max_dim
+            new_width = int(new_height * aspect_ratio)
+    else:
+        new_height = min(max(height, min_dim), max_dim)
+        new_width = int(new_height * aspect_ratio)
+        if new_width > max_dim:
+            new_width = max_dim
+            new_height = int(new_width / aspect_ratio)
+    
+    # Проверяем, что сумма не превышает 2090
+    if new_width + new_height > max_sum_dim:
+        scale_factor = max_sum_dim / (new_width + new_height)
+        new_width = int(new_width * scale_factor)
+        new_height = int(new_height * scale_factor)
+
+    return new_width, new_height
+
+async def prodia_paint(prompt: str, img_base64: str, width: int, height: int, denoising_strength: float, cfg_scale: int) -> str:
+    url = "https://api.prodia.com/v1/sdxl/transform"
+    
+    # Формируем payload
+    payload = {
+        "model": "dreamshaperXL10_alpha2.safetensors [c8afe2ef]",
+        "imageData": img_base64,
+        "prompt": prompt,
+        "denoising_strength": denoising_strength,  # Используем denoising_strength, переданный пользователем
+        "negative_prompt": "disfigured, poorly drawn, cartoonish, low quality, harsh shadows, overly stylized, unintended textures, text errors, extra limbs, blurry",
+        "steps": 32,
+        "cfg_scale": cfg_scale,  # Используем cfg_scale, переданный пользователем или по умолчанию
+        "seed": -1,
+        "upscale": False,
+        "sampler": "DPM++ 2M Karras",
+        "width": width,
+        "height": height
+    }
+
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
+    }
+    # Логирование параметров, исключая "imageData"
+    logging.info("Параметры, передаваемые в Prodia API:")
+    for key, value in payload.items():
+        if key != "imageData":
+            logging.info(f"{key}: {value}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as response:
+                if response.status == 200:
+                    response_data = await response.json()
+                    return response_data.get("job")
+                else:
+                    logging.error(f"Ошибка при отправке запроса: {response.status}")
+                    return None
+    except Exception as e:
+        logging.error(f"Ошибка при отправке запроса в Prodia: {e}")
+        return None
+
+def encode_image_to_base64(img: Image) -> str:
+    """Конвертирует изображение в base64 строку."""
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    return img_base64
+
+
+def calculate_gen_image(aspect_ratio_str: str) -> (int, int):
+    # Пытаемся найти соотношение сторон, например "1:2"
+    aspect_ratio_match = re.match(r"(\d+):(\d+)", aspect_ratio_str)
+    
+    if aspect_ratio_match:
+        # Извлекаем числовые значения
+        width_ratio = int(aspect_ratio_match.group(1))
+        height_ratio = int(aspect_ratio_match.group(2))
+        
+        # Рассчитываем наибольший множитель, чтобы соблюсти сумму <= 2090 и минимум 512
+        scale_factor = 2090 / (width_ratio + height_ratio)
+        width = int(width_ratio * scale_factor)
+        height = int(height_ratio * scale_factor)
+
+        # Проверяем, чтобы обе стороны были не менее 512 пикселей
+        if width < 512 or height < 512:
+            return None, None  # Некорректное соотношение
+        else:
+            return width, height
+    else:
+        return None, None  # Некорректный формат соотношения
+
+
+# URL для проверки статуса задания, нужно подставить `job_id`
+check_url_template = "https://api.prodia.com/v1/job/{}"
+
+async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int) -> str:
+    generate_url = "https://api.prodia.com/v1/sdxl/generate"    
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
+    }
+    payload = {
+        "model": "dreamshaperXL10_alpha2.safetensors [c8afe2ef]",
+        "prompt": prompt,
+        "negative_prompt": "disfigured, deformed, ugly, bad anatomy, poorly drawn, low quality, blurry, pixelated, incorrect lighting, harsh shadows, cartoon, sketchy, text errors, watermark, extra fingers, extra limbs, mutilated, too busy, overexposed, underexposed, no violence, no explicit content, bad composition, wrong perspective",
+        "steps": 28,
+        "cfg_scale": cfg_scale,
+        "seed": -1,
+        "sampler": "DPM++ 2M Karras",
+        "upscale": False,
+        "width": width,
+        "height": height
+    }
+    logging.info("Параметры, передаваемые в Prodia API:")
+    for key, value in payload.items():
+        if key != "imageData":
+            logging.info(f"{key}: {value}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(generate_url, headers=headers, json=payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                job_id = response_data.get("job")
+                return job_id
+            else:
+                logging.error("Ошибка при отправке запроса на генерацию изображения.")
+                return None
+
+async def check_prodia_status(job_id: str) -> str:
+    headers = {
+        "accept": "application/json",
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
+    }
+    check_url = check_url_template.format(job_id)
+
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                logging.info(f"Проверка статуса задачи {job_id} по URL: {check_url}")
+                async with session.get(check_url, headers=headers) as response:
+                    logging.info(f"HTTP статус ответа: {response.status}")
+
+                    if response.status == 200:
+                        response_data = await response.json()
+                        logging.info(f"Ответ от сервера: {response_data}")
+
+                        status = response_data.get("status")
+                        if status == "succeeded":
+                            image_url = response_data.get("imageUrl")
+                            logging.info(f"Изображение сгенерировано успешно. URL: {image_url}")
+
+                            # Асинхронная загрузка изображения на Catbox
+                            asyncio.create_task(upload_image_to_catbox_in_background(image_url))
+                            return image_url
+                        elif status == "failed":
+                            logging.error("Не удалось сгенерировать изображение: статус задачи 'failed'.")
+                            return None
+                        else:
+                            logging.info(f"Текущий статус задачи: {status}. Повторная проверка через 5 секунд.")
+                            await asyncio.sleep(5)
+                    else:
+                        logging.error(f"Ошибка при проверке статуса генерации изображения. HTTP статус: {response.status}")
+                        return None
+            except Exception as e:
+                logging.error(f"Произошла ошибка при проверке статуса задачи {job_id}: {e}")
+                return None
+
+async def upload_image_to_catbox_in_background(image_url: str):
+    file_path = "temp_image.jpg"  # Локальный путь для сохранения изображения
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as response:
+            if response.status == 200:
+                with open(file_path, 'wb') as f:
+                    f.write(await response.read())
+                catbox_url = await second_upload_image(file_path)
+                logging.info(f"Изображение успешно загружено на Catbox: {catbox_url}")
+            else:
+                logging.error(f"Не удалось скачать изображение для загрузки на Catbox. HTTP статус: {response.status}")
+
 
 # Функция для обработки нажатия кнопки "Сбросить диалог"
 async def reset_dialog(update: Update, context: CallbackContext) -> None:
@@ -3916,7 +4255,7 @@ def main() -> None:
     )
 
     gpt_handler = ConversationHandler(
-        entry_points=[CommandHandler('gpt', run_gpt), CommandHandler('set_role', handle_set_role_button)],
+        entry_points=[CommandHandler('gpt', run_gpt), CommandHandler('set_role', handle_set_role_button), CommandHandler('help_gpt', handle_gpt_help)],
         states={
             ASKING_FOR_ROLE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_role_input),
@@ -3961,6 +4300,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(reset_dialog, pattern='^reset_dialog$')) 
     application.add_handler(CallbackQueryHandler(handle_set_role_button, pattern='^set_role_button$'))  
     application.add_handler(CallbackQueryHandler(handle_followup_question, pattern='^ask_followup'))    
+    application.add_handler(CallbackQueryHandler(handle_gpt_help, pattern='^help_gpt$'))   
     
     application.add_handler(CommandHandler('set_role', set_role ))          
     application.add_handler(CommandHandler('send', send_mode))
