@@ -765,22 +765,28 @@ def calculate_new_dimensions(width: int, height: int) -> (int, int):
     min_dim = 512
     max_sum_dim = 2080
 
-    # Рассчитываем начальные новые размеры с учетом максимального и минимального ограничения
+    # Рассчитываем пропорцию и начальные размеры с учетом минимального ограничения
     aspect_ratio = width / height
     if width > height:
-        new_width = min(max(width, min_dim), max_dim)
+        new_width = max(min(width, max_dim), min_dim)
         new_height = int(new_width / aspect_ratio)
-        if new_height > max_dim:
+        if new_height < min_dim:
+            new_height = min_dim
+            new_width = int(new_height * aspect_ratio)
+        elif new_height > max_dim:
             new_height = max_dim
             new_width = int(new_height * aspect_ratio)
     else:
-        new_height = min(max(height, min_dim), max_dim)
+        new_height = max(min(height, max_dim), min_dim)
         new_width = int(new_height * aspect_ratio)
-        if new_width > max_dim:
+        if new_width < min_dim:
+            new_width = min_dim
+            new_height = int(new_width / aspect_ratio)
+        elif new_width > max_dim:
             new_width = max_dim
             new_height = int(new_width / aspect_ratio)
-    
-    # Проверяем, что сумма не превышает 2090
+
+    # Проверяем, что сумма не превышает max_sum_dim
     if new_width + new_height > max_sum_dim:
         scale_factor = max_sum_dim / (new_width + new_height)
         new_width = int(new_width * scale_factor)
