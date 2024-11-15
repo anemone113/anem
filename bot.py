@@ -435,7 +435,11 @@ async def stop_gpt(update: Update, context: CallbackContext) -> int:
             ])
         )
 
-    is_gpt_mode[user_id] = False  # Отключаем режим GPT для пользователя
+    is_ocr_mode[user_id] = False  # Выключаем режим поиска
+    is_search_mode[user_id] = False
+    is_gpt_mode[user_id] = False
+    is_role_mode[user_id] = False
+    is_asking_mode[user_id] = False  # Отключаем режим GPT для пользователя
     return ConversationHandler.END
 
 
@@ -1626,6 +1630,10 @@ async def finish_ocr(update: Update, context: CallbackContext) -> int:
         query = update.callback_query
         user_id = query.from_user.id
         is_ocr_mode[user_id] = False  # Выключаем режим поиска
+        is_search_mode[user_id] = False
+        is_gpt_mode[user_id] = False
+        is_role_mode[user_id] = False
+        is_asking_mode[user_id] = False  # Выключаем режим поиска
         
         await query.answer()  # Отвечаем на запрос, чтобы убрать индикатор загрузки на кнопке
         await query.edit_message_text(
@@ -1636,6 +1644,10 @@ async def finish_ocr(update: Update, context: CallbackContext) -> int:
     elif update.message:  # Если функция вызвана через команду /fin_ocr
         user_id = update.message.from_user.id
         is_ocr_mode[user_id] = False  # Выключаем режим поиска
+        is_search_mode[user_id] = False
+        is_gpt_mode[user_id] = False
+        is_role_mode[user_id] = False
+        is_asking_mode[user_id] = False  # Выключаем режим поиска
         
         await update.message.reply_text(
             "Вы вышли из режима распознавания и вернулись к основным функциям бота. Вы можете продолжить заполнять статью на том моменте на котором остановились, либо воспользоваться одной из кнопок:", 
