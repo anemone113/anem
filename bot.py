@@ -1551,6 +1551,12 @@ async def restart(update: Update, context: CallbackContext) -> int:
     if user_id in is_gpt_mode:
         del is_gpt_mode[user_id]
 
+    if user_id in is_asking_mode:
+        del is_asking_mode[user_id]
+
+    if user_id in is_role_mode:
+        del is_role_mode[user_id]    
+    
     logger.info(f"User {user_id} restarted the process.") 
 
     # Отправляем сообщение с кнопками
