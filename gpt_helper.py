@@ -61,44 +61,126 @@ user_contexts = {}
 
 user_roles = {}
 
+user_presets = {} 
+
+user_models = {}
+
 def load_context_from_firebase():
-    """Загружает user_contexts и user_roles из Firebase."""
-    global user_contexts, user_roles
+    """Загружает user_contexts, user_roles, пресеты и модели из Firebase."""
+    global user_contexts, user_roles, user_presets, user_models
     try:
         ref_context = db.reference('user_contexts')
         ref_roles = db.reference('user_roles')
-        
+        ref_presets = db.reference('user_presets')
+        ref_models = db.reference('user_models')
+
         # Загружаем контексты
         json_context = ref_context.get()
         if json_context:
             for user_id, context_list in json_context.items():
                 user_contexts[int(user_id)] = deque(context_list, maxlen=500)
-        
+
         # Загружаем роли
         json_roles = ref_roles.get()
         if json_roles:
             for user_id, role in json_roles.items():
                 user_roles[int(user_id)] = role
-        
-        logging.info("Контекст и роли успешно загружены из Firebase.")
+
+        # Загружаем пресеты
+        json_presets = ref_presets.get()
+        if json_presets:
+            user_presets.update({int(user_id): preset for user_id, preset in json_presets.items()})
+
+        # Загружаем модели
+        json_models = ref_models.get()
+        if json_models:
+            user_models.update({int(user_id): model for user_id, model in json_models.items()})
+
+        logging.info("Контекст, роли, пресеты и модели успешно загружены из Firebase.")
     except Exception as e:
-        logging.error(f"Ошибка при загрузке контекста или ролей из Firebase: {e}")
+        logging.error(f"Ошибка при загрузке данных из Firebase: {e}")
 
 def save_context_to_firebase():
-    """Сохраняет user_contexts и user_roles в Firebase."""
+    """Сохраняет user_contexts, user_roles, пресеты и модели в Firebase."""
     try:
         # Преобразуем deques в списки для сохранения в Firebase
         json_context = {user_id: list(context) for user_id, context in user_contexts.items()}
         ref_context = db.reference('user_contexts')
         ref_context.set(json_context)
-        
+
         # Сохраняем роли
         ref_roles = db.reference('user_roles')
         ref_roles.set(user_roles)
-        
-        logging.info("Контекст и роли успешно сохранены в Firebase.")
+
+        # Сохраняем пресеты
+        ref_presets = db.reference('user_presets')
+        ref_presets.set(user_presets)
+
+        # Сохраняем модели
+        ref_models = db.reference('user_models')
+        ref_models.set(user_models)
+
+        logging.info("Контекст, роли, пресеты и модели успешно сохранены в Firebase.")
     except Exception as e:
-        logging.error(f"Ошибка при сохранении контекста или ролей в Firebase: {e}")
+        logging.error(f"Ошибка при сохранении данных в Firebase: {e}")
+
+def get_user_preset(user_id: int) -> str:
+    try:
+        # Обращаемся к ветке Firebase, где хранятся пресеты
+        ref_presets = db.reference('user_presets')
+        user_presets = ref_presets.get()
+
+        # Преобразуем user_id в строку, т.к. ключи Firebase обычно строки
+        user_preset = user_presets.get(str(user_id))
+
+        if user_preset:
+            logging.info(f"Пресет для пользователя {user_id}: {user_preset}")
+            return user_preset
+        else:
+            logging.warning(f"Пресет для пользователя {user_id} не найден. Используется значение по умолчанию.")
+            return "None"
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке пресета для пользователя {user_id}: {e}")
+        return "None"
+
+
+def set_user_presets(user_id, preset):
+    """Устанавливает пользовательский пресет и сохраняет его в Firebase."""
+    user_presets[user_id] = preset
+    try:
+        # Сохраняем пресеты в Firebase
+        ref_presets = db.reference('user_presets')
+        ref_presets.set({str(uid): p for uid, p in user_presets.items()})
+        logging.info(f"Пресет пользователя {user_id} обновлён на: {preset}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении пресета в Firebase: {e}")
+
+def get_user_model(user_id: int) -> str:
+    """Возвращает модель пользователя из Firebase или значение по умолчанию."""
+    try:
+        ref_models = db.reference('user_models')
+        user_models = ref_models.get()
+        user_model = user_models.get(str(user_id))
+
+        if user_model:
+            logging.info(f"Модель для пользователя {user_id}: {user_model}")
+            return user_model
+        else:
+            logging.warning(f"Модель для пользователя {user_id} не найдена. Используется значение по умолчанию.")
+            return "realvisxlV40.safetensors [f7fdcb51]"
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке модели для пользователя {user_id}: {e}")
+        return "realvisxlV40.safetensors [f7fdcb51]"
+
+def set_user_model(user_id, model):
+    """Устанавливает пользовательскую модель и сохраняет её в Firebase."""
+    user_models[user_id] = model
+    try:
+        ref_models = db.reference('user_models')
+        ref_models.set({str(uid): m for uid, m in user_models.items()})
+        logging.info(f"Модель пользователя {user_id} обновлена на: {model}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении модели в Firebase: {e}")
 
 def set_user_role(user_id, role_text):
     """Устанавливает пользовательскую роль и сохраняет её в Firebase."""
