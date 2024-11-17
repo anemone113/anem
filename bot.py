@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 import wikipediaapi
 import wikipedia
 import gpt_helper
-from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, get_clean_response_text, set_user_role, generate_plant_issue_response, generate_text_rec_response, generate_plant_help_response
+from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, get_clean_response_text, set_user_role, generate_plant_issue_response, generate_text_rec_response, generate_plant_help_response, set_user_presets, get_user_preset, get_user_model, set_user_model
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import chardet
@@ -47,7 +47,8 @@ is_ocr_mode = {}
 is_gpt_mode = {}
 is_role_mode = {}
 is_asking_mode = {}
-
+user_presets = {} 
+user_models = {}
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -334,34 +335,37 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
         [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
-        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')],
-        [InlineKeyboardButton("Помощь по GPT", callback_data='help_gpt')]  # Новая кнопка
+        [InlineKeyboardButton("Установить роль для собеседника", callback_data='set_role_button')],
+        [InlineKeyboardButton("Краткая помощь", callback_data='short_help_gpt')],       
+        [InlineKeyboardButton("Выбрать стиль для изображений", callback_data='choose_preset')],
+        [InlineKeyboardButton("Выбрать модель для изображений", callback_data="choose_model")]        
+          # Новая кнопка
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправляем сообщение о начале режима общения с GPT
-    await message_to_reply.reply_text("Режим общения с GPT активирован. Отправьте ваше сообщение для ответа.",  
+    await message_to_reply.reply_text("Режим общения с GPT активирован. Отправьте сообщение чтобы начать диалог с ботом или воспользуйтесь одной из команд",  
             reply_markup=reply_markup  # Добавляем кнопки
         )
     
     return RUNNING_GPT_MODE
 
-async def handle_gpt_help(update: Update, context: CallbackContext) -> None:
+async def handle_short_gpt_help(update: Update, context: CallbackContext) -> None:
     """Обработчик для кнопки 'Помощь по GPT'."""
     await update.callback_query.answer()  # Убираем индикатор загрузки на кнопке
-    
-    help_text = (
+
+    help_text_1 = (
         "Диалог с ботом поддерживает следующие функции:\n"
         "**- Беседа с контекстом на 300 сообщений.** Контекст хранится в отдельной библиотеке и потому "
         "есть весомые гарантии, что ваша история общения с ботом будет храниться до тех пор, пока вы сами её не удалите.\n"
         "**- Безлимитный анализ изображений.** Вы можете отправить боту любое изображение и в подписи "
-        "попросить его о чём-то, например, проанализировать, что-то рассказать об этом изображении, "
+        "попросить его о чём-то. Например, проанализировать содержимое, что-то рассказать об этом изображении, "
         "распознать, дать советы о чём-то и т.д.\n"
         "**- Поддержка документов .txt.** Вы можете отправить боту текстовый файл с длинным текстом и "
         "попросить что-то сделать с ним.\n"
         "**- Роли. Вы можете задавать боту самостоятельно прописанные роли.** Для этого просто нажмите "
         "соответствующую кнопку и введите текст. Смена роли НЕ сбрасывает историю диалога, поэтому "
         "бот может начать путаться. Если вам нужна новая роль и при этом новый диалог, то сначала "
-        "сбросьте его, затем уже введите роль. Если сбросить диалог, не указав роль, то будет "
+        "сбросьте его, а затем уже введите роль. Если сбросить диалог не указав роль, то будет "
         "применена роль по умолчанию.\n"
         "**- Также бот может рисовать и дорисовывать по наброскам изображения.** Для этого:\n\n"
         "Во время диалога с GPT просто напишите **'Нарисуй: *'** и далее, вместо '*', на английском языке "
@@ -375,26 +379,61 @@ async def handle_gpt_help(update: Update, context: CallbackContext) -> None:
         "И вам останется только копировать промты, которые за вас сделает бот.\n"
         "По аналогии вы можете давать боту и иные полезные роли. Например, врача, редактора, юриста и т.д., "
         "помня при этом, что GPT может ошибаться, конечно же.\n\n"
-        "Обе функции рисования поддерживают ввод параметров по необходимости. В функции **'Дорисовать'** "
+        "Кроме того в боте по нажатию на соответствующие кнопки доступен выбор заранее заготовленных пресетов(стилей) изображения и моделей. Пресеты просто добавят в ваш запрос заранее заготовленные промты(описания), которые приблизят результат к той или иной стилистике. "
+        "Модели же влияют на генерацию куда более глобально. По-сути от модели зависит какой диапазон конечных результатов будет вам доступен, к каким изображениям генерация более приспособлена. В данный момент имеются следующие модели:\n\n"
+        "`DreamshaperXL10` - основная рекомендуемая модель. Хорошо подходит как для художественных изображений, так и для различных стилизованных или реалистичных\n"
+        "`sd_xl_base` - базовая модель без уклонов в какую-то конкретную сторону, так же хорошо подходит для любых запросов выдавая интересные результаты\n"
+        "`AnimagineXLV3` - заточена под аниме стилистику. Но в некоторых случаях Dreamshaper или sd_xl_base даёт более интересные аниме результаты \n"
+        "`RealismEngineSDXL` - заточен под генерацию изображений похожих на реальные фотографии\n"
+        "`DynavisionXL` - стилизованные под мультипликацию вроде dreamworks и pixar 3D изображения\n"
+        "`Juggernaut XL` - заточено под фотореализм, детальные изображения"
+        "`RealvisxlV40` - так же заточено под детальные фотореалистичные изображения но с большим уклоном в фантастику\n\n"
+        "Если вы желаете более тонко настроить любую из доступных генераций под ваши нужды, то нажмите на кнопку \"Продвинутая помощь по настройке изображений\", там есть вся необходимая информация"            
+    )
+    # Форматируем текст с помощью escape_gpt_markdown_v2
+    formatted_help_text_1 = escape_gpt_markdown_v2(help_text_1)
+
+    # Отправляем первое сообщение
+    # Создаём клавиатуру с кнопкой
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Продвинутая помощь по настройке изображений", callback_data='help_gpt')],       
+        [InlineKeyboardButton("Выбрать стиль для изображений", callback_data='choose_preset')],
+        [InlineKeyboardButton("Выбрать модель для изображений", callback_data="choose_model")] 
+    ])
+
+    # Отправляем сообщение с кнопкой
+    await update.callback_query.message.reply_text(
+        formatted_help_text_1,
+        parse_mode='MarkdownV2',
+        reply_markup=keyboard
+    )
+
+
+async def handle_gpt_help(update: Update, context: CallbackContext) -> None:
+    """Обработчик для кнопки 'Помощь по GPT'."""
+    await update.callback_query.answer()  # Убираем индикатор загрузки на кнопке
+    
+    help_text_1 = (
+        "Все функции рисования поддерживают ввод параметров по необходимости. В функции **'Дорисовать'** "
         "вы можете в конце, после промта, в скобках через запятую написать два числа. Первое — от 0 до 1 — "
-        "**denoising strength**, второе — от 0 до 25 — **cfg scale**. Например: **(0.4, 15)**.\n\n"
+        "**denoising strength**, второе — от 0 до 30 — **cfg scale**. Например: **(0.4, 15)**.\n\n"
         "Первое число отвечает за схожесть с оригиналом: чем ближе к 0, тем более похожим на оригинал будет "
-        "сгенерированное изображение, второе — за степень приближения к описанию, которое вы задали, "
-        "однако слишком высокие значения будут, наоборот, давать непредсказуемые результаты.\n"
-        "Вы можете указать в скобках только первое число; в таком случае у второго выставятся значения "
+        "дорисованное изображение, второе — за степень приближения к описанию, которое вы задали, "
+        "однако слишком высокие значения будут наоборот давать непредсказуемые результаты.\n"
+        "Вы можете указать в скобках только первое число; в таком случае у второго выставится значение "
         "по умолчанию. Если не указывать числа вовсе, то оба параметра будут использоваться со значениями "
         "по умолчанию, равными:\n"
         "- **denoising strength** = 0.5\n"
         "- **cfg scale** = 8 для дорисовок и 3 для генераций\n\n"
-        "Рабочие диапазоны, при которых модель выдаёт адекватные результаты: у первого числа от 0.4 до 0.6, "
+        "Рабочие диапазоны, при которых модель выдаёт адекватные результаты: у первого числа от 0.3 до 0.65, "
         "у второго от 3 до 20.\n\n"
         "Аналогично с функцией **'Нарисовать'**: в скобках вы можете задать два параметра через запятую — соотношение "
         "сторон и cfg scale. Например, (1:2, 6). Если вы зададите только соотношение сторон, то cfg будет "
-        "выставлен по умолчанию, если ничего не укажете, то оба параметра будут по умолчанию, и изображение "
+        "выставлен по умолчанию, если ничего не укажете, то оба параметра будут по умолчанию и изображение "
         "будет квадратного формата.\n\n"
         "**Примеры:**\n"
-        "``` Нарисуй: A cat sits on a windowsill, gazing out at a winter scene. Cozy atmosphere, warm light inside, soft snowfall outside. Oil painting (1:2, 8)```\n"
-        "Будет сгенерирован кот на подоконнике в соотношении сторон 1:2 и параметром cfg scale равным 8.\n\n"
+        "``` Нарисуй: A cat sits on a windowsill, gazing out at a winter scene. Cozy atmosphere, warm light inside, soft snowfall outside. Oil painting (1:2, 9)```\n"
+        "Будет сгенерирован кот на подоконнике в соотношении сторон 1:2 и параметром cfg scale равным 9.\n\n"
         "``` Нарисуй: A cat sits on a windowsill, gazing out at a winter scene. Cozy atmosphere, warm light inside, soft snowfall outside. Oil painting```\n"
         "То же самое, но с параметрами по умолчанию: соотношение 1:1 и cfg scale 3.\n\n"
         "``` Дорисуй: A boy and a girl sitting on a fallen tree in a forest, spring, early morning, light mist (0.5)```\n"
@@ -402,10 +441,58 @@ async def handle_gpt_help(update: Update, context: CallbackContext) -> None:
         "denoising strength имеет значение 0.5, cfg scale не указан и потому имеет стандартное значение "
         "для дорисовок равное 8.\n"
     )
-    formatted_help_text = escape_gpt_markdown_v2(help_text)  # Применяем функцию форматирования
 
+
+    help_text_2 = (
+        "Так же в боте реализовано **редактирование части изображения по маске**. Таким образом вы можете, например, заменить какую-то часть или объект на изображении на новый(лицо, одежду, предмет и т.д) не затрагивая при этом остальное изображение, \n"
+        "или наоборот что-то удалить. Для этого:\n\n"
+        "**1)Отправьте боту одновременно два изображения группой** Первым - то изображение которое вы редактируете, вторым - то же самое изображение но в виде маски. Маска представляет из себя двухцветное изображение на котором **чёрный цвет** - те зоны которые НЕ будут меняться, **белые цвет** - напротив зоны на которых будут происходить все дальнейшие изменения. Второе изображение должно быть именно двухцветным, содержать только белый и чёрный цвет без оттенков\n"
+        "**2)В подписи к этим двум изображениям** напишите \"Замени: *\", где вместо * сформулируйте свой запрос на английском языке. Например что именно нужно сгенерировать или в случае если наоборот удалить то напишите \"delete object\"\n"
+        "**3)Затем, после \"Замени: *\" и указаний вы можете, по желанию, задать настройки. Это наиболее сложная функция из всех трёх а потому настроек достаточно много. Ниже будет их подробное описание\n\n"
+        "Настройки пишутся в скобках и имеют следующий вид:\n"
+        "```  (config:\n"
+        "inpainting_full_res=да/нет\n"
+        "cfg_scale=1...30\n"
+        "mask_blur=0...50\n"
+        "inpainting_fill=0, 1, 2 или 3\n"
+        "denoising_strength=0...1)```\n"
+        "**—inpainting_full_res** - отвечает за то будет ли при генерации учитываться всё изображение целиком или же только область масок \n"
+        "**—cfg_scale** - работает так же как и в предыдущих функциях\n"        
+        "**—mask_blur** - размывает границы маски на указанное количество пикселей делая их более плавными \n"      
+        "**—inpainting_fill** - Определяет тип заливки. Доступно 4 варианта:\n"   
+        "`0 - fill` - заполняет область маски соседними цветами. Может быть полезно при удалении объектов\n"
+        "`1 - original` - самый часто используемый вариант. Генерирует или удаляет объекты с учётом изначального изображения под маской\n"   
+        "`2 - latent noise` - генерирует шум и из него заполняет пространство маски. Подходит для серьёзных изменений в содержании картинки, требует высоких значений denoising_strength, хотя бы выше 0.7\n"
+        "`3 - latent nothing` - Заполняет пространство маски изображением сгенерированным с нуля, подходит только для экспериментов либо крайне больших изменений, например для замены фона через маску\n"
+        "**—denoising_strength** - работает так же как и в предыдущих примерах, но для работы с масками всегда требуются высокие значения, от 0.6 и выше, часто в районе 0.8 \n\n"
+        "Могут быть указаны как все доступные параметры, так и только часть из них, либо быть не указаны вовсе. В таком случае будут применены настройки по умолчанию для отдельных или всех параметров \n"
+        "**Пример запроса:**\n"
+        "Допустим мы отправляем боту две картинки, первую с пустым креслом около окна. На вторй двухцветной белым цветом выделена облась в которую мы хоти поместить кота. В таком случае запрос может быть следующим:\n"        
+        "```  Замени: cat sitting on chair, gazing out at a winter scene. Cozy atmosphere, warm light inside, soft snowfall outside. Oil painting\n"        
+        "(config:\n"
+        "inpainting_full_res=да\n"
+        "cfg_scale=7\n"
+        "inpainting_fill=1\n"
+        "denoising_strength=0.77)```\n"
+        "В данном примере будет использоваться всё изображение целиком для более верного размещения кота в маске, inpainting_fill в режиме original учитывает оригинальное изображение под маской, denoising_strength равно 0.77, mask_blur не указана и потому будут использоваться параметры по умолчанию.\n\n"      
+        "**Ещё один пример:**\n"
+        "Допустим у нас есть изображение с лишним элементом на нём который мы хотим удалить. На втором изображении удаляемый объект выделен белым. В таком случае запрос может быть следующим:\n"        
+        "```  Замени: delete object\n```"        
+        "В данном примере поле \" (Config: ...)\" не указано вовсе и потому все настройки будут использоваться по умолчанию\n\n\n"    
+    )
+    
+    # Форматируем текст с помощью escape_gpt_markdown_v2
+    formatted_help_text_1 = escape_gpt_markdown_v2(help_text_1)
+    formatted_help_text_2 = escape_gpt_markdown_v2(help_text_2)
+
+    # Отправляем первое сообщение
     await update.callback_query.message.reply_text(
-        formatted_help_text, parse_mode='MarkdownV2'
+        formatted_help_text_1, parse_mode='MarkdownV2'
+    )
+
+    # Отправляем второе сообщение
+    await update.callback_query.message.reply_text(
+        formatted_help_text_2, parse_mode='MarkdownV2'
     )
 
 
@@ -550,7 +637,117 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
         [InlineKeyboardButton("Установить роль", callback_data='set_role_button')]  # Новая кнопка для запроса роли
     ])
+    generated_image_buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
+        [InlineKeyboardButton("Установить роль для разговора", callback_data='set_role_button')],
+        [InlineKeyboardButton("Продвинутая помощь по настройке изображений", callback_data='help_gpt')],    
+        [InlineKeyboardButton("Выбрать стиль для изображений", callback_data='choose_preset')],
+        [InlineKeyboardButton("Выбрать модель для изображений", callback_data="choose_model")]       
+    ])    
+    if update.message.media_group_id:
+        # Инициализация списка для хранения сообщений медиагруппы
+        media_group_id = update.message.media_group_id
+        if "media_group" not in context.user_data:
+            context.user_data["media_group"] = {}
 
+        # Сохраняем сообщение в соответствующую группу
+        if media_group_id not in context.user_data["media_group"]:
+            context.user_data["media_group"][media_group_id] = []
+
+        context.user_data["media_group"][media_group_id].append(update.message)
+
+        # Проверяем подпись первого сообщения медиагруппы
+        first_message = context.user_data["media_group"][media_group_id][0]
+        caption = first_message.caption or ""  # Подпись берётся только из первого сообщения
+
+        if not caption.lower().startswith("замени:"):
+            await update.message.reply_text("Нераспознанная команда.")
+            del context.user_data["media_group"][media_group_id]  # Очищаем данные
+            return RUNNING_GPT_MODE
+
+        # Проверяем, собраны ли все сообщения группы
+        messages = context.user_data["media_group"][media_group_id]
+        if len(messages) < 2:  # Ожидаем минимум два изображения
+            return RUNNING_GPT_MODE
+
+        try:
+            # Извлекаем изображения из первого и второго сообщения
+            first_photo_file = await messages[0].photo[-1].get_file()
+            second_photo_file = await messages[1].photo[-1].get_file()
+
+            first_img_data = io.BytesIO()
+            second_img_data = io.BytesIO()
+            await first_photo_file.download_to_memory(first_img_data)
+            await second_photo_file.download_to_memory(second_img_data)
+
+            first_image = Image.open(first_img_data)
+            second_image = Image.open(second_img_data)
+
+            new_width, new_height = calculate_new_dimensions(first_image.width, first_image.height)
+            first_image_base64 = encode_image_to_base64(first_image)
+            second_image_base64 = encode_image_to_base64(second_image)
+
+            user_prompt = extract_prompt(caption)
+            logging.info(f"Извлечённый prompt: {user_prompt}")
+            waiting_message = await update.message.reply_text("Ожидайте, изображение обрабатывается...")
+            default_settings = {
+                "inpainting_full_res": False,
+                "cfg_scale": 12,
+                "mask_blur": 4,
+                "inpainting_fill": 1,
+                "denoising_strength": 0.8
+            }
+
+            caption = first_message.caption or ""
+            user_settings = parse_settings(caption, default_settings)
+
+            job_id, payload = await prodia_fill(
+                prompt=user_prompt,
+                imageData=first_image_base64,
+                maskData=second_image_base64,
+                width=new_width,
+                height=new_height,
+                settings=user_settings,
+                user_id=user_id # Передаем парсенные настройки
+            )
+
+            if job_id:
+                image_url = await check_prodia_status(job_id)
+                if image_url:
+
+                    style_preset = payload.get("style_preset", "Пресет не задан")
+                    inpainting_fill_descriptions = {
+                        0: "Заполнение",
+                        1: "С учётом оригинала",
+                        2: "Заливка через шум",
+                        3: "Заливка через пустоту"
+                    }                    
+                    caption = (
+                        "Изображение сгенерировано со следующими параметрами:\n\n"                      
+                        f"`    Модель: \"{payload['model']}\",`\n"
+                        f"`    Стиль: \"{style_preset}\",`\n"
+                        f"`    Учитывает изображение целиком: \"{payload['inpainting_full_res']}\",`\n"                        
+                        f"`    Тип заливки: \"{inpainting_fill_descriptions.get(payload['inpainting_fill'], 'Неизвестно')}\",`\n"                        
+                        f"`    Размытие маски: \"{payload['mask_blur']}\",`\n"
+                        f"`    cfg_scale: {payload['cfg_scale']},`\n"
+                        f"`    Денойзинг: {payload['denoising_strength']},`\n"                        
+                        f"`    Ширина: {payload['width']},`\n"
+                        f"`    Высота: {payload['height']}.`"                       
+                    ) 
+                    escaped_caption = escape_gpt_markdown_v2(caption)                                       
+                    await update.message.reply_photo(photo=image_url, caption=escaped_caption, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
+                else:
+                    await waiting_message.edit_text("Не удалось получить изображение. Попробуйте снова.")
+            else:
+                await waiting_message.edit_text("Произошла ошибка при отправке запроса. Попробуйте снова.")
+
+            del context.user_data["media_group"][media_group_id]
+
+        except Exception as e:
+            logging.error(f"Ошибка при обработке медиагруппы: {e}")
+            await update.message.reply_text("Произошла ошибка при обработке медиагруппы. Убедитесь, что отправили два изображения.")
+            del context.user_data["media_group"][media_group_id]
+        return RUNNING_GPT_MODE
     # Проверка, отправил ли пользователь текстовый файл
     if update.message.document:
         file_name = update.message.document.file_name
@@ -624,12 +821,34 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 
         await update.message.reply_text("Изображение в процессе генерации...")
 
-        job_id = await def_prodia(prompt, width, height, cfg_scale)
+        job_id, payload = await def_prodia(prompt, width, height, cfg_scale, user_id)
 
         if job_id:
             image_url = await check_prodia_status(job_id)
             if image_url:
-                await update.message.reply_photo(photo=image_url, caption="Вот ваше изображение!", reply_markup=reset_button)
+                # Проверяем наличие style_preset
+                style_preset = payload.get("style_preset", "Пресет не задан")
+                model_name_map = {
+                    "dreamshaperXL10_alpha2.safetensors [c8afe2ef]": "DreamshaperXL",
+                    "sd_xl_base_1.0.safetensors [be9edd61]": "Stable Diffusion XL",
+                    "animagineXLV3_v30.safetensors [75f2f05b]": "AnimagineXLV3",
+                    "realismEngineSDXL_v10.safetensors [af771c3f]": "RealismEngineSDXL",
+                    "dynavisionXL_0411.safetensors [c39cc051]": "DynavisionXL",
+                    "juggernautXL_v45.safetensors [e75f5471]": "Juggernaut XL",
+                    "realvisxlV40.safetensors [f7fdcb51]": "RealvisxlV40"
+                }
+                model_name = model_name_map.get(payload["model"], payload["model"])
+                caption = (                
+                    "Изображение сгенерировано со следующими параметрами:\n"                    
+                    f"`    Модель: \"{model_name}\",`\n"
+                    f"`    Стиль: \"{style_preset}\",`\n"
+                    f"`    cfg_scale: {payload['cfg_scale']},`\n"
+                    f"`    Ширина: {payload['width']},`\n"
+                    f"`    Высота: {payload['height']}.`\n\n"
+                    f"Запрос: `{escape_gpt_markdown_v2(user_message)}`"
+                )
+                escaped_caption = escape_gpt_markdown_v2(caption)
+                await update.message.reply_photo(photo=image_url, caption=escaped_caption, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
             else:
                 await update.message.reply_text("Не удалось получить изображение. Попробуйте снова.")
         else:
@@ -679,20 +898,43 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 image_base64 = encode_image_to_base64(img)
                 
                 # Передаем изображение и комбинированный промпт в функцию prodia_paint с denoising_strength
-                job_id = await prodia_paint(prompt, image_base64, new_width, new_height, denoising_strength, cfg_scale)
+                job_id, payload  = await prodia_paint(prompt, image_base64, new_width, new_height, denoising_strength, cfg_scale, user_id)
 
                 if job_id:
                     # Проверяем статус и дожидаемся завершения генерации
                     image_url = await check_prodia_status(job_id)
                     if image_url:
                         await waiting_message.edit_text("Вот ваше изображение!")
-                        await update.message.reply_photo(photo=image_url, caption="Вот ваше изображение!", reply_markup=reset_button)
+                        style_preset = payload.get("style_preset", "Пресет не задан") 
+                        model_name_map = {
+                            "dreamshaperXL10_alpha2.safetensors [c8afe2ef]": "DreamshaperXL",
+                            "sd_xl_base_1.0.safetensors [be9edd61]": "Stable Diffusion XL",
+                            "animagineXLV3_v30.safetensors [75f2f05b]": "AnimagineXLV3",
+                            "realismEngineSDXL_v10.safetensors [af771c3f]": "RealismEngineSDXL",
+                            "dynavisionXL_0411.safetensors [c39cc051]": "DynavisionXL",
+                            "juggernautXL_v45.safetensors [e75f5471]": "Juggernaut XL",
+                            "realvisxlV40.safetensors [f7fdcb51]": "RealvisxlV40"
+                        }
+                        model_name = model_name_map.get(payload["model"], payload["model"])                                               
+                        caption = (
+                            "Изображение сгенерировано со следующими параметрами:\n"                    
+                            f"`    Модель: \"{model_name}\",`\n"
+                            f"`    Стиль: \"{style_preset}\",`\n"                            
+                            f"`    cfg_scale: {cfg_scale},`\n"
+                            f"`    Денойзинг: {denoising_strength},`\n"
+                            f"`    Ширина: {new_width},`\n"
+                            f"`    Высота: {new_height}.`\n\n"
+                            f"Запрос: `{escape_gpt_markdown_v2(user_message)}`\n\n"
+
+                        )
+                        escaped_caption = escape_gpt_markdown_v2(caption)                          
+                        await update.message.reply_photo(photo=image_url, caption=caption, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
                     else:
                         await waiting_message.edit_text("Не удалось получить изображение. Попробуйте снова.")
                 else:
                     await waiting_message.edit_text("Произошла ошибка при отправке запроса. Попробуйте снова.")
 
-                return RUNNING_GPT_MODE
+            return RUNNING_GPT_MODE
 
             # Если caption не начинается с "Дорисуй:", продолжаем обычную обработку
             add_to_context(user_id, f"[Изображение] {user_message}", message_type="image_description")
@@ -762,6 +1004,109 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 
     return RUNNING_GPT_MODE
 
+def extract_prompt(caption: str) -> str:
+    """
+    Извлекает текст после "замени:" (в любом регистре) и до "(config:", 
+    игнорируя переносы строк.
+    """
+    # Регулярное выражение для поиска текста
+    match = re.search(r"(?i)^замени:\s*(.*?)(\s*\(config:.*)?$", caption, re.DOTALL)
+    if match:
+        # Возвращаем текст из первой группы (до "(config:")
+        prompt = match.group(1).strip()
+        return prompt
+    return ""  # Если нет совпадения, возвращаем пустую строку
+
+
+
+def parse_settings(caption: str, default_settings: dict) -> dict:
+    """
+    Парсит настройки из строки caption, заменяя значения по умолчанию.
+    Поддерживает формат (ключ = значение) без запятой.
+
+    :param caption: Строка с настройками в формате "(ключ = значение)".
+    :param default_settings: Словарь настроек по умолчанию.
+    :return: Обновленный словарь настроек.
+    """
+    # Регулярное выражение для парсинга ключей и значений через "=" на разных строках
+    settings_pattern = re.findall(r"(\w+)\s*=\s*([^,)\s]+)", caption)
+    
+    # Копируем настройки по умолчанию
+    parsed_settings = default_settings.copy()
+    
+    for key, value in settings_pattern:
+        if key in parsed_settings:
+            if key == "inpainting_full_res":
+                # Преобразование "да"/"нет" в True/False
+                parsed_settings[key] = value.lower() == "да"
+            elif key in ["cfg_scale", "mask_blur", "inpainting_fill"]:
+                # Преобразование в целое число
+                parsed_settings[key] = int(value)
+            elif key == "denoising_strength":
+                # Преобразование в число с плавающей точкой
+                parsed_settings[key] = float(value)
+    
+    return parsed_settings
+
+
+
+async def prodia_fill(
+    prompt: str,
+    imageData: str,
+    maskData: str,
+    width: int,
+    height: int,
+    user_id: int,
+    settings: dict
+) -> str:
+    """Функция для отправки запроса на API Prodia с пользовательскими настройками."""
+    url = "https://api.prodia.com/v1/sdxl/inpainting"
+    style_preset = get_user_preset(user_id)
+    model = get_user_model(user_id)     
+    payload = {
+        "inpainting_full_res": settings.get("inpainting_full_res", False),
+        "model": "sd_xl_base_1.0_inpainting_0.1.safetensors [5679a81a]",  # Модель по умолчанию
+        "negative_prompt": "disfigured, poorly drawn, low quality, harsh shadows, overly stylized, unintended textures, text errors, extra limbs, blurry",
+        "steps": 25,
+        "cfg_scale": settings.get("cfg_scale", 12),
+        "seed": -1,
+        "upscale": False,
+        "mask_blur": settings.get("mask_blur", 4),
+        "inpainting_fill": settings.get("inpainting_fill", 1),
+        "inpainting_mask_invert": 0,
+        "imageData": imageData,
+        "maskData": maskData,
+        "sampler": "DPM++ 2M Karras",
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+        "denoising_strength": settings.get("denoising_strength", 0.8)
+    }
+    if style_preset != "None":
+        payload["style_preset"] = style_preset    
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
+    }
+    # Логирование параметров, исключая "imageData"
+    logging.info("Параметры, передаваемые в Prodia API:")
+    for key, value in payload.items():
+        if key not in ("imageData", "maskData"):
+            logging.info(f"{key}: {value}")    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as response:
+                if response.status == 200:
+                    response_data = await response.json()
+                    return response_data.get("job"), payload
+                else:
+                    logging.error(f"Ошибка при запросе к Prodia: {response.status}, {await response.text()}")
+                    return None, None
+    except Exception as e:
+        logging.error(f"Ошибка при отправке запроса в Prodia: {e}")
+        return None
+
 
 def calculate_new_dimensions(width: int, height: int) -> (int, int):
     """Рассчитывает новые размеры изображения с сохранением пропорций и учетом всех ограничений."""
@@ -798,12 +1143,13 @@ def calculate_new_dimensions(width: int, height: int) -> (int, int):
 
     return new_width, new_height
 
-async def prodia_paint(prompt: str, img_base64: str, width: int, height: int, denoising_strength: float, cfg_scale: int) -> str:
+async def prodia_paint(prompt: str, img_base64: str, width: int, height: int, denoising_strength: float, cfg_scale: int, user_id: int) -> str:
     url = "https://api.prodia.com/v1/sdxl/transform"
-    
+    style_preset = get_user_preset(user_id)
+    model = get_user_model(user_id)        
     # Формируем payload
     payload = {
-        "model": "dreamshaperXL10_alpha2.safetensors [c8afe2ef]",
+        "model": model if model else "dreamshaperXL10_alpha2.safetensors [c8afe2ef]",  # Модель по умолчанию
         "imageData": img_base64,
         "prompt": prompt,
         "denoising_strength": denoising_strength,  # Используем denoising_strength, переданный пользователем
@@ -816,7 +1162,8 @@ async def prodia_paint(prompt: str, img_base64: str, width: int, height: int, de
         "width": width,
         "height": height
     }
-
+    if style_preset != "None":
+        payload["style_preset"] = style_preset
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -832,10 +1179,10 @@ async def prodia_paint(prompt: str, img_base64: str, width: int, height: int, de
             async with session.post(url, json=payload, headers=headers) as response:
                 if response.status == 200:
                     response_data = await response.json()
-                    return response_data.get("job")
+                    return response_data.get("job"), payload
                 else:
                     logging.error(f"Ошибка при отправке запроса: {response.status}")
-                    return None
+                    return None, None
     except Exception as e:
         logging.error(f"Ошибка при отправке запроса в Prodia: {e}")
         return None
@@ -871,21 +1218,126 @@ def calculate_gen_image(aspect_ratio_str: str) -> (int, int):
         return None, None  # Некорректный формат соотношения
 
 
+def generate_model_buttons():
+    """Создает кнопки для выбора моделей."""
+    models = [
+        ("DreamshaperXL10(рекомендуется) - для художественных изображений", "dreamshaperXL10_alpha2.safetensors [c8afe2ef]"),
+        ("Stable Diffusion XL(рекомендуется) - базовая модель", "sd_xl_base_1.0.safetensors [be9edd61]"),            
+        ("AnimagineXLV3 - подходит для аниме", "animagineXLV3_v30.safetensors [75f2f05b]"),
+        ("RealismEngineSDXL - генерация фотографий", "realismEngineSDXL_v10.safetensors [af771c3f]"),
+        ("DynavisionXL - стилизованные 3D изображения", "dynavisionXL_0411.safetensors [c39cc051]"),     
+        ("Juggernaut XL - фотореализм", "juggernautXL_v45.safetensors [e75f5471]"), 
+        ("RealvisxlV40 - детальные изображения", "realvisxlV40.safetensors [f7fdcb51]"),           
+    ]
+    # Генерация кнопок на основе моделей
+    buttons = [[InlineKeyboardButton(name, callback_data=f'set_model:{value}')] for name, value in models]
+    return InlineKeyboardMarkup(buttons)
+
+async def handle_model_selection(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # Разбираем callback_data
+    if query.data.startswith("set_model:"):
+        model = query.data.split(":")[1]
+
+        # Сохраняем выбор модели в локальной переменной и в Firebase
+        if model:
+            set_user_model(user_id, model)  # Сохраняем модель
+
+            # Обновляем сообщение: заменяем кнопки на текст "Вы выбрали модель"
+            await query.edit_message_text(f"Вы выбрали модель: {model}")
+        else:
+            await query.edit_message_text("Произошла ошибка при выборе модели.")
+        await query.answer()
+
+async def handle_choose_model(update: Update, context: CallbackContext):
+    query = update.callback_query
+    chat_id = query.message.chat_id
+    await query.answer()  # Получаем ID чата
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Выберите модель:",
+        reply_markup=generate_model_buttons()
+    )
+
+def generate_preset_buttons():
+    """Создает кнопки для выбора стилей пресетов, включая вариант 'Нет'."""
+    presets = [
+        ("Убрать пресет", "None"),  # Вариант отключения пресета
+        ("Аниме", "anime"),
+        ("Комиксы", "comic-book"),
+        ("Пиксель-арт", "pixel-art"),
+        ("Лайнарт", "line-art"),
+        ("Фэнтези", "fantasy-art"),
+        ("Изометрический арт", "isometric"),
+        ("Цифровой арт", "digital-art"),
+        ("3D модель", "3d-model"),  
+        ("Старый фильм", "analog-film"),
+        ("Синематик", "cinematic"),
+        ("Фотореализм", "realistic"),
+        ("Генерация фотографии", "photographic"),       
+        ("Улучшить изображение", "enhance"),         
+        ("low-poly модель", "low-poly"),
+        ("Оригами", "origami"),
+        ("Текстура", "texture"),
+        ("Пластилин", "craft-clay")            
+    ]
+    # Генерация кнопок на основе пресетов
+    buttons = [[InlineKeyboardButton(name, callback_data=f'set_preset:{value}')] for name, value in presets]
+    return InlineKeyboardMarkup(buttons)
+
+async def handle_preset_selection(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # Разбираем callback_data
+    if query.data.startswith("set_preset:"):
+        preset = query.data.split(":")[1]
+        user_presets[user_id] = preset  # Сохраняем выбор пресета
+
+        # Сохраняем в Firebase
+        if preset:
+            set_user_presets(user_id, preset)  # Устанавливаем пресет
+            await query.edit_message_text(f"Вы выбрали стиль: {preset}")
+        else:
+            await query.edit_message_text("Произошла ошибка при выборе предустановки.")
+        await query.answer()
+
+
+async def handle_choose_preset(update: Update, context: CallbackContext):
+    query = update.callback_query
+    chat_id = query.message.chat_id
+    await query.answer()  # Получаем ID чата
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Выберите пресет:",
+        reply_markup=generate_preset_buttons()
+    )
+
+
 # URL для проверки статуса задания, нужно подставить `job_id`
 check_url_template = "https://api.prodia.com/v1/job/{}"
 
-async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int) -> str:
-    generate_url = "https://api.prodia.com/v1/sdxl/generate"    
+
+
+async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_id: int) -> str:
+    generate_url = "https://api.prodia.com/v1/sdxl/generate"
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
-        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
+        "X-Prodia-Key": "696bbe78-bf7d-4e76-b798-6233c7e8fab5"
     }
+    # Получение стиля для пользователя
+    style_preset = get_user_preset(user_id)
+
+    # Формируем начальный payload
+    model = get_user_model(user_id)  # Получаем выбранную модель
     payload = {
-        "model": "dreamshaperXL10_alpha2.safetensors [c8afe2ef]",
+        "model": model if model else "dreamshaperXL10_alpha2.safetensors [c8afe2ef]",  # Модель по умолчанию
         "prompt": prompt,
-        "negative_prompt": "disfigured, deformed, ugly, bad anatomy, poorly drawn, low quality, blurry, pixelated, incorrect lighting, harsh shadows, cartoon, sketchy, text errors, watermark, extra fingers, extra limbs, mutilated, too busy, overexposed, underexposed, no violence, no explicit content, bad composition, wrong perspective",
-        "steps": 28,
+        "negative_prompt": "(easynegative:1.5), disfigured, deformed, ugly, bad anatomy, poorly drawn, low quality, blurry, pixelated, incorrect lighting, harsh shadows, cartoon, sketchy, text errors, watermark, extra fingers, extra limbs, mutilated, too busy, overexposed, underexposed, no violence, no explicit content, bad composition, wrong perspective",
+        "steps": 30,
         "cfg_scale": cfg_scale,
         "seed": -1,
         "sampler": "DPM++ 2M Karras",
@@ -893,6 +1345,10 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int) -> st
         "width": width,
         "height": height
     }
+
+    # Условно добавляем style_preset, если он не "None"
+    if style_preset != "None":
+        payload["style_preset"] = style_preset
     logging.info("Параметры, передаваемые в Prodia API:")
     for key, value in payload.items():
         if key != "imageData":
@@ -902,10 +1358,10 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int) -> st
             if response.status == 200:
                 response_data = await response.json()
                 job_id = response_data.get("job")
-                return job_id
+                return job_id, payload
             else:
                 logging.error("Ошибка при отправке запроса на генерацию изображения.")
-                return None
+                return None, None
 
 async def check_prodia_status(job_id: str) -> str:
     headers = {
@@ -4279,7 +4735,7 @@ def main() -> None:
     )
 
     gpt_handler = ConversationHandler(
-        entry_points=[CommandHandler('gpt', run_gpt), CommandHandler('set_role', handle_set_role_button), CommandHandler('help_gpt', handle_gpt_help)],
+        entry_points=[CommandHandler('gpt', run_gpt), CommandHandler('set_role', handle_set_role_button), CommandHandler('help_gpt', handle_gpt_help), CommandHandler('short_help_gpt', handle_short_gpt_help)],
         states={
             ASKING_FOR_ROLE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_role_input),
@@ -4324,7 +4780,13 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(reset_dialog, pattern='^reset_dialog$')) 
     application.add_handler(CallbackQueryHandler(handle_set_role_button, pattern='^set_role_button$'))  
     application.add_handler(CallbackQueryHandler(handle_followup_question, pattern='^ask_followup'))    
-    application.add_handler(CallbackQueryHandler(handle_gpt_help, pattern='^help_gpt$'))   
+    application.add_handler(CallbackQueryHandler(handle_gpt_help, pattern='^help_gpt$'))
+    application.add_handler(CallbackQueryHandler(handle_short_gpt_help, pattern='^short_help_gpt$'))    
+    application.add_handler(CallbackQueryHandler(handle_choose_preset, pattern="choose_preset"))
+    application.add_handler(CallbackQueryHandler(handle_preset_selection, pattern="set_preset:.*"))
+    application.add_handler(CallbackQueryHandler(handle_choose_model, pattern="^choose_model$"))
+    application.add_handler(CallbackQueryHandler(handle_model_selection, pattern="^set_model:"))
+    
     
     application.add_handler(CommandHandler('set_role', set_role ))          
     application.add_handler(CommandHandler('send', send_mode))
