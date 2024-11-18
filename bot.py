@@ -225,8 +225,8 @@ async def start(update: Update, context: CallbackContext) -> int:
         keyboard = [
             [InlineKeyboardButton("📃Распознать текст📃", callback_data='recognize_text')],
             [InlineKeyboardButton("🖼️Распознать текст через GPT🖼️", callback_data='text_rec_with_gpt')],  # Новая кнопка            
-            [InlineKeyboardButton("🌸Распознать растение🌸", callback_data='recognize_plant')],
-            [InlineKeyboardButton("🪴Что не так с Растением?🪴", callback_data='text_plant_help_with_gpt')],
+            [InlineKeyboardButton("🪴Распознать растение🪴", callback_data='recognize_plant')],
+            [InlineKeyboardButton("🍂Что не так с Растением?🍂", callback_data='text_plant_help_with_gpt')],
             [InlineKeyboardButton("Распознать на iNaturalist", url=inat_url)],
             [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
         ]
@@ -333,12 +333,12 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     is_search_mode[user_id] = False
     is_ocr_mode[user_id] = False
     keyboard = [
-        [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
+        [InlineKeyboardButton("✂️Сбросить диалог✂️", callback_data='reset_dialog')],
         [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
         [InlineKeyboardButton("Установить роль для собеседника", callback_data='set_role_button')],
         [InlineKeyboardButton("Краткая помощь", callback_data='short_help_gpt')],       
-        [InlineKeyboardButton("Выбрать стиль для изображений", callback_data='choose_preset')],
-        [InlineKeyboardButton("Выбрать модель для изображений", callback_data="choose_model")]        
+        [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
+        [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")]        
           # Новая кнопка
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -397,8 +397,8 @@ async def handle_short_gpt_help(update: Update, context: CallbackContext) -> Non
     # Создаём клавиатуру с кнопкой
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Продвинутая помощь по настройке изображений", callback_data='help_gpt')],       
-        [InlineKeyboardButton("Выбрать стиль для изображений", callback_data='choose_preset')],
-        [InlineKeyboardButton("Выбрать модель для изображений", callback_data="choose_model")] 
+        [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
+        [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")] 
     ])
 
     # Отправляем сообщение с кнопкой
@@ -633,16 +633,16 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
     user_image = None
 
     reset_button = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
+        [InlineKeyboardButton("✂️Сбросить диалог✂️", callback_data='reset_dialog')],
         [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
-        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')]  # Новая кнопка для запроса роли
+        [InlineKeyboardButton("📖Установить роль📖", callback_data='set_role_button')]  # Новая кнопка для запроса роли
     ])
     generated_image_buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
-        [InlineKeyboardButton("Установить роль для разговора", callback_data='set_role_button')],
+        [InlineKeyboardButton("❌Выйти из режима диалога❌", callback_data='stop_gpt')],
+        [InlineKeyboardButton("📖Установить роль для разговора📖", callback_data='set_role_button')],
         [InlineKeyboardButton("Продвинутая помощь по настройке изображений", callback_data='help_gpt')],    
-        [InlineKeyboardButton("Выбрать стиль для изображений", callback_data='choose_preset')],
-        [InlineKeyboardButton("Выбрать модель для изображений", callback_data="choose_model")]       
+        [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
+        [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")]       
     ])    
     if update.message.media_group_id:
         # Инициализация списка для хранения сообщений медиагруппы
@@ -2921,7 +2921,16 @@ async def edit_article(update: Update, context: CallbackContext) -> None:
         if item['type'] == 'text':
             text = item['content']
             if isinstance(text, dict) and 'children' in text:
-                text = ''.join(child['children'][0] for child in text['children'] if isinstance(child, dict) and 'children' in child)
+                try:
+                    text = ''.join(
+                        str(child['children'][0]) if isinstance(child['children'][0], str) else ''
+                        for child in text['children']
+                        if isinstance(child, dict) and 'children' in child
+                    )
+                except Exception as e:
+                    print(f"Ошибка при обработке текста: {e}")
+                    print(f"Текстовые данные: {text}")
+                    text = "Ошибка обработки текста"
             preview_text = (text[:12] + '...') if len(text) > 12 else text
         else:
             preview_text = f"{image_counter} изображение"
