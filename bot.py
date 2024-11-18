@@ -934,8 +934,6 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 else:
                     await waiting_message.edit_text("Произошла ошибка при отправке запроса. Попробуйте снова.")
 
-            return RUNNING_GPT_MODE
-
             # Если caption не начинается с "Дорисуй:", продолжаем обычную обработку
             add_to_context(user_id, f"[Изображение] {user_message}", message_type="image_description")
             response_text = generate_gemini_response(user_id, query=user_message, image=img)
