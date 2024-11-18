@@ -334,7 +334,7 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     is_ocr_mode[user_id] = False
     keyboard = [
         [InlineKeyboardButton("✂️Сбросить диалог✂️", callback_data='reset_dialog')],
-        [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
+        [InlineKeyboardButton("❌Выйти из режима диалога❌", callback_data='stop_gpt')],
         [InlineKeyboardButton("Установить роль для собеседника", callback_data='set_role_button')],
         [InlineKeyboardButton("Краткая помощь", callback_data='short_help_gpt')],       
         [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
