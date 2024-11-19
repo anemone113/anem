@@ -498,6 +498,60 @@ def generate_text_rec_response(user_id, image=None, query=None):
         return "Неверный запрос. Укажите изображение или текст для обработки."
 
 
+async def translate_to_english(user_id, prompt):
+    """
+    Переводит текст на английский язык с использованием модели Gemini.
+    
+    :param user_id: ID пользователя, для которого выполняется перевод.
+    :param prompt: Текст на русском языке для перевода.
+    :return: Переведённый текст или сообщение об ошибке.
+    """
+    try:
+        # Формируем данные для модели
+        input_data = [
+            {
+                "text": f"Преобразуй этот текст в промт для генерации изображений и переведи на английский язык, в ответ пришли только готовый переведённый промт и ничего больше:\n{prompt}"
+            }
+        ]
+        logging.info(f"Полученный текст: {prompt}")
+
+        # Настройки безопасности для модели
+
+        # Отправка данных в модель для перевода текста
+        response = await model.generate_content_async(
+            {"parts": input_data}
+        )
+        safety = [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_NONE"
+            },
+            {   "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_NONE"
+            },
+        ] 
+        # Проверка на наличие ответа и возврат перевода
+        if response and hasattr(response, 'parts') and response.parts:
+            translated_text = response.parts[0].text.strip()
+            logging.info(f"Сгенерирован перевод текста для пользователя {user_id}: {translated_text}")
+            return translated_text
+        else:
+            logging.warning("Ответ от модели не содержит текстового компонента для перевода.")
+            return "Не удалось перевести текст. Попробуйте снова."
+
+    except Exception as e:
+        logging.error(f"Ошибка при переводе текста для пользователя {user_id}: {e}")
+        return "Произошла ошибка при обработке запроса. Попробуйте снова."
+
+
 
 def generate_plant_help_response(user_id, query=None):
     """Генерирует текстовое описание проблемы с растением на основе текста."""
