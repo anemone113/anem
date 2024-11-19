@@ -644,7 +644,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("📚Продвинутая помощь по настройке изображений📚", callback_data='help_gpt')],    
         [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
         [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")],
-        [InlineKeyboardButton("🌃Посмотреть похожие варианты🌃", callback_data="generate_variants")], 
+        [InlineKeyboardButton("❇️Посмотреть похожие варианты❇️", callback_data="generate_variants")], 
         [InlineKeyboardButton("🔄Сгенерировать заново🔄", callback_data="retry_image_generat")]  # Новая кнопка           
     ])
     generated_inpaint_image_buttons = InlineKeyboardMarkup([
@@ -652,7 +652,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("📚Продвинутая помощь по настройке изображений📚", callback_data='help_gpt')],    
         [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
         [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")],
-        [InlineKeyboardButton("🌃Посмотреть похожие варианты🌃", callback_data="generate_inpaint_variants")]  # Новая кнопка           
+        [InlineKeyboardButton("❇️Посмотреть похожие варианты❇️", callback_data="generate_inpaint_variants")]  # Новая кнопка           
     ])        
 
     generated_img2img_buttons = InlineKeyboardMarkup([
@@ -660,7 +660,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("📚Продвинутая помощь по настройке изображений📚", callback_data='help_gpt')],    
         [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
         [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")],
-        [InlineKeyboardButton("🌃Посмотреть похожие варианты🌃", callback_data="generate_img2img_variants")]  # Новая кнопка           
+        [InlineKeyboardButton("❇️Посмотреть похожие варианты❇️", callback_data="generate_img2img_variants")]  # Новая кнопка           
     ])       
 
     if update.message.media_group_id:
@@ -1189,7 +1189,7 @@ async def handle_generate_img2img_variants(update: Update, context: CallbackCont
         [InlineKeyboardButton("📚Продвинутая помощь по настройке изображений📚", callback_data='help_gpt')],    
         [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
         [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")],
-        [InlineKeyboardButton("🌃Посмотреть похожие варианты🌃", callback_data="generate_img2img_variants")]  # Новая кнопка                  
+        [InlineKeyboardButton("❇️Посмотреть похожие варианты❇️", callback_data="generate_img2img_variants")]  # Новая кнопка                  
     ])       
     # Изменяем параметры
     last_params = context.user_data.get("last_image_params")
@@ -1435,7 +1435,7 @@ async def handle_generate_variants(update: Update, context: CallbackContext) -> 
         [InlineKeyboardButton("📚Продвинутая помощь по настройке изображений📚", callback_data='help_gpt')],    
         [InlineKeyboardButton("🎨Выбрать стиль для изображений🎨", callback_data='choose_preset')],
         [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")],
-        [InlineKeyboardButton("🌃Посмотреть похожие варианты🌃", callback_data="generate_variants")],
+        [InlineKeyboardButton("❇️Посмотреть похожие варианты❇️", callback_data="generate_variants")],
         [InlineKeyboardButton("🔄Сгенерировать заново🔄", callback_data="retry_image_generat")]           # Новая кнопка           
     ])
     # Извлекаем последние параметры
