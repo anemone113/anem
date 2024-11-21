@@ -1609,7 +1609,7 @@ async def prodia_fill(
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
-        "X-Prodia-Key": "696bbe78-bf7d-4e76-b798-6233c7e8fab5"
+        "X-Prodia-Key": "39110d90-70eb-4fed-bb40-3d0bf52c73bf"
     }
     # Логирование параметров, исключая "imageData"
     logging.info("Параметры, передаваемые в Prodia API:")
@@ -1689,7 +1689,7 @@ async def prodia_paint(prompt: str, img_base64: str, width: int, height: int, de
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
-        "X-Prodia-Key": "696bbe78-bf7d-4e76-b798-6233c7e8fab5"
+        "X-Prodia-Key": "39110d90-70eb-4fed-bb40-3d0bf52c73bf"
     }
     # Логирование параметров, исключая "imageData"
     logging.info("Параметры, передаваемые в Prodia API:")
@@ -1856,7 +1856,7 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
-        "X-Prodia-Key": "696bbe78-bf7d-4e76-b798-6233c7e8fab5"
+        "X-Prodia-Key": "39110d90-70eb-4fed-bb40-3d0bf52c73bf"
     }
     # Получение стиля для пользователя
     style_preset = get_user_preset(user_id)
