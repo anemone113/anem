@@ -167,10 +167,10 @@ def get_user_model(user_id: int) -> str:
             return user_model
         else:
             logging.warning(f"Модель для пользователя {user_id} не найдена. Используется значение по умолчанию.")
-            return "realvisxlV40.safetensors [f7fdcb51]"
+            return "animagineXLV3_v30.safetensors [75f2f05b]"
     except Exception as e:
         logging.error(f"Ошибка при загрузке модели для пользователя {user_id}: {e}")
-        return "realvisxlV40.safetensors [f7fdcb51]"
+        return "animagineXLV3_v30.safetensors [75f2f05b]"
 
 def set_user_model(user_id, model):
     """Устанавливает пользовательскую модель и сохраняет её в Firebase."""
