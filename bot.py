@@ -334,12 +334,12 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     is_search_mode[user_id] = False
     is_ocr_mode[user_id] = False
     keyboard = [
-        [InlineKeyboardButton("❌\nСбросить диалог", callback_data='reset_dialog')],
-        [InlineKeyboardButton("⬅️\nВыйти из режима диалога", callback_data='stop_gpt')],
-        [InlineKeyboardButton("✏️\nУстановить роль для собеседника", callback_data='set_role_button')],
-        [InlineKeyboardButton("📗\nКраткая помощь", callback_data='short_help_gpt')],
-        [InlineKeyboardButton("🎨\nВыбрать стиль для изображений", callback_data='choose_preset')],
-        [InlineKeyboardButton("🖼\nВыбрать модель для изображений", callback_data="choose_model")]
+        [InlineKeyboardButton("❌ Сбросить диалог", callback_data='reset_dialog')],
+        [InlineKeyboardButton("⬅️ Выйти из режима диалога", callback_data='stop_gpt')],
+        [InlineKeyboardButton("✏️ Установить роль для собеседника", callback_data='set_role_button')],
+        [InlineKeyboardButton("📗 Краткая помощь", callback_data='short_help_gpt')],
+        [InlineKeyboardButton("🎨 Выбрать стиль для изображений", callback_data='choose_preset')],
+        [InlineKeyboardButton("🖼 Выбрать модель для изображений", callback_data="choose_model")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправляем сообщение о начале режима общения с GPT
@@ -880,7 +880,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             
             width, height = calculate_gen_image(aspect_ratio_str)
             if width is None or height is None:
-                await update.message.reply_text("Некорректное соотношение сторон. Пожалуйста, укажите допустимое соотношение.")
+                await update.message.reply_text("Некорректное соотношение сторон. Пожалуйста, укажите ,более адекватный фориат.")
                 return
         else:
             width, height = 1024, 1024  # Стандартные размеры
@@ -915,13 +915,13 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 model_name = model_name_map.get(payload["model"], payload["model"])
                 caption = (                
                     "Изображение сгенерировано со следующими параметрами:\n"                    
-                    f"    Seed: `{payload['seed']},`\n"
-                    f"    Модель: `\"{model_name}\",`\n"
-                    f"    Стиль: `\"{style_preset}\",`\n"
-                    f"    Ширина: `{payload['width']},`\n"
-                    f"    Высота: `{payload['height']},`\n"
-                    f"    cfg_scale: `{payload['cfg_scale']},`\n"
-                    f"    Steps: `{payload['steps']}.`\n\n"                      # Добавляем вывод seed
+                    f"    Seed: `{payload['seed']}, `\n"
+                    f"    Модель: `\"{model_name}\"`,\n"
+                    f"    Стиль: `\"{style_preset}\"`,\n"
+                    f"    Ширина: `{payload['width']}`,\n"
+                    f"    Высота: `{payload['height']}`,\n"
+                    f"    cfg_scale: `{payload['cfg_scale']}`,\n"
+                    f"    Steps: `{payload['steps']}`.\n\n"                      # Добавляем вывод seed
                     f"    promt: `{payload['prompt']}.`\n\n"                     
                     f"Запрос: `{escape_gpt_markdown_v2(user_message)}`"
                 )
@@ -1023,13 +1023,13 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                         model_name = model_name_map.get(payload["model"], payload["model"])                                               
                         caption = (
                             "Изображение сгенерировано со следующими параметрами:\n"                    
-                            f"      Модель: `\"{model_name}\",`\n"
-                            f"      Стиль: `\"{style_preset}\",`\n"                            
-                            f"      cfg_scale: `{cfg_scale},`\n"
+                            f"      Модель: `\"{model_name}\"`,\n"
+                            f"      Стиль: `\"{style_preset}\"`,\n"                            
+                            f"      cfg_scale: `{cfg_scale}`,\n"
                             f"      Денойзинг: `{denoising_strength},`\n"
-                            f"      Ширина: `{new_width},`\n"
-                            f"      Высота: `{new_height}.`\n"
-                            f"      Seed: `{payload['seed']},`\n"
+                            f"      Ширина: `{new_width}`,\n"
+                            f"      Высота: `{new_height}`,\n"
+                            f"      Seed: `{payload['seed']} ,`\n"
                             f"      Steps: `{payload['steps']}.`\n\n"                         
                             f"Запрос: `Дорисуй: {user_prompt} ({denoising_strength}, {cfg_scale})`\n\n"
 
@@ -1786,6 +1786,7 @@ async def handle_choose_model(update: Update, context: CallbackContext):
 def generate_preset_buttons():
     """Создает кнопки для выбора стилей пресетов, включая вариант 'Нет' и 'Отмена'."""
     presets = [
+        ("Общее улучшение", "enhance"),        
         ("Убрать пресет", "None"),  # Вариант отключения пресета
         ("Аниме", "anime"),
         ("Комиксы", "comic-book"),
@@ -1799,7 +1800,6 @@ def generate_preset_buttons():
         ("Синематик", "cinematic"),
         ("Фотореализм", "realistic"),
         ("Генерация фотографии", "photographic"),
-        ("Улучшить изображение", "enhance"),
         ("low-poly модель", "low-poly"),
         ("Оригами", "origami"),
         ("Текстура", "texture"),
@@ -1963,7 +1963,7 @@ async def reset_dialog(update: Update, context: CallbackContext) -> None:
     keyboard = [
         [InlineKeyboardButton("Сбросить диалог", callback_data='reset_dialog')],
         [InlineKeyboardButton("Выйти из режима диалога", callback_data='stop_gpt')],
-        [InlineKeyboardButton("Установить роль", callback_data='set_role_button')]  # Новая кнопка для запроса роли
+        [InlineKeyboardButton("✏️Установить роль✏️", callback_data='set_role_button')]  # Новая кнопка для запроса роли
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text="Диалог сброшен. Вы можете начать новый разговор.", reply_markup=reply_markup)
@@ -2562,7 +2562,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
         'Бот успешно перезапущен.\n\n'
         '🌠Этот бот поможет вам создать пост для группы Anemone. Изначально пост будет виден исключительно вам, так что не бойтесь экспериментировать и смотреть что получится\n\n'
         'Для начала, пожалуйста, отправьте ссылку на автора. Если у вас её нет, то отправьте любой текст\n\n'
-        '<i>Так же вы можете воспользоваться одной из кнопок ниже чтобы найти автора по изображению, найти серию и таймметку аниме по кадру из него, проверить вероятность использования ИИ для создания изображения, распознать текст или растение. либо поговорить с ботом</i>\n\n',
+        '<i>Так же вы можете воспользоваться одной из кнопок ниже чтобы найти автора по изображению, найти серию и таймметку аниме по кадру из него, проверить вероятность использования ИИ для создания изображения, распознать текст или растение. либо поговорить с ботом.\n 🖼 В режиме диалога доступна генерация, дорисовка и редпетирование изображений</i>\n\n',
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
