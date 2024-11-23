@@ -880,7 +880,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             
             width, height = calculate_gen_image(aspect_ratio_str)
             if width is None or height is None:
-                await update.message.reply_text("Некорректное соотношение сторон. Пожалуйста, укажите ,более адекватный фориат.")
+                await update.message.reply_text("Некорректное соотношение сторон. Пожалуйста, укажите допустимое соотношение.")
                 return
         else:
             width, height = 1024, 1024  # Стандартные размеры
@@ -913,20 +913,42 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                     "realvisxlV40.safetensors [f7fdcb51]": "RealvisxlV40"
                 }
                 model_name = model_name_map.get(payload["model"], payload["model"])
-                caption = (                
+                
+                # Базовая часть текста
+                base_caption = (
                     "Изображение сгенерировано со следующими параметрами:\n"                    
                     f"    Seed: `{payload['seed']}, `\n"
-                    f"    Модель: `\"{model_name}\"`,\n"
-                    f"    Стиль: `\"{style_preset}\"`,\n"
-                    f"    Ширина: `{payload['width']}`,\n"
-                    f"    Высота: `{payload['height']}`,\n"
-                    f"    cfg_scale: `{payload['cfg_scale']}`,\n"
-                    f"    Steps: `{payload['steps']}`.\n\n"                      # Добавляем вывод seed
-                    f"    promt: `{payload['prompt']}.`\n\n"                     
-                    f"Запрос: `{escape_gpt_markdown_v2(user_message)}`"
+                    f"    Модель: `\"{model_name}\",\n`"
+                    f"    Стиль: `\"{style_preset}\"`\n"
+                    f"    Ширина: `{payload['width']}`\n"
+                    f"    Высота: `{payload['height']}`\n"
+                    f"    cfg_scale: `{payload['cfg_scale']}`\n"
+                    f"    Steps: `{payload['steps']}`"
                 )
-                escaped_caption = escape_gpt_markdown_v2(caption)
-                await update.message.reply_photo(photo=image_url, caption=escaped_caption, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
+                # Текст запроса
+                prompt_text = f"Prompt: `{escape_gpt_markdown_v2(payload['prompt'])}`"
+                additional_text = f"{prompt_text}\n\nЗапрос: `{escape_gpt_markdown_v2(user_message)}`"
+
+                # Проверяем длину prompt
+                if len(payload['prompt']) > 410:
+                    # Отправляем два сообщения
+                    await update.message.reply_photo(
+                        photo=image_url, 
+                        caption=escape_gpt_markdown_v2(base_caption), 
+                        parse_mode="MarkdownV2"
+                    )
+                    # Второе сообщение с оставшимся текстом
+                    await update.message.reply_text(additional_text, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
+                else:
+                    # Отправляем одно сообщение
+                    final_caption = f"{escape_gpt_markdown_v2(base_caption)}"
+                    full_caption = f"{final_caption}\n\n{additional_text}"
+                    await update.message.reply_photo(
+                        photo=image_url, 
+                        caption=full_caption, 
+                        reply_markup=generated_image_buttons, 
+                        parse_mode="MarkdownV2"
+                    )
             else:
                 await update.message.reply_text("Не удалось получить изображение. Попробуйте снова.")
         else:
@@ -1163,17 +1185,35 @@ async def retry_image_generat(update: Update, context: CallbackContext):
             model_name = model_name_map.get(payload["model"], payload["model"])            
             caption = (                
                 f"Новый вариант изображения ID{payload['seed']} со следующими параметрами:\n"                    
-                f"    Seed: `{payload['seed']},`\n"
+                f"    Seed: `{payload['seed']}, `\n"
                 f"    Модель: `\"{model_name}\",`\n"
                 f"    Стиль: `\"{style_preset}\",`\n"
                 f"    Ширина: `{payload['width']},`\n"
                 f"    Высота: `{payload['height']},`\n"
                 f"    cfg_scale: `{payload['cfg_scale']},`\n"
                 f"    Steps: `{payload['steps']}.`\n\n"                      # Добавляем вывод seed
-                f"Запрос: `Нарисуй: {payload['prompt']}`\n\n"
             )
-            escaped_caption = escape_gpt_markdown_v2(caption)            
-            await query.message.reply_photo(photo=image_url, caption=escaped_caption, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
+            prompt_text = f"Prompt: `{escape_gpt_markdown_v2(payload['prompt'])}`"  
+
+            if len(payload['prompt']) > 410:
+                # Отправляем два сообщения
+                await query.message.reply_photo(
+                    photo=image_url, 
+                    caption=escape_gpt_markdown_v2(caption), 
+                    parse_mode="MarkdownV2"
+                )
+                # Второе сообщение с оставшимся текстом
+                await query.message.reply_text(prompt_text, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
+            else:
+                # Отправляем одно сообщение
+                final_caption = f"{escape_gpt_markdown_v2(caption)}"                
+                full_caption = f"{final_caption}\n\n{prompt_text}"
+                await query.message.reply_photo(
+                    photo=image_url, 
+                    caption=(full_caption), 
+                    reply_markup=generated_image_buttons, 
+                    parse_mode="MarkdownV2"
+                )            
         else:
             await query.message.reply_text("Не удалось получить изображение. Попробуйте снова.")
     else:
@@ -1474,7 +1514,7 @@ async def handle_generate_variants(update: Update, context: CallbackContext) -> 
         seed=seed,
         steps=steps
     )
-
+    
     if job_id:
         image_url = await check_prodia_status(job_id)
         if image_url:
@@ -1491,17 +1531,35 @@ async def handle_generate_variants(update: Update, context: CallbackContext) -> 
             model_name = model_name_map.get(payload["model"], payload["model"])            
             caption = (                
                 f"Новый вариант изображения ID{payload['seed']} со следующими параметрами:\n"                    
-                f"    Seed: `{payload['seed']},`\n"
+                f"    Seed: `{payload['seed']}, `\n"
                 f"    Модель: `\"{model_name}\",`\n"
                 f"    Стиль: `\"{style_preset}\",`\n"
                 f"    Ширина: `{payload['width']},`\n"
                 f"    Высота: `{payload['height']},`\n"
                 f"    cfg_scale: `{payload['cfg_scale']},`\n"
                 f"    Steps: `{payload['steps']}.`\n\n"                      # Добавляем вывод seed
-                f"Запрос: `Нарисуй: {payload['prompt']}`\n\n"
             )
+            prompt_text = f"Prompt: `{escape_gpt_markdown_v2(payload['prompt'])}`"  
 
-            escaped_caption = escape_gpt_markdown_v2(caption)            
+            if len(payload['prompt']) > 410:
+                # Отправляем два сообщения
+                await query.message.reply_photo(
+                    photo=image_url, 
+                    caption=escape_gpt_markdown_v2(caption), 
+                    parse_mode="MarkdownV2"
+                )
+                # Второе сообщение с оставшимся текстом
+                await query.message.reply_text(prompt_text, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
+            else:
+                # Отправляем одно сообщение
+                final_caption = f"{escape_gpt_markdown_v2(caption)}"                
+                full_caption = f"{final_caption}\n\n{prompt_text}"
+                await query.message.reply_photo(
+                    photo=image_url, 
+                    caption=(full_caption), 
+                    reply_markup=generated_image_buttons, 
+                    parse_mode="MarkdownV2"
+                )          
             await query.message.reply_photo(photo=image_url, caption=escaped_caption, reply_markup=generated_image_buttons, parse_mode="MarkdownV2")
         else:
             await query.message.reply_text("Не удалось получить изображение. Попробуйте снова.")
