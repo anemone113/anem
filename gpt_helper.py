@@ -220,9 +220,6 @@ def generate_image_description(user_id, image):
         if hasattr(response, 'parts') and response.parts:
             description = response.parts[0].text.strip()
             logging.info(f"Сгенерировано описание для пользователя {user_id}: {description}")  # Логирование сгенерированного описания
-
-            add_to_context(user_id, description, message_type="image_description")  # Сохранение в контексте
-            save_context_to_firebase()
             return description
         else:
             logging.warning("Ответ от модели не содержит текстового компонента для описания.")
@@ -230,9 +227,11 @@ def generate_image_description(user_id, image):
     except Exception as e:
         logging.error(f"Ошибка при генерации описания изображения: {e}")
         return "Ошибка при обработке изображения. Попробуйте снова."
+        
 def get_relevant_context(user_id):
-    """Получает явный контекст для пользователя, включая пользовательскую роль."""
+    """Получает контекст для пользователя."""
     context = user_contexts.get(user_id, deque(maxlen=500))
+    unique_context = list(dict.fromkeys(context)) 
     
     # Используем роль пользователя, если она есть, иначе стандартную роль
     user_role = user_roles.get(user_id, 
@@ -255,17 +254,7 @@ def get_relevant_context(user_id):
         "Включая время и дату. Избегай частого упоминания времени суток и сезона года; делай это лишь тогда, когда это органично вписывается в контекст ответа."
     )
     
-    unique_context = []
-    seen_messages = set()
-    for msg in context:
-        if msg not in seen_messages:
-            seen_messages.add(msg)
-            unique_context.append(msg)
-
-    # Формируем явный контекст с ролью пользователя
-    explicit_context = [user_role] + unique_context
-    
-    return '\n'.join(explicit_context)
+    return '\n'.join([user_role] + unique_context)
 
 from datetime import datetime, timedelta
 
@@ -293,24 +282,35 @@ def get_clean_response_text(response_text):
 
 
 def generate_gemini_response(user_id, query=None, text=None, image=None, use_context=True):
-    input_data = [{"text": "Тебе нужно придерживаться роль которая будет задана тебе далее, используй контекст беседы так же доступный тебе далее, отвечай на русском языке."}]
+    user_role = user_roles.get(user_id, "")    
+    input_data = [
+        {"text": f"Тебе нужно придерживаться роль которая будет задана тебе далее, используй контекст беседы так же доступный тебе далее, отвечай на русском языке. Текущая роль: {user_role}"}
+    ]
 
     logging.debug(f"Начало функции generate_gemini_response. user_id={user_id}, query={query}, text={text}, image={'есть' if image else 'нет'}, use_context={use_context}")
-    
+
+    # Добавляем контекст, если требуется
     if use_context:
         relevant_context = get_relevant_context(user_id)
+        
+        if query:
+            # Исключаем из контекста дубли текущего сообщения
+            relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+        
         if relevant_context:
-            input_data.append({"text": relevant_context})
+            input_data.append({"text": f"История диалога: {relevant_context}"})
             logging.debug(f"Добавлен релевантный контекст: {relevant_context}")
         else:
             logging.debug("Релевантный контекст отсутствует.")
 
+    # Добавляем запрос пользователя
     if query:
-        input_data.append({"text": query})
+        input_data.append({"text": f"Текущий запрос пользователя: {query}"})
         if use_context:
             add_to_context(user_id, query, message_type="user_message")
         logging.debug(f"Добавлен запрос в input_data: {query}")
 
+    # Добавляем текст, если передан
     if text:
         input_data.append({"text": text})
         if use_context:
@@ -319,11 +319,12 @@ def generate_gemini_response(user_id, query=None, text=None, image=None, use_con
 
     if image:
         # Генерация и сохранение описания изображения
-        description = generate_image_description(user_id, image)
-        input_data.append({"text": description})  # Включаем описание в контекст
+        description = generate_image_description(user_id, image)  # Генерация описания изображения
+        input_data.append({"text": description})
         if use_context:
-            add_to_context(user_id, description, message_type="image_description")
+            add_to_context(user_id, description, message_type="image_description")  # Добавляем описание изображения в контекст
         logging.debug(f"Добавлено описание изображения в input_data: {description}")
+
 
     logging.info(f"Отправка данных в Gemini: {json.dumps(input_data, ensure_ascii=False)}")
 
@@ -338,33 +339,26 @@ def generate_gemini_response(user_id, query=None, text=None, image=None, use_con
     logging.debug(f"Настройки безопасности: {safety_settings}")
 
     try:
-        # Запрос на генерацию ответа через модель с настройками безопасности
+        # Запрос на генерацию ответа через модель
         response = model.generate_content(
             {"parts": input_data},
             safety_settings=safety_settings
         )
         logging.debug(f"Получен ответ от модели: {response}")
-     
+        
         if hasattr(response, 'parts') and response.parts:
             response_text = response.parts[0].text.strip()
             if use_context:
-                add_to_context(user_id, response_text, message_type="bot_response")
+                add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
                 logging.debug(f"Ответ добавлен в контекст: {response_text}")
-
-            if image:
-                # Сохраняем полный ответ как описание изображения
-                add_to_context(user_id, response_text, message_type="image_full_description")
-                logging.debug("Описание изображения сохранено в контексте.")
-
+            
             save_context_to_firebase()
             logging.debug("Контекст успешно сохранен в Firebase.")
-
             return response_text
-            logging.debug(f"Ответ добавлен: {response_text}")
         else:
             logging.warning("Ответ от модели не содержит текстового компонента.")
             return "Извините, я не могу ответить на этот запрос."
-
+    
     except Exception as e:
         logging.error(f"Ошибка при генерации ответа: {e}")
         return "Ошибка при обработке запроса. Попробуйте снова."
