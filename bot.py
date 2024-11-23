@@ -1072,7 +1072,6 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             logging.info(f"Ответ с изображением, который пытается отправить бот: {response_text}")
 
             if response_text:
-                add_to_context(user_id, response_text, message_type="bot_response")
                 clean_response = get_clean_response_text(response_text)
                 await send_reply_with_limit(update, clean_response, reply_markup=reset_button)
             else:
@@ -1121,9 +1120,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         logging.info(f"Текстовый ответ, который пытается отправить бот: {response_text}")
         
         # Добавление ответа в контекст и отправка пользователю
-        if response_text:
-            add_to_context(user_id, response_text, message_type="bot_response")
-            
+        if response_text:  
             # Убираем метку времени и тип сообщения для отображения пользователю
             clean_response = get_clean_response_text(response_text)
             await send_reply_with_limit(update, clean_response, reply_markup=reset_button)
