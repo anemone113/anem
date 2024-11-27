@@ -3204,7 +3204,7 @@ def compress_image(file_path: str, output_path: str) -> None:
         # Если изображение всё ещё больше 5 МБ, уменьшаем разрешение
         while os.path.getsize(output_path) > max_size:
             width, height = img.size
-            img = img.resize((width // 2, height // 2), Image.ANTIALIAS)
+            img = img.resize((width // 2, height // 2), Image.Resampling.LANCZOS)  # Заменён ANTIALIAS
             img.save(output_path, format='JPEG', quality=quality)
 
         # Удаляем временный JPG файл, если он был создан
@@ -4646,54 +4646,145 @@ async def send_media_group(update, media_group, caption):
 
 async def send_media_group_with_retries(update, media_group, max_retries=3, delay=2):
     retries = 0
+
     # Определяем, является ли событие сообщением или callback-запросом
     if update.message:
         message_to_reply = update.message
     elif update.callback_query:
         message_to_reply = update.callback_query.message
     else:
-        return False  # Не удалось определить источник
+        return None  # Не удалось определить источник, возвращаем None
+
+    message_id = None  # ID первого сообщения в группе
 
     while retries < max_retries:
         try:
-            await message_to_reply.reply_media_group(media_group)
-            return True  # Успешная отправка
+            # Обрабатываем изображения в медиагруппе
+            processed_media_group = []
+            for media in media_group:
+                if media.type == "photo":
+                    processed_image = await process_image(media.media)
+                    if not processed_image:
+                        raise Exception("Failed to process image for media group")
+                    
+                    # Добавляем обработанное изображение в новый объект InputMedia
+                    processed_media_group.append(
+                        InputMediaPhoto(
+                            media=processed_image,
+                            caption=media.caption if hasattr(media, "caption") else None,
+                            parse_mode=media.parse_mode if hasattr(media, "parse_mode") else None
+                        )
+                    )
+                else:
+                    # Оставляем остальные типы медиа без изменений
+                    processed_media_group.append(media)
+
+            # Отправляем медиагруппу и сохраняем результат
+            sent_messages = await message_to_reply.reply_media_group(processed_media_group)
+
+            # Сохраняем message_id первого изображения
+            if sent_messages:
+                message_id = sent_messages[0].message_id  # ID первого отправленного сообщения
+
+            return message_id  # Успешная отправка, возвращаем ID первого сообщения
         except Exception as e:
             logger.error(f"Failed to send media group: {e}")
             retries += 1
             if retries < max_retries:
                 logger.info(f"Retrying in {delay} seconds... (Attempt {retries}/{max_retries})")
                 await asyncio.sleep(delay)
-    return False  # Если все попытки не удались
+
+    return None  # Если все попытки не удались, возвращаем None
 
 
 # Метод для отправки одного изображения с повторными попытками и задержкой
+async def process_image(photo_url):
+    """
+    Загружает изображение, конвертирует его в формат JPG,
+    проверяет разрешение и размер, применяет необходимые преобразования.
+    """
+    try:
+        # Загрузка изображения из URL
+        async with aiohttp.ClientSession() as session:
+            async with session.get(photo_url) as response:
+                if response.status == 200:
+                    img_data = await response.read()
+                else:
+                    raise Exception("Failed to fetch image from URL")
+
+        # Открываем изображение
+        img = Image.open(io.BytesIO(img_data))
+
+        # Конвертация в формат JPEG (если не JPEG)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        # Уменьшение разрешения, если большая сторона > 2300px
+        max_dimension = 2300
+        if max(img.width, img.height) > max_dimension:
+            scale = max_dimension / max(img.width, img.height)
+            new_size = (int(img.width * scale), int(img.height * scale))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Сохраняем изображение в буфер памяти и проверяем размер
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=100)
+        output.seek(0)
+        
+        # Проверка размера файла (если > 2MB, сжимаем)
+        max_file_size = 2 * 1024 * 1024  # 2MB
+        if len(output.getvalue()) > max_file_size:
+            # Попробуем снизить качество
+            output = io.BytesIO()
+            img.save(output, format="JPEG", quality=85)
+            output.seek(0)
+
+            # Если файл всё ещё больше 2MB, уменьшаем разрешение
+            if len(output.getvalue()) > max_file_size:
+                scale = (max_file_size / len(output.getvalue())) ** 0.5
+                new_size = (int(img.width * scale), int(img.height * scale))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+                output = io.BytesIO()
+                img.save(output, format="JPEG", quality=85)
+                output.seek(0)
+
+        return output  # Возвращаем обработанный буфер
+    except Exception as e:
+        logger.error(f"Error processing image: {e}")
+        return None
+
+
 async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_markup=None, max_retries=3, delay=2):
     retries = 0
-    # Определяем, является ли событие сообщением или callback-запросом
     if update.message:
         message_to_reply = update.message
     elif update.callback_query:
         message_to_reply = update.callback_query.message
     else:
-        return False  # Не удалось определить источник
+        return None
 
     while retries < max_retries:
         try:
-            await message_to_reply.reply_photo(
-                photo=photo_url,
+            # Обработка изображения
+            processed_image = await process_image(photo_url)
+            if not processed_image:
+                raise Exception("Failed to process image")
+
+            # Отправка обработанного изображения
+            message = await message_to_reply.reply_photo(
+                photo=processed_image,
                 caption=caption,
                 parse_mode=parse_mode,
-                reply_markup=reply_markup  # Добавляем возможность передать клавиатуру с кнопками
+                reply_markup=reply_markup
             )
-            return True  # Успешная отправка
+            return message
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
             retries += 1
             if retries < max_retries:
                 logger.info(f"Retrying in {delay} seconds... (Attempt {retries}/{max_retries})")
                 await asyncio.sleep(delay)
-    return False  # Если все попытки не удались
+    return None
 
 
 
