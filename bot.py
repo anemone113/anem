@@ -1853,7 +1853,6 @@ def generate_preset_buttons():
         ("3D модель", "3d-model"),
         ("Старый фильм", "analog-film"),
         ("Синематик", "cinematic"),
-        ("Фотореализм", "realistic"),
         ("Генерация фотографии", "photographic"),
         ("low-poly модель", "low-poly"),
         ("Оригами", "origami"),
