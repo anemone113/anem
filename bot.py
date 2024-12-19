@@ -2130,6 +2130,20 @@ async def handle_followup_question(update, context):
     await update.callback_query.message.reply_text("Пожалуйста, введите ваш уточняющий вопрос.")
     return ASKING_FOR_FOLLOWUP
 
+MAX_MESSAGE_LENGTH = 4096
+
+def split_text_into_chunks(text, max_length=MAX_MESSAGE_LENGTH):
+    """Разделяет текст на части, каждая из которых не превышает max_length."""
+    chunks = []
+    while len(text) > max_length:
+        split_index = text.rfind("\n", 0, max_length)
+        if split_index == -1:  # Если нет переносов строки, делим по max_length
+            split_index = max_length
+        chunks.append(text[:split_index].strip())
+        text = text[split_index:].strip()
+    chunks.append(text)
+    return chunks
+
 async def receive_followup_question(update, context):
     """Обработка уточняющего вопроса после распознавания текста."""
     user_id = update.message.from_user.id
@@ -2144,17 +2158,29 @@ async def receive_followup_question(update, context):
     # Отправляем вопрос с распознанным текстом в Gemini
     response = generate_text_rec_response(user_id, query=full_query)
 
+    if response:
+        # Разделяем ответ на части, если он превышает длину сообщения Telegram
+        response_chunks = split_text_into_chunks(response)
+
+        # Отправляем каждую часть пользователю
+        for chunk in response_chunks:
+            await update.message.reply_text(chunk)
+
+    else:
+        await update.message.reply_text("Ошибка при обработке уточняющего вопроса.")
+
     # Создаем клавиатуру с кнопкой "Отменить режим распознавания"
     keyboard = [
         [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Проверка и отправка ответа пользователю вместе с клавиатурой
-    await update.message.reply_text(response or "Ошибка при обработке уточняющего вопроса.", reply_markup=reply_markup)
+    # Отправляем клавиатуру после всех сообщений
+    await update.message.reply_text("Режим распознавания активен.", reply_markup=reply_markup)
+
     is_role_mode[user_id] = False
     is_ocr_mode[user_id] = True  # Включаем режим GPT обратно
-    return ConversationHandler.END  # Завершение уточняющего вопроса  
+    return ConversationHandler.END  # Завершение уточняющего вопроса
 
 
 
