@@ -1912,6 +1912,13 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_
         "content-type": "application/json",
         "X-Prodia-Key": "39110d90-70eb-4fed-bb40-3d0bf52c73bf"
     }
+
+    # Заранее заготовленный текст
+    predefined_text = " <lora:xl_more_art-full_v1:0.7> "
+
+    # Объединение prompt с заготовленным текстом
+    combined_prompt = predefined_text + prompt
+
     # Получение стиля для пользователя
     style_preset = get_user_preset(user_id)
 
@@ -1919,7 +1926,7 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_
     model = get_user_model(user_id)  # Получаем выбранную модель
     payload = {
         "model": model if model else "dreamshaperXL10_alpha2.safetensors [c8afe2ef]",  # Модель по умолчанию
-        "prompt": prompt,
+        "prompt": combined_prompt,  # Используем объединенный prompt
         "negative_prompt": "(easynegative:1.5), disfigured, deformed, ugly, bad anatomy, poorly drawn, low quality, blurry, pixelated, incorrect lighting, harsh shadows, cartoon, sketchy, text errors, watermark, extra fingers, extra limbs, mutilated, too busy, overexposed, underexposed, no violence, no explicit content, bad composition, wrong perspective",
         "steps": steps,
         "cfg_scale": cfg_scale,
@@ -1933,10 +1940,12 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_
     # Условно добавляем style_preset, если он не "None"
     if style_preset != "None":
         payload["style_preset"] = style_preset
+
     logging.info("Параметры, передаваемые в Prodia API:")
     for key, value in payload.items():
         if key != "imageData":
             logging.info(f"{key}: {value}")
+
     async with aiohttp.ClientSession() as session:
         async with session.post(generate_url, headers=headers, json=payload) as response:
             if response.status == 200:
@@ -1946,7 +1955,7 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_
             else:
                 logging.error("Ошибка при отправке запроса на генерацию изображения.")
                 return None, None
-
+                
 async def check_prodia_status(job_id: str) -> str:
     headers = {
         "accept": "application/json",
