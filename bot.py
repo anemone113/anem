@@ -1664,7 +1664,7 @@ async def prodia_fill(
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
-        "X-Prodia-Key": "39110d90-70eb-4fed-bb40-3d0bf52c73bf"
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
     }
     # Логирование параметров, исключая "imageData"
     logging.info("Параметры, передаваемые в Prodia API:")
@@ -1744,7 +1744,7 @@ async def prodia_paint(prompt: str, img_base64: str, width: int, height: int, de
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
-        "X-Prodia-Key": "39110d90-70eb-4fed-bb40-3d0bf52c73bf"
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
     }
     # Логирование параметров, исключая "imageData"
     logging.info("Параметры, передаваемые в Prodia API:")
@@ -1910,7 +1910,7 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
-        "X-Prodia-Key": "39110d90-70eb-4fed-bb40-3d0bf52c73bf"
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
     }
 
     # Заранее заготовленный текст
@@ -1959,7 +1959,7 @@ async def def_prodia(prompt: str, width: int, height: int, cfg_scale: int, user_
 async def check_prodia_status(job_id: str) -> str:
     headers = {
         "accept": "application/json",
-        "X-Prodia-Key": "696bbe78-bf7d-4e76-b798-6233c7e8fab5"
+        "X-Prodia-Key": "0d96d616-9c3a-4c5a-8ed8-c044e4a36c87"
     }
     check_url = check_url_template.format(job_id)
 
