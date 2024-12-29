@@ -10,7 +10,7 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 # Google API Key и модель Gemini
-GOOGLE_API_KEY = "AIzaSyAEwA5U0CYCYiqjNZv451WlcAo2N6AbPMU"
+GOOGLE_API_KEY = "AIzaSyAXzdctl0fgypE5HCPEcHvrwmqCZUeijA0"
 
 genai.configure(api_key=GOOGLE_API_KEY)
 model_config = {
