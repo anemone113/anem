@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 import wikipediaapi
 import wikipedia
 import gpt_helper
-from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, get_clean_response_text, set_user_role, generate_plant_issue_response, generate_text_rec_response, generate_plant_help_response, set_user_presets, get_user_preset, get_user_model, set_user_model, translate_to_english
+from gpt_helper import add_to_context, generate_gemini_response, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, get_clean_response_text, set_user_role, generate_plant_issue_response, generate_text_rec_response, generate_plant_help_response, set_user_presets, get_user_preset, get_user_model, set_user_model, translate_to_english, generate_audio_response
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import chardet
@@ -629,6 +629,45 @@ async def receive_role_input(update: Update, context: CallbackContext):
     
     return ConversationHandler.END  # Завершаем разговор, можно продолжить с основного состояния  
 
+async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    chat_id = str(update.message.chat_id)
+    username = update.message.from_user.username or update.message.from_user.first_name
+
+    caption = update.message.caption or ""
+    logger.info("Обработка аудио от пользователя")
+
+
+    # Скачивание аудиофайла
+    audio = update.message.audio or update.message.voice
+    file = await context.bot.get_file(audio.file_id)
+
+    # Определение исходного расширения файла
+    file_extension = os.path.splitext(file.file_path)[1] or ".oga"  # Если расширение неизвестно, используем .oga
+
+    # Создание временного файла с исходным расширением
+    fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
+
+    # Закрытие файлового дескриптора, чтобы освободить ресурс
+    os.close(fd)
+
+    # Загрузка аудио в файл
+    await file.download_to_drive(local_file_path)
+
+    try:
+        # Генерация ответа
+        full_audio_response = await generate_audio_response(local_file_path, caption)
+        logger.info("Ответ для аудио: %s", full_audio_response)
+
+        # Отправка текста с результатом пользователю
+        await update.message.reply_text(full_audio_response)
+    finally:
+        # Удаление временного файла
+        os.remove(local_file_path)
+
+
+
+
 async def gpt_running(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     user_message = update.message.text
@@ -662,7 +701,8 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("🖼Выбрать модель для изображений🖼", callback_data="choose_model")],
         [InlineKeyboardButton("❇️Посмотреть похожие варианты❇️", callback_data="generate_img2img_variants")]  # Новая кнопка           
     ])       
-
+    if update.message.audio or update.message.voice:
+        return await handle_audio(update, context)
     if update.message.media_group_id:
         # Инициализация списка для хранения сообщений медиагруппы
         media_group_id = update.message.media_group_id
