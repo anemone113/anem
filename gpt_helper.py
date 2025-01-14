@@ -8,47 +8,34 @@ import json
 import os
 import firebase_admin
 from firebase_admin import credentials, db
+import random
+from langdetect import detect
+from google import genai
+from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
+from google.genai import types
+from google import genai
+from google.genai.types import (
+    FunctionDeclaration,
+    GenerateContentConfig,
+    GoogleSearch,
+    Part,
+    Retrieval,
+    SafetySetting,
+    Tool,
+    VertexAISearch,
+)
 
+from google.genai.types import CreateCachedContentConfig, GenerateContentConfig, Part
+import re
+import time
+import tempfile
+import os
+import requests
+import pathlib
 # Google API Key и модель Gemini
 GOOGLE_API_KEY = "AIzaSyAXzdctl0fgypE5HCPEcHvrwmqCZUeijA0"
 
-genai.configure(api_key=GOOGLE_API_KEY)
-model_config = {
-    "temperature": 1.4,
-    "max_output_tokens": 3000,
-    "top_p": 0.9,
-    "top_k": 25,
-    "frequency_penalty": 0.7,
-    "presence_penalty": 0.7
-}
-
-# Конфигурация логирования
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-
-# Настройка Google Generative AI
-safety_settings = [
-    {
-        'category': 'HARM_CATEGORY_HARASSMENT',
-        'threshold': 'BLOCK_NONE',
-    },
-    {
-        'category': 'HARM_CATEGORY_HATE_SPEECH',
-        'threshold': 'BLOCK_NONE',
-    },
-    {
-        'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-        'threshold': 'BLOCK_NONE',
-    },
-    {
-        'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
-        'threshold': 'BLOCK_NONE',
-    },
-]
-
-model = genai.GenerativeModel('gemini-2.0-flash-exp',
-                                  generation_config=model_config,
-                                  safety_settings=safety_settings
-                                  )
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # Инициализация Firebase
 cred = credentials.Certificate('/etc/secrets/firebase-key.json')  # Путь к вашему JSON файлу
@@ -64,7 +51,8 @@ user_roles = {}
 user_presets = {} 
 
 user_models = {}
-
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 def load_context_from_firebase():
     """Загружает user_contexts, user_roles, пресеты и модели из Firebase."""
     global user_contexts, user_roles, user_presets, user_models
@@ -281,9 +269,107 @@ def get_clean_response_text(response_text):
 
 
 
+async def generate_audio_response(audio_file_path: str, command_text: str) -> str:
+    """
+    Обрабатывает путь к аудиофайлу и команду, генерируя ответ с помощью Gemini.
+
+    :param audio_file_path: путь к аудиофайлу.
+    :param command_text: текст команды для обработки аудио.
+    :return: ответ от Gemini.
+    """
+
+    try:
+        if not command_text:
+            command_text = "распознай текст либо опиши содержание аудио, если текста нет."
+
+        # Проверяем существование файла
+        if not os.path.exists(audio_file_path):
+            logging.error(f"Файл {audio_file_path} не существует.")
+            return "Аудиофайл недоступен. Попробуйте снова."
+
+        # Подготовка пути файла
+        audio_path = pathlib.Path(audio_file_path)
+        try:
+        # Загрузка файла через Gemini API
+            file_upload = client.files.upload(path=audio_path)
+        except Exception as e:
+            print(f"Error uploading file: {e}")
+            return None
+        # Проверяем успешность загрузки файла
+
+        logger.info(f"audio_path: {audio_path}")  
+        # Генерация ответа через Gemini
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=file_upload.uri,
+                            mime_type=file_upload.mime_type
+                        )
+                    ]
+                ),
+                command_text  # Здесь будет ваш текст команды
+            ],
+            config=types.GenerateContentConfig(
+                temperature=1.4,
+                top_p=0.95,
+                top_k=25,
+                presence_penalty=0.7,
+                frequency_penalty=0.7,
+                safety_settings=[
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_HATE_SPEECH',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_HARASSMENT',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                        threshold='BLOCK_NONE'
+                    )
+                ]
+            )            
+        )
+ 
+        # Проверка ответа
+        if not response.candidates:
+            logging.warning("Gemini вернул пустой список кандидатов.")
+            return "Извините, я не могу обработать этот аудиофайл."
+
+        if not response.candidates[0].content.parts:
+            logging.warning("Ответ Gemini не содержит частей контента.")
+            return "Извините, я не могу обработать этот аудиофайл."
+
+        # Извлечение текста ответа
+        bot_response = response.candidates[0].content.parts[0].text.strip()
+        return bot_response
+
+    except FileNotFoundError as fnf_error:
+        logging.error(f"Файл не найден: {fnf_error}")
+        return "Аудиофайл не найден. Проверьте путь к файлу."
+
+    except Exception as e:
+        logging.error("Ошибка при обработке аудиофайла с Gemini:", exc_info=True)
+        return "Ошибка при обработке аудиофайла. Попробуйте снова."
+
+
+
+
+
+
+
 def generate_gemini_response(user_id, query=None, text=None, image=None, use_context=True):
     user_role = user_roles.get(user_id, "")    
-    input_data = [
+    context = [
         {"text": f"Тебе нужно придерживаться роль которая будет задана тебе далее, используй контекст беседы так же доступный тебе далее, отвечай на русском языке. Текущая роль: {user_role}"}
     ]
 
@@ -298,62 +384,76 @@ def generate_gemini_response(user_id, query=None, text=None, image=None, use_con
             relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
         
         if relevant_context:
-            input_data.append({"text": f"История диалога: {relevant_context}"})
+            context.append({"text": f"История диалога: {relevant_context}"})
             logging.debug(f"Добавлен релевантный контекст: {relevant_context}")
         else:
             logging.debug("Релевантный контекст отсутствует.")
 
     # Добавляем запрос пользователя
     if query:
-        input_data.append({"text": f"Текущий запрос пользователя: {query}"})
+        context.append({"text": f"Текущий запрос пользователя: {query}"})
         if use_context:
             add_to_context(user_id, query, message_type="user_message")
         logging.debug(f"Добавлен запрос в input_data: {query}")
 
     # Добавляем текст, если передан
     if text:
-        input_data.append({"text": text})
+        context.append({"text": text})
         if use_context:
             add_to_context(user_id, text, message_type="file_content")
         logging.debug(f"Добавлен текст в input_data: {text}")
 
     if image:
         # Генерация и сохранение описания изображения
-        description = generate_image_description(user_id, image)  # Генерация описания изображения
+        context = generate_image_description(user_id, image)  # Генерация описания изображения
         input_data.append({"text": description})
         if use_context:
             add_to_context(user_id, description, message_type="image_description")  # Добавляем описание изображения в контекст
         logging.debug(f"Добавлено описание изображения в input_data: {description}")
 
 
-    logging.info(f"Отправка данных в Gemini: {json.dumps(input_data, ensure_ascii=False)}")
-
-    # Настройки безопасности для фильтрации вредоносного контента
-    safety_settings = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-    ]
-    
-    logging.debug(f"Настройки безопасности: {safety_settings}")
+    logging.info(f"Отправка данных в Gemini: {json.dumps(context, ensure_ascii=False)}")
 
     try:
-        # Запрос на генерацию ответа через модель
-        response = model.generate_content(
-            {"parts": input_data},
-            safety_settings=safety_settings
+        # Создаём клиент с правильным ключом
+        google_search_tool = Tool(
+            google_search=GoogleSearch()
         )
-        logging.debug(f"Получен ответ от модели: {response}")
-        
-        if hasattr(response, 'parts') and response.parts:
-            response_text = response.parts[0].text.strip()
-            if use_context:
-                add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
-                logging.debug(f"Ответ добавлен в контекст: {response_text}")
-            
-            save_context_to_firebase()
-            logging.debug("Контекст успешно сохранен в Firebase.")
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=context,  # Здесь передаётся переменная context
+            config=types.GenerateContentConfig(
+                temperature=1.4,
+                top_p=0.95,
+                top_k=25,
+                max_output_tokens=1000,
+                presence_penalty=0.7,
+                frequency_penalty=0.7,
+                tools=[google_search_tool],
+                safety_settings=[
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_HATE_SPEECH',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_HARASSMENT',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                        threshold='BLOCK_NONE'
+                    )
+                ]
+            )
+        )     
+   
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = response.candidates[0].content.parts[0].text.strip()
+            logger.info("Ответ от Gemini: %s", response_text)
             return response_text
         else:
             logging.warning("Ответ от модели не содержит текстового компонента.")
