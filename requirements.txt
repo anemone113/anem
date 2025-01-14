@@ -68,3 +68,7 @@ wikipedia==1.4.0
 Wikipedia-API==0.7.1
 yarl==1.17.1
 langdetect==1.0.9
+google-cloud-aiplatform==1.71.1
+google-cloud-bigquery==3.27.0
+google-cloud-resource-manager==1.14.0
+googlesearch-python==1.2.5
