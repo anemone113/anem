@@ -156,12 +156,15 @@ https://ссылка_2
 def format_text_to_html(message):
     # Выбираем текст или подпись, если они есть
     raw_text = message.text or message.caption
+    logger.info(f"raw_text: {raw_text}")     
     if not raw_text:
         return ""  # Возвращаем пустую строку, если текст и подпись отсутствуют
 
     entities = message.entities if message.text else message.caption_entities
+    logger.info(f"entities: {entities}")    
     if not entities:
-        return escape(raw_text.strip())  # Экранируем текст без разметки
+        escaped_text = escape(raw_text.strip())
+        return add_plain_links(escaped_text)  # Добавляем ссылки в чистом тексте
 
     formatted_text = ""
     offset = 0
@@ -169,8 +172,9 @@ def format_text_to_html(message):
     for entity in entities:
         start, end = entity.offset, entity.offset + entity.length
         plain_text = escape(raw_text[offset:start])  # Текст до текущей сущности
-        formatted_text += plain_text
-
+        formatted_text += add_plain_links(plain_text)  # Обрабатываем ссылки в обычном тексте
+        logger.info(f"formatted_text: {formatted_text}")  
+        logger.info(f"plain_text: {plain_text}")          
         entity_text = escape(raw_text[start:end])
         if entity.type == "bold":
             formatted_text += f"<b>{entity_text}</b>"
@@ -184,17 +188,24 @@ def format_text_to_html(message):
             formatted_text += f"<code>{entity_text}</code>"
         elif entity.type == "pre":
             formatted_text += f"<pre>{entity_text}</pre>"
-        elif entity.type == "TextUrl":
+        elif entity.type == "text_link":
             formatted_text += f'<a href="{entity.url}">{entity_text}</a>'
         elif entity.type == "mention":
             formatted_text += mention_html(entity.user.id, entity_text)
-        elif entity.type == "spoiler":  # Обработка спойлеров
+        elif entity.type == "spoiler":
             formatted_text += f'<span class="tg-spoiler">{entity_text}</span>'
+        elif entity.type == "url":  # Обработка обычных ссылок
+            formatted_text += f'{entity_text}'
 
         offset = end
 
-    formatted_text += escape(raw_text[offset:])
+    formatted_text += add_plain_links(escape(raw_text[offset:]))  # Обрабатываем оставшийся текст
     return formatted_text
+
+def add_plain_links(text):
+    # Регулярное выражение для поиска обычных ссылок
+    url_pattern = re.compile(r"(https?://[^\s]+)")
+    return url_pattern.sub(r'<a href="\1">\1</a>', text)
 
 
 async def start(update: Update, context: CallbackContext) -> int:
@@ -4930,7 +4941,7 @@ async def handle_snooze_with_tag_button(update: Update, context: CallbackContext
     reply_markup = create_emoji_keyboard(emojis, user_id, message_id)
 
     # Отправляем сообщение с клавиатурой
-    await query.message.reply_text("Выберите метку для записи:", reply_markup=reply_markup)
+    await query.message.reply_text("Выберите папку для записи:", reply_markup=reply_markup)
 
 
 
@@ -4991,9 +5002,9 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
         for index, (key, caption, tag) in enumerate(scheduled):
             keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{key}")])
             keyboard.append([
-                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),
                 InlineKeyboardButton("Пост в ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("Пост в ВК", callback_data=f"vkpub_{key}")
+                InlineKeyboardButton("Пост в ВК", callback_data=f"vkpub_{key}"),
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}")                
             ])
         
         # Добавьте кнопку "Удалить все с меткой"
@@ -5222,7 +5233,7 @@ async def handle_forwarded_message(update: Update, context: CallbackContext):
             # Проверяем права администратора
             is_admin = await check_admin_rights(context, chat_id, user_id)
             if not is_admin:
-                await message.reply_text("🚫 У вас нет прав администратора в этом канале.")
+                await message.reply_text("🚫 У вас или у бота нет прав администратора в этом канале.")
                 return
 
             # Сохраняем ID канала
