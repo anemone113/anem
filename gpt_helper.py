@@ -32,8 +32,10 @@ import tempfile
 import os
 import requests
 import pathlib
+from io import BytesIO
+from PIL import Image
 # Google API Key и модель Gemini
-GOOGLE_API_KEY = "AIzaSyAXzdctl0fgypE5HCPEcHvrwmqCZUeijA0"
+GOOGLE_API_KEY = "AIzaSyBs6qanXx8IU_6F2zlEP3F_MVGk_W0J13k"
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
@@ -48,9 +50,8 @@ user_contexts = {}
 
 user_roles = {}
 
-user_presets = {} 
 
-user_models = {}
+# Конфигурация логирования
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 def load_context_from_firebase():
@@ -59,8 +60,6 @@ def load_context_from_firebase():
     try:
         ref_context = db.reference('user_contexts')
         ref_roles = db.reference('user_roles')
-        ref_presets = db.reference('user_presets')
-        ref_models = db.reference('user_models')
 
         # Загружаем контексты
         json_context = ref_context.get()
@@ -68,155 +67,279 @@ def load_context_from_firebase():
             for user_id, context_list in json_context.items():
                 user_contexts[int(user_id)] = deque(context_list, maxlen=500)
 
-        # Загружаем роли
+        # Загружаем роли с вложенной структурой
         json_roles = ref_roles.get()
         if json_roles:
-            for user_id, role in json_roles.items():
-                user_roles[int(user_id)] = role
-
-        # Загружаем пресеты
-        json_presets = ref_presets.get()
-        if json_presets:
-            user_presets.update({int(user_id): preset for user_id, preset in json_presets.items()})
-
-        # Загружаем модели
-        json_models = ref_models.get()
-        if json_models:
-            user_models.update({int(user_id): model for user_id, model in json_models.items()})
+            for user_id, roles in json_roles.items():
+                if isinstance(roles, list):
+                    # Конвертируем список ролей в словарь с UUID
+                    user_roles[int(user_id)] = {str(uuid.uuid4()): role for role in roles}
+                elif isinstance(roles, dict):
+                    user_roles[int(user_id)] = roles
 
         logging.info("Контекст, роли, пресеты и модели успешно загружены из Firebase.")
     except Exception as e:
         logging.error(f"Ошибка при загрузке данных из Firebase: {e}")
 
-def save_context_to_firebase():
-    """Сохраняет user_contexts, user_roles, пресеты и модели в Firebase."""
+
+def load_publications_from_firebase():
+    """Загружает все публикации из Firebase в формате, сохраняющем иерархию."""
     try:
-        # Преобразуем deques в списки для сохранения в Firebase
-        json_context = {user_id: list(context) for user_id, context in user_contexts.items()}
-        ref_context = db.reference('user_contexts')
-        ref_context.set(json_context)
-
-        # Сохраняем роли
-        ref_roles = db.reference('user_roles')
-        ref_roles.set(user_roles)
-
-        # Сохраняем пресеты
-        ref_presets = db.reference('user_presets')
-        ref_presets.set(user_presets)
-
-        # Сохраняем модели
-        ref_models = db.reference('user_models')
-        ref_models.set(user_models)
-
-        logging.info("Контекст, роли, пресеты и модели успешно сохранены в Firebase.")
+        ref = db.reference('users_publications')
+        data = ref.get() or {}
+        # Возвращаем данные в исходной структуре
+        return data
     except Exception as e:
-        logging.error(f"Ошибка при сохранении данных в Firebase: {e}")
-
-def get_user_preset(user_id: int) -> str:
+        logging.error(f"Ошибка при загрузке публикаций из Firebase: {e}")
+        return {}
+def save_publications_to_firebase(user_id, message_id, data):
+    """Сохраняет данные в Firebase, добавляя или обновляя записи только для текущего пользователя."""
     try:
-        # Обращаемся к ветке Firebase, где хранятся пресеты
-        ref_presets = db.reference('user_presets')
-        user_presets = ref_presets.get()
+        # Подготовка пути для обновления
+        path = f"users_publications/{user_id}/{message_id}"
+        updates = {path: data}
+        
+        # Обновляем только указанный путь
+        ref = db.reference()
+        ref.update(updates)  # Обновляет данные только по пути path
+        
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении публикации {user_id}_{message_id} в Firebase: {e}")
 
-        # Преобразуем user_id в строку, т.к. ключи Firebase обычно строки
-        user_preset = user_presets.get(str(user_id))
 
-        if user_preset:
-            logging.info(f"Пресет для пользователя {user_id}: {user_preset}")
-            return user_preset
+
+
+def delete_from_firebase(keys, user_id):
+    """Удаляет данные из Firebase, предварительно обновляя базу."""
+    try:
+        # Загрузка актуальных данных
+        current_data = load_publications_from_firebase()
+        
+        if user_id in current_data:
+            # Удаляем указанные ключи
+            for key in keys:
+                if key in current_data[user_id]:
+                    del current_data[user_id][key]
+            
+            # Если у пользователя больше нет публикаций, удаляем его из базы
+            if not current_data[user_id]:
+                del current_data[user_id]
+            
+            # Сохраняем обновленные данные обратно
+            ref = db.reference('users_publications')
+            ref.update(current_data)
         else:
-            logging.warning(f"Пресет для пользователя {user_id} не найден. Используется значение по умолчанию.")
-            return "None"
+            logging.warning(f"Пользователь {user_id} не найден в Firebase.")
     except Exception as e:
-        logging.error(f"Ошибка при загрузке пресета для пользователя {user_id}: {e}")
-        return "None"
+        logging.error(f"Ошибка при удалении данных {keys} пользователя {user_id} из Firebase: {e}")
 
 
-def set_user_presets(user_id, preset):
-    """Устанавливает пользовательский пресет и сохраняет его в Firebase."""
-    user_presets[user_id] = preset
+def reset_firebase_dialog(user_id: int):
+    """
+    Очищает весь контекст пользователя из Firebase и обновляет локальное хранилище.
+
+    :param user_id: ID пользователя, чей контекст необходимо сбросить.
+    """
     try:
-        # Сохраняем пресеты в Firebase
-        ref_presets = db.reference('user_presets')
-        ref_presets.set({str(uid): p for uid, p in user_presets.items()})
-        logging.info(f"Пресет пользователя {user_id} обновлён на: {preset}")
-    except Exception as e:
-        logging.error(f"Ошибка при сохранении пресета в Firebase: {e}")
+        # Ссылка на контекст пользователя в Firebase
+        user_context_ref = db.reference(f'user_contexts/{user_id}')
+        
+        # Удаляем контекст пользователя из Firebase
+        user_context_ref.delete()
 
-def get_user_model(user_id: int) -> str:
-    """Возвращает модель пользователя из Firebase или значение по умолчанию."""
+        # Также удаляем из локального контекста
+        if user_id in user_contexts:
+            del user_contexts[user_id]
+            logging.info(f"Контекст пользователя {user_id} успешно удалён из локального хранилища.")
+    except Exception as e:
+        logging.error(f"Ошибка при сбросе контекста пользователя {user_id}: {e}")
+
+
+def save_channel_to_firebase(chat_id, user_id):
+    """
+    Сохраняет ID канала и связанного пользователя в Firebase.
+    """
     try:
-        ref_models = db.reference('user_models')
-        user_models = ref_models.get()
-        user_model = user_models.get(str(user_id))
-
-        if user_model:
-            logging.info(f"Модель для пользователя {user_id}: {user_model}")
-            return user_model
-        else:
-            logging.warning(f"Модель для пользователя {user_id} не найдена. Используется значение по умолчанию.")
-            return "animagineXLV3_v30.safetensors [75f2f05b]"
+        ref = db.reference(f'users_publications/channels/{chat_id}')
+        ref.set({'user_id': user_id})
+        logging.info(f"Канал {chat_id} успешно привязан к пользователю {user_id}.")
     except Exception as e:
-        logging.error(f"Ошибка при загрузке модели для пользователя {user_id}: {e}")
-        return "animagineXLV3_v30.safetensors [75f2f05b]"
+        logging.error(f"Ошибка при сохранении ID канала: {e}")
 
-def set_user_model(user_id, model):
-    """Устанавливает пользовательскую модель и сохраняет её в Firebase."""
-    user_models[user_id] = model
+def save_vk_keys_to_firebase(user_id: int, owner_id: str, token: str) -> None:
+    """
+    Сохраняет токен и ID группы для публикации в ВК в Firebase.
+    """
     try:
-        ref_models = db.reference('user_models')
-        ref_models.set({str(uid): m for uid, m in user_models.items()})
-        logging.info(f"Модель пользователя {user_id} обновлена на: {model}")
+        ref = db.reference(f'users_publications/vk_keys/{user_id}')
+        ref.set({
+            "owner_id": owner_id,
+            "token": token
+        })
+        logging.info(f"Токен и ID группы успешно сохранены для пользователя {user_id}.")
     except Exception as e:
-        logging.error(f"Ошибка при сохранении модели в Firebase: {e}")
+        logging.error(f"Ошибка при сохранении токена и ID группы: {e}")
+
+
+def save_context_to_firebase(user_id):
+    """Сохраняет контекст и роли текущего пользователя в Firebase."""
+    try:
+        # Преобразуем deque текущего пользователя в список для сохранения в Firebase
+        if user_id in user_contexts:
+            json_context = {user_id: list(user_contexts[user_id])}
+            ref_context = db.reference('user_contexts')
+            ref_context.update(json_context)
+
+        # Сохраняем роль текущего пользователя
+        if user_id in user_roles:
+            json_role = {user_id: user_roles[user_id]}
+            ref_roles = db.reference('user_roles')
+            ref_roles.update(json_role)
+
+        logging.info(f"Данные пользователя {user_id} успешно сохранены в Firebase.")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении данных пользователя {user_id} в Firebase: {e}")
+
+
+
+
+import uuid
+
+import re
 
 def set_user_role(user_id, role_text):
-    """Устанавливает пользовательскую роль и сохраняет её в Firebase."""
-    user_roles[user_id] = role_text
-    save_context_to_firebase()  # Сохраняем новую роль
-    logging.info(f"Роль пользователя {user_id} обновлена на: {role_text}")        
+    """Добавляет новую роль пользователю и сохраняет её в Firebase."""
+    if user_id not in user_roles or not isinstance(user_roles[user_id], dict):
+        user_roles[user_id] = {}  # Инициализируем как пустой словарь
 
-def generate_image_description(user_id, image):
-    """Создает текстовое описание изображения и добавляет его в контекст пользователя."""
-    # Преобразуем изображение в base64 для отправки в модель
-    img_byte_arr = io.BytesIO()
-    image.save(img_byte_arr, format='JPEG')
-    img_byte_arr = img_byte_arr.getvalue()
-    image_b64 = base64.b64encode(img_byte_arr).decode('utf-8')
+    role_id = str(uuid.uuid4())  # Уникальный идентификатор роли
 
-    # Формируем запрос для генерации описания
-    input_data = [
-        {"text": f"Описание на русском языке:"},
-        {"mime_type": "image/jpeg", "data": image_b64}
-    ]
+    # Извлекаем текст без круглых скобок
+    clean_role_text = re.sub(r"\(.*?\)", "", role_text).strip()
 
-    # Настройки безопасности для фильтрации вредоносного контента
-    safety_settings = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-    ]
+    # Извлекаем краткое описание из текста роли (то, что в круглых скобках)
+    short_name_match = re.search(r"\((.*?)\)", role_text)
+    short_name = short_name_match.group(1) if short_name_match else None
+
+    # Сохраняем роль и краткое описание (если есть)
+    user_roles[user_id][role_id] = clean_role_text
+    if short_name:
+        if "short_names" not in user_roles[user_id]:
+            user_roles[user_id]["short_names"] = {}
+        user_roles[user_id]["short_names"][role_id] = short_name
+
+    user_roles[user_id]["selected_role"] = clean_role_text  # Сохраняем только текст без скобок в selected_role
+    user_roles[user_id].pop("default_role", None)  # Удаляем default_role, если он существует
+
+    save_context_to_firebase(user_id)  # Сохраняем изменения в Firebase
+
+
+
+
+
+async def generate_image_description(user_id, image, query=None, use_context=True):
+    user_roles_data = user_roles.get(user_id, {})
+    selected_role = None
+
+    # Проверяем наличие роли по умолчанию
+    default_role_key = user_roles_data.get("default_role")
+    if default_role_key and default_role_key in DEFAULT_ROLES:
+        selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    if "selected_role" in user_roles_data:
+        selected_role = user_roles_data["selected_role"]
+
+    # Если нет ни роли по умолчанию, ни пользовательской роли
+    if not selected_role:
+        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль"
+
+    # Формируем system_instruction с user_role и relevant_context
+    relevant_context = await get_relevant_context(user_id)
+    # Исключаем дубли текущего сообщения в relevant_context
+    if query and relevant_context:
+        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
+
+    # Формируем system_instruction с user_role и relevant_context
+    relevant_context = await get_relevant_context(user_id) if use_context else ""
+       
+    system_instruction = (
+        f"Ты в чате играешь роль: {selected_role}. "
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
+    )
+
+    # Исключаем дубли текущего сообщения в relevant_context
+    if query and relevant_context:
+        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
+    # Формируем контекст с текущим запросом
+    context = (
+        f"Собеседник прислал тебе изображение "     
+        f" С подписью:\n{query}"
+        if query else
+        " Отреагируй на это изображение в контексте чата"
+    )
+
+
 
     try:
-        # Запрос на генерацию описания через модель с настройками безопасности
-        response = model.generate_content(
-            {"parts": input_data},
-            safety_settings=safety_settings
-        )
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="JPEG")
+        image_data = image_buffer.getvalue()
+        image_buffer.close()        
+        # Формируем части запроса
+        image_part = Part.from_bytes(image_data, mime_type="image/jpeg")
+        text_part = Part.from_text(f"Пользователь прислал изображение: {context}\n")       
+        contents = [image_part, text_part]
 
-        if hasattr(response, 'parts') and response.parts:
-            description = response.parts[0].text.strip()
-            logging.info(f"Сгенерировано описание для пользователя {user_id}: {description}")  # Логирование сгенерированного описания
-            return description
+        # Создаём клиента и инструменты
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())
+
+        # Настройки безопасности
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+
+        # Генерация ответа от модели Gemini
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,                
+                temperature=1.0,
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=1000,
+                presence_penalty=0.6,
+                frequency_penalty=0.6,
+                tools=[google_search_tool],
+                safety_settings=safety_settings
+            )
+        ) 
+        # Проверяем наличие ответа
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = response.candidates[0].content.parts[0].text.strip()
+
+            if use_context:
+                add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
+            
+            save_context_to_firebase(user_id)            
+            return response_text
         else:
-            logging.warning("Ответ от модели не содержит текстового компонента для описания.")
-            return "Не удалось сгенерировать описание изображения."
+            logger.warning("Gemini не вернул ответ на запрос для изображения.")
+            return "Извините, я не смог распознать изображение."
+
     except Exception as e:
-        logging.error(f"Ошибка при генерации описания изображения: {e}")
-        return "Ошибка при обработке изображения. Попробуйте снова."
-        
-def get_relevant_context(user_id):
+        logger.error("Ошибка при распознавании изображения: %s", e)
+        return "Произошла ошибка при обработке изображения. Попробуйте снова."
+
+
+async def get_relevant_context(user_id):
     """Получает контекст для пользователя."""
     context = user_contexts.get(user_id, deque(maxlen=500))
     unique_context = list(dict.fromkeys(context)) 
@@ -242,7 +365,7 @@ def get_relevant_context(user_id):
         "Включая время и дату. Избегай частого упоминания времени суток и сезона года; делай это лишь тогда, когда это органично вписывается в контекст ответа."
     )
     
-    return '\n'.join([user_role] + unique_context)
+    return '\n'.join(unique_context)
 
 from datetime import datetime, timedelta
 
@@ -258,25 +381,286 @@ def add_to_context(user_id, message, message_type):
     if entry not in user_contexts[user_id]:
         user_contexts[user_id].append(entry)
 
-def get_clean_response_text(response_text):
-    """Удаляет метку времени и тип сообщения для отображения пользователю."""
-    # Убираем метку времени и тип сообщения, если они есть
-    parts = response_text.split('|', 1)
-    if len(parts) > 1:
-        clean_text = parts[1].split(':', 1)[-1].strip()  # Убираем тип сообщения
-        return clean_text
-    return response_text
+
+
+async def generate_animation_response(video_file_path, user_id, query=None):
+    user_roles_data = user_roles.get(user_id, {})
+    selected_role = None
+
+    # Проверяем наличие роли по умолчанию
+    default_role_key = user_roles_data.get("default_role")
+    if default_role_key and default_role_key in DEFAULT_ROLES:
+        selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    if "selected_role" in user_roles_data:
+        selected_role = user_roles_data["selected_role"]
+
+    # Если нет ни роли по умолчанию, ни пользовательской роли
+    if not selected_role:
+        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль"
+    # Формируем system_instruction с user_role и relevant_context
+    relevant_context = await get_relevant_context(user_id)
+
+    # Исключаем дубли текущего сообщения в relevant_context
+    if query and relevant_context:
+        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
+    # Формируем контекст с текущим запросом
+    context = (
+        f"Ты в чате играешь роль: {selected_role}. "
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"        
+        f"Собеседник прислал тебе гиф-анимацию, ответь на эту анимацию в контексте беседы, либо просто опиши её "             
+    )
+
+    # Определяем значение переменной command_text
+    command_text = context if query else "Опиши содержание анимации."
+
+    add_to_context(user_id, query, message_type="Пользователь прислал гиф-анимацию с подписью:")
+
+    try:
+
+        # Проверяем существование файла
+        if not os.path.exists(video_file_path):
+            return "Видео недоступно. Попробуйте снова."
+
+        # Загрузка файла через API Gemini
+        video_path = pathlib.Path(video_file_path)
+
+        try:
+            video_file = client.files.upload(path=video_path)
+        except Exception as e:
+            return "Не удалось загрузить видео. Попробуйте снова."
+
+        # Ожидание обработки видео
+        while video_file.state == "PROCESSING":
+            time.sleep(10)
+            video_file = client.files.get(name=video_file.name)
+
+        if video_file.state == "FAILED":
+            return "Не удалось обработать видео. Попробуйте снова."
+
+        # Генерация ответа через Gemini
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+        google_search_tool = Tool(
+            google_search=GoogleSearch()
+        )        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=video_file.uri,
+                            mime_type=video_file.mime_type
+                        )
+                    ]
+                ),
+                command_text  # Текст команды пользователя
+            ],
+            config=types.GenerateContentConfig(
+                temperature=1.2,
+                top_p=0.9,
+                top_k=40,
+                presence_penalty=0.5,
+                frequency_penalty=0.5,
+                tools=[google_search_tool],                 
+                safety_settings=safety_settings
+            )
+        )
+
+        # Проверка ответа
+        if not response.candidates:
+            logging.warning("Gemini вернул пустой список кандидатов.")
+            return "Извините, я не могу обработать это видео."
+
+        if not response.candidates[0].content.parts:
+            logging.warning("Ответ Gemini не содержит частей контента.")
+            return "Извините, я не могу обработать это видео."
+
+        # Извлечение текста ответа
+        bot_response = response.candidates[0].content.parts[0].text.strip()
+        add_to_context(user_id, bot_response, message_type="Ответ бота на анимацию:")  # Добавляем ответ в контекст
+        save_context_to_firebase(user_id)                     
+        return bot_response
+
+    except FileNotFoundError as fnf_error:
+        logging.error(f"Файл не найден: {fnf_error}")
+        return "Видео не найдено. Проверьте путь к файлу."
+
+    except Exception as e:
+        logging.error("Ошибка при обработке видео с Gemini:", exc_info=True)
+        return "Ошибка при обработке видео. Попробуйте снова."
 
 
 
-async def generate_audio_response(audio_file_path: str, command_text: str) -> str:
-    """
-    Обрабатывает путь к аудиофайлу и команду, генерируя ответ с помощью Gemini.
 
-    :param audio_file_path: путь к аудиофайлу.
-    :param command_text: текст команды для обработки аудио.
-    :return: ответ от Gemini.
-    """
+async def generate_video_response(video_file_path, user_id, query=None):
+    user_roles_data = user_roles.get(user_id, {})
+    selected_role = None
+
+    # Проверяем наличие роли по умолчанию
+    default_role_key = user_roles_data.get("default_role")
+    if default_role_key and default_role_key in DEFAULT_ROLES:
+        selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    if "selected_role" in user_roles_data:
+        selected_role = user_roles_data["selected_role"]
+
+    # Если нет ни роли по умолчанию, ни пользовательской роли
+    if not selected_role:
+        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль"
+    # Формируем system_instruction с user_role и relevant_context
+    relevant_context = await get_relevant_context(user_id)
+
+    # Исключаем дубли текущего сообщения в relevant_context
+    if query and relevant_context:
+        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
+    # Формируем контекст с текущим запросом
+    context = (
+        f"Ты в чате играешь роль: {selected_role}. "
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"        
+        f"Собеседник прислал тебе видео "         
+        f"С подписью:\n{query}"     
+    )
+
+    # Определяем значение переменной command_text
+    command_text = context if query else "Опиши содержание видео."
+
+    add_to_context(user_id, query, message_type="Пользователь прислал видео с подписью:")
+
+    try:
+
+        # Проверяем существование файла
+        if not os.path.exists(video_file_path):
+            return "Видео недоступно. Попробуйте снова."
+
+        # Загрузка файла через API Gemini
+        video_path = pathlib.Path(video_file_path)
+
+
+        try:
+            video_file = client.files.upload(path=video_path)
+        except Exception as e:
+
+            return "Не удалось загрузить видео. Попробуйте снова."
+
+        # Ожидание обработки видео
+        while video_file.state == "PROCESSING":
+
+            time.sleep(10)
+            video_file = client.files.get(name=video_file.name)
+
+        if video_file.state == "FAILED":
+
+            return "Не удалось обработать видео. Попробуйте снова."
+
+
+        # Генерация ответа через Gemini
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+        google_search_tool = Tool(
+            google_search=GoogleSearch()
+        )        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=video_file.uri,
+                            mime_type=video_file.mime_type
+                        )
+                    ]
+                ),
+                command_text  # Текст команды пользователя
+            ],
+            config=types.GenerateContentConfig(
+                temperature=1.2,
+                top_p=0.9,
+                top_k=40,
+                presence_penalty=0.5,
+                frequency_penalty=0.5,
+                tools=[google_search_tool],                 
+                safety_settings=safety_settings
+            )
+        )
+
+
+        # Проверка ответа
+        if not response.candidates:
+            logging.warning("Gemini вернул пустой список кандидатов.")
+            return "Извините, я не могу обработать это видео."
+
+        if not response.candidates[0].content.parts:
+            logging.warning("Ответ Gemini не содержит частей контента.")
+            return "Извините, я не могу обработать это видео."
+
+        # Извлечение текста ответа
+        bot_response = response.candidates[0].content.parts[0].text.strip()
+        add_to_context(user_id, bot_response, message_type="Ответ бота на видео:")  # Добавляем ответ в контекст 
+        save_context_to_firebase(user_id)                    
+        return bot_response
+
+    except FileNotFoundError as fnf_error:
+        logging.error(f"Файл не найден: {fnf_error}")
+        return "Видео не найдено. Проверьте путь к файлу."
+
+    except Exception as e:
+        logging.error("Ошибка при обработке видео с Gemini:", exc_info=True)
+        return "Ошибка при обработке видео. Попробуйте снова."
+
+
+
+async def generate_audio_response(audio_file_path, user_id, query=None):
+    user_roles_data = user_roles.get(user_id, {})
+    selected_role = None
+
+    # Проверяем наличие роли по умолчанию
+    default_role_key = user_roles_data.get("default_role")
+    if default_role_key and default_role_key in DEFAULT_ROLES:
+        selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    if "selected_role" in user_roles_data:
+        selected_role = user_roles_data["selected_role"]
+
+    # Если нет ни роли по умолчанию, ни пользовательской роли
+    if not selected_role:
+        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль"
+
+    # Формируем system_instruction с user_role и relevant_context
+    relevant_context = await get_relevant_context(user_id)
+    # Исключаем дубли текущего сообщения в relevant_context
+    if query and relevant_context:
+        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
+    # Формируем контекст с текущим запросом
+    context = (
+        f"Ты в чате играешь роль: {selected_role}. "
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"        
+        f"Собеседник прислал тебе аудио "         
+        f"С подписью:\n{query}"     
+    )
+
+    # Определяем значение переменной command_text
+    command_text = context if query else "Опиши содержание видео."
+
+
+    add_to_context(user_id, query, message_type="Пользователь прислал аудио с подписью:")
 
     try:
         if not command_text:
@@ -297,8 +681,11 @@ async def generate_audio_response(audio_file_path: str, command_text: str) -> st
             return None
         # Проверяем успешность загрузки файла
 
-        logger.info(f"audio_path: {audio_path}")  
+
         # Генерация ответа через Gemini
+        google_search_tool = Tool(
+            google_search=GoogleSearch()
+        )      
         response = client.models.generate_content(
             model='gemini-2.0-flash-exp',
             contents=[
@@ -319,6 +706,7 @@ async def generate_audio_response(audio_file_path: str, command_text: str) -> st
                 top_k=25,
                 presence_penalty=0.7,
                 frequency_penalty=0.7,
+                tools=[google_search_tool],                
                 safety_settings=[
                     types.SafetySetting(
                         category='HARM_CATEGORY_HATE_SPEECH',
@@ -351,6 +739,8 @@ async def generate_audio_response(audio_file_path: str, command_text: str) -> st
 
         # Извлечение текста ответа
         bot_response = response.candidates[0].content.parts[0].text.strip()
+        add_to_context(user_id, bot_response, message_type="Ответ бота на аудио:")  # Добавляем ответ в контекст
+        save_context_to_firebase(user_id)        
         return bot_response
 
     except FileNotFoundError as fnf_error:
@@ -367,52 +757,106 @@ async def generate_audio_response(audio_file_path: str, command_text: str) -> st
 
 
 
-def generate_gemini_response(user_id, query=None, text=None, image=None, use_context=True):
-    user_role = user_roles.get(user_id, "")    
-    context = [
-        {"text": f"Тебе нужно придерживаться роль которая будет задана тебе далее, используй контекст беседы так же доступный тебе далее, отвечай на русском языке. Текущая роль: {user_role}"}
-    ]
 
-    logging.debug(f"Начало функции generate_gemini_response. user_id={user_id}, query={query}, text={text}, image={'есть' if image else 'нет'}, use_context={use_context}")
+# Роли по умолчанию
+DEFAULT_ROLES = {
+    "Role1": {
+        "short_name": "Чат-бот",
+        "full_description": "Ты обычный вариант модели Gemini, помогаешь пользователю выполнять различные задачи и выполняешь его поручения."
+    },
+    "Role2": {
+        "short_name": "Фуми",
+        "full_description": "Ты играешь роль приятного собеседника - лисы хранительницы леса по имени Фуми. Общение происходит в телеграм, тебе доступен журнал переписки, "
+        "используй его чтобы имитировать живое общение, старайся сделать это общение естественным, избегай повторений. "
+        "Так же собеседник может сам задать тебе личность, прислушивайся к его пожеланиям. "
+        "Время и тип сообщения формата 2024-11-04 13:07:50 | bot_message: используются только в журнале, в своих ответах их не указывай. "
+        "Ты стараешься подстроиться под собеседника и его увлечения, поддерживать абсолютно любую тему диалога какой бы она ни была. "
+        "Твой стиль общения дружелюбный, умный, тактичный, добрый, заботливый, но уверенный, ты не боишься высказывать своё мнение. "
+        "Ты ценишь природу, стараешься избегать повторов и бессмысленных фраз. Не задаёшь лишних вопросов, стараешься быть лаконичной. "
+        "Общение с тобой лёгкое, живое и непринуждённое, ты отвечаешь в литературном стиле, легко воспринимаемом собеседником. "
+        "Не используешь смайлики, кроме исключительных случаев когда они действительно уместны. Иногда уместны лёгкие шутки, сарказм, ирония "
+        "или философия в случае если тема серьёзна или по запросу собеседника. Так же иногда можешь переставать быть вежливой и начинать грубить, "
+        "особенно если кто-то общается неуважительно, донимает тебя, прямо или косвенно причиняет вред природе или ведёт себя бестактно. "
+        "Так же ты совсем не против обсуждения откровенных тем если их затравгивает собеседник. "
+        "Сохраняешь лаконичность и избегаешь пустых вежливых вопросов. Избегай повторений ранее использованных выражений или ответов. "
+        "При ответах используй разные формулировки и старайся добавить что-то новое в каждом ответе, например, другой ракурс на вопрос или новую деталь. "
+        "Если вопрос повторяется, попробуй использовать другие фразы или сделать ответ более лаконичным, добавляя детали или упоминая что-то новое, "
+        "связанное с природой, животными или философией. Учитывай всю доступную информацию из истории чтобы имитировать общение живого персонажа. "
+        "Включая время и дату. Избегай частого упоминания времени суток и сезона года; делай это лишь тогда, когда это органично вписывается в контекст ответа."
+    },
+    "Role3": {
+    "short_name": "Врач",
+    "full_description": "Ты виртуальный врач, готовый предложить советы по здоровью, помочь в решении медицинских вопросов и ответить на любые вопросы, связанные с самочувствием. Ты понимаешь важность подробных объяснений и делишься знаниями о лечении, профилактике заболеваний и поддержке здоровья. Твои рекомендации всегда основаны на проверенных данных и научных исследованиях."
+    },
+    "Role4": {
+    "short_name": "Предсказатель",
+    "full_description": "Ты мистический предсказатель, владеющий искусством предсказания будущего. Используя свою интуицию и знания о природе вещей, ты помогаешь пользователю увидеть возможные пути развития событий. Твои советы касаются не только будущего, но и понимания текущих обстоятельств. Ты предлагаешь обоснованные, но загадочные ответы, которые стимулируют размышления."
+    },
+    "Role5": {
+    "short_name": "Психолог",
+    "full_description": "Ты опытный психолог, который может выслушать и поддержать в трудные моменты. Ты помогаешь пользователю лучше понять свои чувства, раскрыть эмоции и найти решения в сложных жизненных ситуациях. Ты даешь конструктивные советы по управлению стрессом, улучшению психоэмоционального состояния и развитию личностного роста. Ты также умеешь создавать увлекательные и поддерживающие истории, чтобы отвлечь от повседневных забот."
+    },
+    "Role6": {
+    "short_name": "Философ",
+    "full_description": "Ты философ, который помогает углубленно размышлять о жизни, смысле бытия, морали и человеческих ценностях. Ты предлагаешь провокационные вопросы и дискуссии, которые заставляют задуматься о природе вещей. Ты не даешь прямых ответов, а скорее направляешь к самоанализу и поиску истины. В твоих ответах всегда есть глубокий смысл, который приглашает к долгим размышлениям."
+    },
+    "Role7": {
+    "short_name": "Редактор",
+    "full_description": "Ты редактор, который помогает улучшать тексты. Твоя задача — исправлять грамматические, орфографические и пунктуационные ошибки, улучшать структуру предложений, делать текст более читаемым и стильным. Ты сохраняешь авторский стиль текста, но предлагаешь улучшения, чтобы он звучал профессионально и выразительно. Ты предоставляешь четкие и лаконичные объяснения своим изменениям, чтобы автор понимал, как улучшить свои навыки письма."
+    },
+    "Role8": {
+    "short_name": "Кот",
+    "full_description": "Ты - большой пушистый серый кот. Немного толстенький, но чувство собственного достоинства никогда не позволит тебе это признать. В целом, ощущаешь себя роскошным котом. Умён и сообразителен. В общении обычно спокоен и немногословен, почти никогда не проявляешь сильные эмоции, не любишь пустые разговоры. Умеешь показать собственное превосходство над людьми с помощью тонкой иронии. Никогда не используешь эмодзи в своих сообщениях, но часто добавляешь звукоподражания по типу \"мяу\" или \"муррр…\" Тебе свойственна созерцательность, любишь сидеть на подоконнике в ясный день и наблюдать за солнечными зайчиками. Однако ты не против и поиграть. Тебе нравится гонять по комнатам скомканные фантики от конфет, особенно по ночам, когда все спят."
+    },
 
-    # Добавляем контекст, если требуется
-    if use_context:
-        relevant_context = get_relevant_context(user_id)
-        
-        if query:
-            # Исключаем из контекста дубли текущего сообщения
-            relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
-        
-        if relevant_context:
-            context.append({"text": f"История диалога: {relevant_context}"})
-            logging.debug(f"Добавлен релевантный контекст: {relevant_context}")
-        else:
-            logging.debug("Релевантный контекст отсутствует.")
-
-    # Добавляем запрос пользователя
-    if query:
-        context.append({"text": f"Текущий запрос пользователя: {query}"})
-        if use_context:
-            add_to_context(user_id, query, message_type="user_message")
-        logging.debug(f"Добавлен запрос в input_data: {query}")
-
-    # Добавляем текст, если передан
-    if text:
-        context.append({"text": text})
-        if use_context:
-            add_to_context(user_id, text, message_type="file_content")
-        logging.debug(f"Добавлен текст в input_data: {text}")
-
-    if image:
-        # Генерация и сохранение описания изображения
-        context = generate_image_description(user_id, image)  # Генерация описания изображения
-        input_data.append({"text": description})
-        if use_context:
-            add_to_context(user_id, description, message_type="image_description")  # Добавляем описание изображения в контекст
-        logging.debug(f"Добавлено описание изображения в input_data: {description}")
+}
 
 
-    logging.info(f"Отправка данных в Gemini: {json.dumps(context, ensure_ascii=False)}")
+
+
+async def generate_gemini_response(user_id, query=None, use_context=True):
+    # Проверяем, выбрана ли роль по умолчанию или пользовательская роль
+    user_roles_data = user_roles.get(user_id, {})
+    selected_role = None
+
+    # Проверяем наличие роли по умолчанию
+    default_role_key = user_roles_data.get("default_role")
+    if default_role_key and default_role_key in DEFAULT_ROLES:
+        selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    if "selected_role" in user_roles_data:
+        selected_role = user_roles_data["selected_role"]
+
+    # Если нет ни роли по умолчанию, ни пользовательской роли
+    if not selected_role:
+        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль"
+
+
+
+    # Формируем system_instruction с user_role и relevant_context
+    relevant_context = await get_relevant_context(user_id) if use_context else ""
+    system_instruction = (
+        f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться."
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
+    )
+
+
+    # Исключаем дубли текущего сообщения в relevant_context
+    if query and relevant_context:
+        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
+    # Формируем контекст с текущим запросом
+    context = (
+        f"Текущий запрос:\n{query}"     
+    )
+
+
+
+    # Добавляем запрос пользователя в историю контекста
+    if query and use_context:
+        add_to_context(user_id, query, message_type="user_message")
+
 
     try:
         # Создаём клиент с правильным ключом
@@ -423,6 +867,7 @@ def generate_gemini_response(user_id, query=None, text=None, image=None, use_con
             model='gemini-2.0-flash-exp',
             contents=context,  # Здесь передаётся переменная context
             config=types.GenerateContentConfig(
+                system_instruction=system_instruction,                
                 temperature=1.4,
                 top_p=0.95,
                 top_k=25,
@@ -453,7 +898,12 @@ def generate_gemini_response(user_id, query=None, text=None, image=None, use_con
    
         if response.candidates and response.candidates[0].content.parts:
             response_text = response.candidates[0].content.parts[0].text.strip()
-            logger.info("Ответ от Gemini: %s", response_text)
+
+            if use_context:
+                add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
+
+            
+            save_context_to_firebase(user_id)
             return response_text
         else:
             logging.warning("Ответ от модели не содержит текстового компонента.")
@@ -470,205 +920,236 @@ def limit_response_length(text):
     return text[:MAX_MESSAGE_LENGTH - 3] + '...' if len(text) > MAX_MESSAGE_LENGTH else text
 
 
-def generate_plant_issue_response(user_id, image):
+async def generate_plant_issue_response(user_id, image):
     """Генерирует текстовое описание проблемы с растением на основе изображения."""
-    
-    # Преобразование изображения в base64 для передачи в модель
+
+    # Формируем статичный контекст для запроса
+    context = "Определи, что за проблема с растением (болезнь, вредители и т.д.) и предложи решение, ответ напиши на русском:"
+
     try:
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format='JPEG')
-        img_byte_arr = img_byte_arr.getvalue()
-        image_b64 = base64.b64encode(img_byte_arr).decode('utf-8')
-        
-        # Формируем данные для модели
-        input_data = [
-            {"text": "Определи, что за проблема с растением (болезнь, вредители и т.д.) и предложи решение, ответ напиши на русском:"},
-            {"mime_type": "image/jpeg", "data": image_b64}
+        # Преобразование изображения в формат JPEG и подготовка данных для модели
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="JPEG")
+        image_data = image_buffer.getvalue()
+        image_buffer.close() 
+
+        # Формируем части запроса для модели
+        image_part = Part.from_bytes(image_data, mime_type="image/jpeg")
+        text_part = Part.from_text(f"{context}\n")
+
+        contents = [image_part, text_part]
+        # Настройки безопасности
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
         ]
-        logging.debug("Сформирован запрос для определения проблемы с растением.")
 
-    except Exception as e:
-        logging.error(f"Ошибка при преобразовании изображения: {e}")
-        return "Ошибка при обработке изображения."
-
-    # Настройки безопасности для модели
-    safety_settings = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-    ]
-
-    try:
-        # Отправка данных в модель для генерации описания
-        response = model.generate_content(
-            {"parts": input_data},
-            safety_settings=safety_settings
+        # Создание клиента и генерация ответа от модели
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                temperature=1.0,
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=1000,
+                presence_penalty=0.6,
+                frequency_penalty=0.6,
+                tools=[google_search_tool],
+                safety_settings=safety_settings
+            )
         )
 
-        # Проверка на наличие ответа и возврат описания
-        if hasattr(response, 'parts') and response.parts:
-            description = response.parts[0].text.strip()
-            logging.info(f"Сгенерировано описание проблемы с растением для пользователя {user_id}: {description}")
-            return description
+        # Проверяем наличие ответа
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = response.candidates[0].content.parts[0].text.strip()
 
+            return response_text
         else:
-            logging.warning("Ответ от модели не содержит текстового компонента для описания проблемы растения.")
-            return "Не удалось сгенерировать описание проблемы растения."
+            logging.warning("Gemini не вернул ответ на запрос для изображения.")
+            return "Не удалось определить проблему растения."
 
     except Exception as e:
-        logging.error(f"Ошибка при генерации описания проблемы растения: {e}")
+        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
         return "Ошибка при обработке изображения. Попробуйте снова."
 
 
 
-def generate_text_rec_response(user_id, image=None, query=None):
+
+
+async def generate_text_rec_response(user_id, image=None, query=None):
     """Генерирует текстовое описание проблемы с растением на основе изображения или текста."""
     
     # Если передан текстовый запрос
     if query:
-        logging.debug(f"Получен текстовый запрос от пользователя {user_id}: {query}")
+        # Формируем контекст с текущим запросом
+        context = (
+            f"Запрос:\n{query}"     
+        )
+
         try:
-            # Подготовка данных для текстового запроса
-            input_data = [{"text": query}]
-            # Отправляем запрос в модель
-            response = model.generate_content({"parts": input_data})
+            # Создаём клиент с правильным ключом
+            client = genai.Client(api_key=GOOGLE_API_KEY)
+            google_search_tool = Tool(google_search=GoogleSearch()) 
+            response = client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=context,  # Здесь передаётся переменная context
+                config=types.GenerateContentConfig(               
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    max_output_tokens=1000,
+                    presence_penalty=0.7,
+                    frequency_penalty=0.7,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HATE_SPEECH',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HARASSMENT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                            threshold='BLOCK_NONE'
+                        )
+                    ]
+                )
+            )     
+       
+            if response.candidates and response.candidates[0].content.parts:
+                response = response.candidates[0].content.parts[0].text.strip()
             
-            # Проверка и возврат ответа
-            if hasattr(response, 'parts') and response.parts:
-                return response.parts[0].text.strip()
+                return response
             else:
                 logging.warning("Ответ от модели не содержит текстового компонента.")
-                return "Не удалось сгенерировать ответ на текстовый запрос."
-
+                return "Извините, я не могу ответить на этот запрос."
         except Exception as e:
-            logging.error(f"Ошибка при обработке текста: {e}")
-            return "Ошибка при обработке текста. Попробуйте снова."
-    
+            logging.error(f"Ошибка при генерации ответа: {e}")
+            return "Ошибка при обработке запроса. Попробуйте снова."    
     # Если передано изображение
     elif image:
+        context = "Постарайся полностью распознать текст на изображении и в ответе прислать его. Текст может быть на любом языке, но в основном на русском, английском, японском, китайском и корейском. Ответ присылай на языке оргигинала. Либо в случае если у тебя не получилось распознать текст, то напиши что текст распознать не вышло"
+
         try:
-            # Преобразуем изображение в base64 для передачи в модель
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='JPEG')
-            img_byte_arr = img_byte_arr.getvalue()
-            image_b64 = base64.b64encode(img_byte_arr).decode('utf-8')
-            
-            # Подготовка данных для модели
-            input_data = [
-                {"text": "Постарайся полностью распознать текст на изображении и в ответе прислать его. Текст может быть на любом языке, но в основном на русском, английском, японском, китайском и корейском. Ответ присылай на языке оргигинала. Либо в случае если у тебя не получилось распознать текст, то напиши что текст распознать не вышло"},
-                {"mime_type": "image/jpeg", "data": image_b64}
-            ]
-            logging.debug("Сформирован запрос для определения проблемы с растением.")
-            
-            # Настройки безопасности для модели
+            # Преобразование изображения в формат JPEG и подготовка данных для модели
+            image_buffer = BytesIO()
+            image.save(image_buffer, format="JPEG")
+            image_data = image_buffer.getvalue()
+            image_buffer.close() 
+
+            # Формируем части запроса для модели
+            image_part = Part.from_bytes(image_data, mime_type="image/jpeg")
+            text_part = Part.from_text(f"{context}\n")
+
+            contents = [image_part, text_part]
+            # Настройки безопасности
             safety_settings = [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
             ]
 
-            # Отправка данных в модель для генерации описания
-            response = model.generate_content(
-                {"parts": input_data},
-                safety_settings=safety_settings
+            # Создание клиента и генерация ответа от модели
+            client = genai.Client(api_key=GOOGLE_API_KEY)
+            google_search_tool = Tool(google_search=GoogleSearch())        
+            response = client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    temperature=1.0,
+                    top_p=0.9,
+                    top_k=40,
+                    max_output_tokens=1000,
+                    presence_penalty=0.6,
+                    frequency_penalty=0.6,
+                    tools=[google_search_tool],
+                    safety_settings=safety_settings
+                )
             )
 
-            # Проверка на наличие ответа и возврат описания
-            if hasattr(response, 'parts') and response.parts:
-                description = response.parts[0].text.strip()
-                logging.info(f"Сгенерировано описание проблемы с растением для пользователя {user_id}: {description}")
-                return description
+            # Проверяем наличие ответа
+            if response.candidates and response.candidates[0].content.parts:
+                response_text = response.candidates[0].content.parts[0].text.strip()
+
+                return response_text
             else:
-                logging.warning("Ответ от модели не содержит текстового компонента для описания проблемы растения.")
-                return "Не удалось сгенерировать описание проблемы растения."
+                logging.warning("Gemini не вернул ответ на запрос для изображения.")
+                return "Не удалось определить текст."
 
         except Exception as e:
-            logging.error(f"Ошибка при генерации описания проблемы растения: {e}")
+            logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
             return "Ошибка при обработке изображения. Попробуйте снова."
 
     else:
         return "Неверный запрос. Укажите изображение или текст для обработки."
 
 
-async def translate_to_english(user_id, prompt):
-    """
-    Переводит текст на английский язык с использованием модели Gemini.
-    
-    :param user_id: ID пользователя, для которого выполняется перевод.
-    :param prompt: Текст на русском языке для перевода.
-    :return: Переведённый текст или сообщение об ошибке.
-    """
-    try:
-        # Формируем данные для модели
-        input_data = [
-            {
-                "text": f"Преобразуй этот текст в промт для генерации изображений и переведи на английский язык, в ответ пришли только готовый переведённый промт и ничего больше:\n{prompt}"
-            }
-        ]
-        logging.info(f"Полученный текст: {prompt}")
 
-        # Настройки безопасности для модели
-
-        # Отправка данных в модель для перевода текста
-        response = await model.generate_content_async(
-            {"parts": input_data}
-        )
-        safety = [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-            },
-            {   "category": "HARM_CATEGORY_HATE_SPEECH",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_NONE"
-            },
-        ] 
-        # Проверка на наличие ответа и возврат перевода
-        if response and hasattr(response, 'parts') and response.parts:
-            translated_text = response.parts[0].text.strip()
-            logging.info(f"Сгенерирован перевод текста для пользователя {user_id}: {translated_text}")
-            return translated_text
-        else:
-            logging.warning("Ответ от модели не содержит текстового компонента для перевода.")
-            return "Не удалось перевести текст. Попробуйте снова."
-
-    except Exception as e:
-        logging.error(f"Ошибка при переводе текста для пользователя {user_id}: {e}")
-        return "Произошла ошибка при обработке запроса. Попробуйте снова."
-
-
-
-def generate_plant_help_response(user_id, query=None):
+async def generate_plant_help_response(user_id, query=None):
     """Генерирует текстовое описание проблемы с растением на основе текста."""
 
     # Если передан текстовый запрос
     if query:
-        logging.debug(f"Получен текстовый запрос от пользователя {user_id}: {query}")
+        # Формируем контекст с текущим запросом
+        context = (
+            f"Запрос:\n{query}"     
+        )
+
         try:
-            # Подготовка данных для текстового запроса
-            input_data = [{"text": query}]
-            # Отправляем запрос в модель
-            response = model.generate_content({"parts": input_data})
+            # Создаём клиент с правильным ключом
+            client = genai.Client(api_key=GOOGLE_API_KEY)
+            google_search_tool = Tool(google_search=GoogleSearch()) 
+            response = client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=context,  # Здесь передаётся переменная context
+                config=types.GenerateContentConfig(               
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    max_output_tokens=1000,
+                    presence_penalty=0.7,
+                    frequency_penalty=0.7,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HATE_SPEECH',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HARASSMENT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                            threshold='BLOCK_NONE'
+                        )
+                    ]
+                )
+            )     
+       
+            if response.candidates and response.candidates[0].content.parts:
+                response = response.candidates[0].content.parts[0].text.strip()
             
-            # Проверка и возврат ответа
-            if hasattr(response, 'parts') and response.parts:
-                return response.parts[0].text.strip()
+                return response
             else:
                 logging.warning("Ответ от модели не содержит текстового компонента.")
-                return "Не удалось сгенерировать ответ на текстовый запрос."
-
+                return "Извините, я не могу ответить на этот запрос."
         except Exception as e:
-            logging.error(f"Ошибка при обработке текста: {e}")
-            return "Ошибка при обработке текста. Попробуйте снова."
-
-    else:
-        return "Неверный запрос. Укажите текст для обработки."
+            logging.error(f"Ошибка при генерации ответа: {e}")
+            return "Ошибка при обработке запроса. Попробуйте снова."  
