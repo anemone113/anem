@@ -472,6 +472,7 @@ async def start(update: Update, context: CallbackContext) -> int:
                 # Если сообщение не содержит ссылок или не является только ссылкой, выполняем дальнейший код
                 if ' ' in text:
                     parts = text.split(maxsplit=1)
+
                     if len(parts) > 0:
                         # Проверка на формат с "*"
                         if parts[0].startswith('*'):
@@ -485,7 +486,8 @@ async def start(update: Update, context: CallbackContext) -> int:
                         # Извлечение дополнительных ссылок
                         all_links = re.findall(r'https?://[^\s,]+', author_input)
                         extra_links = [artist_link] + all_links if artist_link else all_links
- 
+                        logger.info(f"extra_links: {extra_links}") 
+                        logger.info(f"all_links: {all_links}")                        
                         # Убираем ссылки из текста, чтобы оставить только имя автора
                         author_input = re.sub(r'https?://[^\s,]+', '', author_input).strip()
 
@@ -494,23 +496,50 @@ async def start(update: Update, context: CallbackContext) -> int:
                         author_input = author_input.strip()  # На всякий случай окончательно удаляем пробелы
                         # Проверяем, если авторское имя обернуто в "^...^"
 
-
                        
                         match_full = re.match(r'^\^(.*)\^$', author_input, re.S)
-
+                        if match_full:
                             # Если весь текст внутри "^...^", используем его как заголовок и убираем авторское имя
-                        title = match_full.group(1).strip()
-                        user_data[user_id] = {
-                            'status': 'awaiting_image',
-                            'artist_link': artist_link,
-                            'extra_links': extra_links,
-                            'author_name': "",
-                            'title': title,  # Используем как заголовок
-                            'media': [],
-                            'image_counter': 0,
-                        }
+                            title = match_full.group(1).strip()
+                            user_data[user_id] = {
+                                'status': 'awaiting_image',
+                                'artist_link': artist_link,
+                                'extra_links': extra_links,
+                                'author_name': "",
+                                'title': title,  # Используем как заголовок
+                                'media': [],
+                                'image_counter': 0,
+                            }
 
-
+                        else:
+                            # Проверка на наличие фразы в начале текста "^...^"
+                            match_partial = re.match(r'^\^(.*?)\^\s*(.*)', author_input, re.S)
+                            if match_partial:
+                                # Извлекаем фразу и имя автора
+                                phrase = match_partial.group(1).strip()  # Фраза из "^...^"
+                                author_name = match_partial.group(2).strip()  # Остаток текста как автор
+                                user_data[user_id] = {
+                                    'status': 'awaiting_image',
+                                    'artist_link': artist_link,
+                                    'extra_links': extra_links,
+                                    'author_name': author_name,  # Имя автора
+                                    'title': author_name,  # Используем как заголовок
+                                    'extra_phrase': phrase,  # Сохраняем фразу
+                                    'media': [],
+                                    'image_counter': 0,
+                                }
+                            else:
+                                # Если нет фразы в "^...^", сохраняем всё как имя автора
+                                author_name = author_input
+                                user_data[user_id] = {
+                                    'status': 'awaiting_image',
+                                    'artist_link': artist_link,
+                                    'extra_links': extra_links,
+                                    'author_name': author_name,
+                                    'title': author_name,  # Заголовок статьи
+                                    'media': [],
+                                    'image_counter': 0,
+                                }
 
                         # Ответ, что теперь ожидается изображение в виде документа
                         await update.message.reply_text(
