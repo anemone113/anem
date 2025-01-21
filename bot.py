@@ -4242,6 +4242,8 @@ async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_
             processed_image, is_gif = await process_image(photo_url)
             if not processed_image:
                 raise Exception("Failed to process media")
+            if is_gif:
+                await message_to_reply.reply_text("Gif обрабатывается, ожидайте...\n\nВ боте GIF будет отображаться в сжатом виде. Не переживайте, так и должно быть для ускорения работы бота. Однако если вы воспользуетесь кнопкой публикации то на ваш канал отправится именно полный вариант")
 
             # Выбор метода отправки
             if is_gif:
@@ -4320,8 +4322,8 @@ async def preview_article(update: Update, context: CallbackContext) -> None:
 
     if user_id in user_data:
         try:
-            author_name = "Anemone"
-            author_link = "https://t.me/anemonn"
+            author_name = "by AnemoneBot"
+            author_link = "https://t.me/anemone2_bot"
             artist_link = user_data[user_id].get('artist_link', '')
             media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'Предпросмотр статьи')
@@ -4517,8 +4519,8 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
     if user_id in user_data:
         try:
-            author_name = "Anemone"
-            author_link = "https://t.me/anemonn"
+            author_name = "by AnemoneBot"
+            author_link = "https://t.me/anemone2_bot"
             artist_link = user_data[user_id]['artist_link']
             media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'test')
