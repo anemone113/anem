@@ -254,7 +254,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         keyboard = [
             [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
             [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-            [InlineKeyboardButton("🌱 Распознать (растение или текст) 🌱", callback_data='start_ocr')],            
+            [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],            
             [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
             [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
         ]
@@ -780,7 +780,7 @@ async def stop_gpt(update: Update, context: CallbackContext) -> int:
             "Режим общения с GPT отключен. Вы вернулись к основному режиму.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-                [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')], 
+                [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')], 
                 [InlineKeyboardButton("‼️Полный Сброс Бота‼️", callback_data='restart')]
             ])
         )
@@ -1877,7 +1877,7 @@ async def finish_search(update: Update, context: CallbackContext) -> int:
             "Вы вышли из режима поиска и вернулись к основным функциям бота",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-                [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+                [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],
                 [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
                 [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
             ])
@@ -1889,7 +1889,7 @@ async def finish_search(update: Update, context: CallbackContext) -> int:
             "Вы вышли из режима поиска и вернулись к основным функциям бота",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-                [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+                [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],
                 [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
                 [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
             ])
@@ -1970,7 +1970,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -2031,7 +2031,7 @@ async def rerestart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -2081,7 +2081,7 @@ async def start_ocr(update: Update, context: CallbackContext) -> int:
 async def finish_ocr(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],
+        [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("‼️ Полный сброс процесса ‼️", callback_data='restart')]
 
