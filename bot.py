@@ -19,7 +19,29 @@ from bs4 import BeautifulSoup
 import wikipediaapi
 import wikipedia
 import gpt_helper
-from gpt_helper import add_to_context, generate_gemini_response, generate_image_description, set_user_role, limit_response_length, user_contexts, save_context_to_firebase, load_context_from_firebase, generate_audio_response, load_publications_from_firebase, save_publications_to_firebase, delete_from_firebase, save_channel_to_firebase, save_vk_keys_to_firebase, generate_plant_issue_response, generate_text_rec_response, generate_plant_help_response, reset_firebase_dialog, generate_video_response, generate_animation_response
+from gpt_helper import (
+    add_to_context,
+    generate_gemini_response,
+    generate_image_description,
+    set_user_role,
+    limit_response_length,
+    user_contexts,
+    save_context_to_firebase,
+    load_context_from_firebase,
+    generate_audio_response,
+    load_publications_from_firebase,
+    save_publications_to_firebase,
+    delete_from_firebase,
+    save_channel_to_firebase,
+    save_vk_keys_to_firebase,
+    generate_plant_issue_response,
+    generate_text_rec_response,
+    generate_plant_help_response,
+    reset_firebase_dialog,
+    generate_video_response,
+    generate_animation_response,
+    generate_mushrooms_response
+)
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import chardet
@@ -386,6 +408,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             [InlineKeyboardButton("📃Распознать текст📃", callback_data='recognize_text')],
             [InlineKeyboardButton("🖼️Распознать текст через GPT🖼️", callback_data='text_rec_with_gpt')],  # Новая кнопка            
             [InlineKeyboardButton("🌸Распознать растение🌸", callback_data='recognize_plant')],
+            [InlineKeyboardButton("🍄‍🟫Распознать гриб 🍄‍🟫", callback_data='mushrooms_gpt')],              
             [InlineKeyboardButton("🪴Что не так с растением?🪴", callback_data='text_plant_help_with_gpt')],
             [InlineKeyboardButton("Распознать на iNaturalist", url=inat_url)],
             [InlineKeyboardButton("❌Отменить режим распознавания❌", callback_data='finish_ocr')]
@@ -1290,6 +1313,50 @@ async def reset_dialog(update: Update, context: CallbackContext) -> None:
 
 
 
+async def mushrooms_gpt(update, context):
+    user_id = update.effective_user.id
+    img_url = context.user_data.get('img_url')
+
+    # Проверяем наличие изображения в контексте
+    if not img_url:
+        await update.callback_query.answer("Изображение не найдено.")
+        return
+
+    try:
+        # Отправляем первоначальное сообщение
+        processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
+        
+        # Открываем файл temp_image.jpg для обработки
+        with open('temp_image.jpg', 'rb') as file:
+            # Загружаем изображение как объект PIL.Image
+            image = Image.open(file)
+            image.load()  # Загружаем изображение полностью
+            
+            # Генерация ответа через Gemini
+            response = await generate_mushrooms_response(user_id, image=image)
+            
+            # Экранируем текст для MarkdownV2
+            response_text = escape_gpt_markdown_v2(response or "Ошибка при определении проблемы с растением.")
+            
+            # Создаем клавиатуру
+            keyboard = [
+                [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Обновляем сообщение с результатом
+            await processing_message.edit_text(
+                response_text,
+                reply_markup=reply_markup,
+                parse_mode='MarkdownV2'
+            )
+            await update.callback_query.answer()
+    except Exception as e:
+        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
+        await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+
+
+
 
 async def text_plant_help_with_gpt(update, context):
     user_id = update.effective_user.id
@@ -2114,6 +2181,8 @@ async def button_ocr(update, context):
         await recognize_plant(update, context)  # Вызов функции для распознавания растения
     else:
         await query.message.reply_text("Неизвестная команда.")
+
+
 
 
 
@@ -7565,6 +7634,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_delete_role, pattern=r"^clear_role_"))  
     application.add_handler(CallbackQueryHandler(mainhelp_callback, pattern="osnhelp"))
     application.add_handler(CallbackQueryHandler(handle_share_button, pattern='^share_'))
+    application.add_handler(CallbackQueryHandler(mushrooms_gpt, pattern='mushrooms_gpt$'))    
 
     application.add_handler(CallbackQueryHandler(yrrase_scheduled, pattern="yrrasetag_"))
       
