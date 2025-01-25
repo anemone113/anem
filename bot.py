@@ -70,7 +70,7 @@ IMGBB_API_KEY = '9edd5bc20f700e3e1a8a0d833a423133'
 GROUP_CHAT_ID = -1002233281756
 
 # Состояния
-ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE, ASKING_FOR_OCR, RUNNING_GPT_MODE, ASKING_FOR_ROLE, ASKING_FOR_FOLLOWUP,AWAITING_FOR_FORWARD = range(10)
+ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGMENT, ASKING_FOR_FILE, ASKING_FOR_OCR, RUNNING_GPT_MODE, ASKING_FOR_ROLE, ASKING_FOR_FOLLOWUP,AWAITING_FOR_FORWARD, WAITING_FOR_NEW_CAPTION = range(11)
 # Сохранение данных состояния пользователя
 user_data = {}
 publish_data = {}
@@ -85,6 +85,7 @@ user_presets = {}
 user_models = {}
 waiting_for_forward = {}
 waiting_for_vk = {}
+waiting_for_caption = {}
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -231,6 +232,18 @@ def add_plain_links(text):
     url_pattern = re.compile(r"(https?://[^\s]+)")
     return url_pattern.sub(r'<a href="\1">\1</a>', text)
 
+def log_user_state(user_id: int):
+    logger.info(f"--- User {user_id} Current State ---")
+    logger.info(f"user_data: {user_data.get(user_id, 'Not Found')}")
+    logger.info(f"is_search_mode: {is_search_mode.get(user_id, False)}")
+    logger.info(f"is_ocr_mode: {is_ocr_mode.get(user_id, False)}")
+    logger.info(f"is_gpt_mode: {is_gpt_mode.get(user_id, False)}")
+    logger.info(f"is_role_mode: {is_role_mode.get(user_id, False)}")
+    logger.info(f"is_asking_mode: {is_asking_mode.get(user_id, False)}")
+    logger.info(f"waiting_for_vk: {waiting_for_vk.get(user_id, False)}")
+    logger.info(f"waiting_for_forward: {waiting_for_forward.get(user_id, False)}")
+    logger.info(f"waiting_for_caption: {waiting_for_caption.get(user_id, False)}")
+    logger.info("---------------------------------")
 
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
@@ -431,7 +444,9 @@ async def start(update: Update, context: CallbackContext) -> int:
     if waiting_for_forward.get(user_id, False):
 
         return await handle_forwarded_message(update, context)
-
+    if waiting_for_caption.get(user_id, False):
+        key = waiting_for_caption[user_id]
+        return await handle_new_caption(update, context, key)
 
 
 
@@ -464,8 +479,30 @@ async def start(update: Update, context: CallbackContext) -> int:
             # Получаем текст сообщения
             if update.message.text:
 
-                text = format_text_to_html(update.message)                                
-                # Регулярное выражение для нахождения ссылок
+                text = format_text_to_html(update.message)  
+
+                # Проверка на наличие HTML-ссылок
+                html_link_pattern = r'<a\s+href="(https?://[^\s]+)"[^>]*>.*?</a>'
+                html_links = re.findall(html_link_pattern, text)
+
+                if html_links:  # Если найдены HTML-ссылки
+                    # Считываем весь текст как title
+                    title = text.strip()  # Весь текст считывается как заголовок
+                    user_data[user_id] = {
+                        'status': 'awaiting_image',
+                        'artist_link': "",
+                        'extra_links': [],
+                        'author_name': "",
+                        'title': title,  # Сохраняем весь текст как title
+                        'media': [],
+                        'image_counter': 0,
+                    }
+                    await update.message.reply_text(
+                        "✅ Отлично! ( ´ ω  ) Принято. Теперь отправьте изображения без сжатия, как документы.\n\n Либо если вам нужен текстовый пост, то отправьте \"нет\""
+                    )
+                    return 'awaiting_image'
+                
+                # Если нет HTML-ссылок, продолжаем искать обычные ссылки
                 link_pattern = r'https?://[^\s]+'
                 links = re.findall(link_pattern, text)
 
@@ -1962,6 +1999,9 @@ async def restart(update: Update, context: CallbackContext) -> int:
     if user_id in waiting_for_forward:
         del waiting_for_forward[user_id] 
 
+    if user_id in waiting_for_caption:
+        del waiting_for_caption[user_id] 
+
     if user_id in waiting_for_vk:
         del waiting_for_vk[user_id] 
     logger.info(f"User {user_id} restarted the process.") 
@@ -1970,7 +2010,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -2031,7 +2071,7 @@ async def rerestart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать(растение, грибы, текст) 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -4607,7 +4647,11 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 links_string = "" 
             # Извлекаем фразу перед "Автор", если она есть
             extra_phrase = user_data[user_id].get('extra_phrase', "")
-            author_name_final = user_data[user_id].get('author_name', '')
+            author_name_final = user_data[user_id].get('author_name', '')           
+            # Проверяем значение author_name_final в зависимости от user_id
+            if user_id == 6217936347:
+                if author_name_final:
+                    author_name_final = f"Автор: {author_name_final}"
 
             # Формируем строку с фразой перед "Автор", если она есть
             if extra_phrase:
@@ -4884,6 +4928,9 @@ def create_publish_button(user_id, message_id):
             InlineKeyboardButton("Опубликовать в ВК", callback_data=f"vkpub_{user_id}_{message_id}")
         ],
         [
+            InlineKeyboardButton("✏️ Заменить подпись ✏️", callback_data=f"caption_{user_id}_{message_id}")
+        ],        
+        [
             InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{user_id}_{message_id}")
         ], 
         [
@@ -4899,7 +4946,7 @@ def create_publish_button(user_id, message_id):
         InlineKeyboardButton("❌ Удалить 1 изображение ❌", callback_data=f"filedelete_{user_id}_{message_id}")
         ]                     
     ]        
-    return InlineKeyboardMarkup(keyboard)    
+    return InlineKeyboardMarkup(keyboard) 
 
 def create_publish_and_snooze_buttons(user_id, message_id):
     """Создает клавиатуру с кнопками для публикации и отложенной отправки."""
@@ -5054,6 +5101,11 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
 
     # Получаем выбранную метку из callback_data
     _, _, tag = query.data.split('_')
+
+    # Если пришёл ключ "nofolder", заменяем его на "Отсутствует"
+    if tag == "nofolder":
+        tag = "Отсутствует"
+
     global media_group_storage
     # Загружаем данные из файла
     media_group_storage = load_publications_from_firebase()
@@ -5073,27 +5125,35 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
                 if record_tag is None:
                     continue
 
-                # Если выбрана "Прочее", собираем записи с временными метками
-                if tag == "other":
-                    try:
-                        # Пробуем преобразовать метку в формат времени
-                        datetime.strptime(record_tag, "%Y-%m-%d %H:%M")
-
-                        # Проверяем, что 'media' — это список
-                        if 'media' in data and isinstance(data['media'], list):
-                            media_list = data['media']
-                            if media_list:
-                                caption = media_list[0].get('caption', '').split('Автор: ')[-1].split('\n')[0]
-                                scheduled.append((message_id, caption, record_tag))
-                    except ValueError:
-                        pass
                 elif record_tag == tag:  # Если метка совпадает
                     # Проверяем, что 'media' — это список
                     if 'media' in data and isinstance(data['media'], list):
                         media_list = data['media']
                         if media_list:
-                            caption = media_list[0].get('caption', '').split('Автор: ')[-1].split('\n')[0]
+                            raw_caption = media_list[0].get('caption', '')
+
+                            # Используем BeautifulSoup для очистки от HTML-разметки
+                            soup = BeautifulSoup(raw_caption, 'html.parser')
+
+                            # Оставляем только текст из гиперссылок
+                            for a in soup.find_all('a'):
+                                a.replace_with(a.get_text())
+
+                            # Получаем очищенный текст
+                            cleaned_caption = soup.get_text()
+
+                            # Логика определения финального текста
+                            if "автор: " in cleaned_caption.lower():
+                                # Если есть "автор: ", берём текст после него до конца строки или первой ссылки
+                                match = re.search(r'автор:\s*([^•<\n]+)', cleaned_caption, re.IGNORECASE)
+                                caption = match.group(1).strip() if match else ''
+                            else:
+                                # Если "автор: " нет, берём первые 3 слова очищенного текста
+                                caption = ' '.join(cleaned_caption.split()[:3])
+
+                            # Добавляем в список с подписью
                             scheduled.append((message_id, caption, tag))
+
 
 
     if scheduled:
@@ -5104,9 +5164,9 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
         for index, (key, caption, tag) in enumerate(scheduled):
             keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{key}")])
             keyboard.append([
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),
                 InlineKeyboardButton("Пост в ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("Пост в ВК", callback_data=f"vkpub_{key}"),
-                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}")                
+                InlineKeyboardButton("Пост в ВК", callback_data=f"vkpub_{key}")
             ])
         
         # Добавьте кнопку "Удалить все с меткой"
@@ -5178,6 +5238,7 @@ async def yrrase_scheduled(update: Update, context: CallbackContext) -> None:
     else:
         await query.message.reply_text("🛑 Неверный формат callback_data.")
         return
+
     global media_group_storage
     # Загружаем данные из файла
     media_group_storage = load_publications_from_firebase()
@@ -5193,6 +5254,10 @@ async def yrrase_scheduled(update: Update, context: CallbackContext) -> None:
         if key in user_publications:
             scheduled_tag = user_publications[key].get('scheduled', None)
 
+            # Интерпретируем None как метку "отсутствует"
+            if scheduled_tag is None:
+                scheduled_tag = "отсутствует"
+
             # Удаляем запись из базы данных и локального хранилища
             delete_from_firebase([key], current_user_id)
             user_publications.pop(key, None)
@@ -5207,23 +5272,28 @@ async def yrrase_scheduled(update: Update, context: CallbackContext) -> None:
             # Собираем оставшиеся записи с той же меткой
             remaining_records = []
             for record_key, data in user_publications.items():
-                if data.get('scheduled') == scheduled_tag:
+                record_tag = data.get('scheduled', None)
+                if record_tag is None:
+                    record_tag = "отсутствует"
+
+                # Сравниваем с текущей меткой
+                if record_tag == scheduled_tag:
                     caption = data['media'][0].get('caption', '')
                     # Извлекаем текст до гиперссылок
                     cleaned_caption = re.split(r'<a href="[^"]+">[^<]+</a>', caption, maxsplit=1)[0].strip()
                     # Если текста нет, использовать "Запись без подписи"
                     if not cleaned_caption:
                         cleaned_caption = "Запись без подписи"
-                    tag = data.get('scheduled')
-                    remaining_records.append((record_key, cleaned_caption, tag))
+                    remaining_records.append((record_key, cleaned_caption, record_tag))
+
             # Формируем обновлённую клавиатуру
             keyboard = []
             if remaining_records:
                 keyboard.append([InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")])
                 keyboard.append([InlineKeyboardButton("------------------------", callback_data="separator")])
 
-                for record_key, caption, tag in remaining_records:                
-                    keyboard.append([InlineKeyboardButton(f"📗 {cleaned_caption} ({tag})", callback_data=f"view_{record_key}")])                
+                for record_key, caption, tag in remaining_records:
+                    keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{record_key}")])
                     keyboard.append([
                         InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{record_key}"),
                         InlineKeyboardButton("Пост в ТГ", callback_data=f"publish_{record_key}"),
@@ -5382,6 +5452,145 @@ async def check_admin_rights(context: CallbackContext, chat_id: int, user_id: in
         return False
 
 import mimetypes
+
+
+
+import mimetypes
+
+
+
+
+
+
+
+
+async def handle_replace_caption(update: Update, context: CallbackContext) -> int:
+    """Обрабатывает нажатие на кнопку 'заменить текст'."""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем user_id и message_id из callback_data
+    _, user_id_str, message_id_str = query.data.split('_', maxsplit=2)
+    user_id = int(user_id_str)
+    message_id = int(message_id_str)
+    key = f"{user_id}_{message_id}"
+    global media_group_storage
+    # Загружаем данные из Firebase
+    media_group_storage = load_publications_from_firebase()
+
+    # Проверяем, есть ли записи для указанного user_id
+    user_publications = media_group_storage.get(str(user_id))
+    if not user_publications:
+        await query.message.reply_text("🚫 Ошибка: Пользовательские данные не найдены.")
+        return ConversationHandler.END
+
+    # Проверяем, что запись существует
+    publication = user_publications.get(key)
+    if not publication:
+        await query.message.reply_text("🚫 Запись не найдена.")
+        return ConversationHandler.END
+
+    # Проверяем, что в публикации есть медиа
+    media = publication.get('media')
+    if not media or not isinstance(media, list):
+        await query.message.reply_text("🚫 Ошибка: В записи отсутствуют медиафайлы.")
+        return ConversationHandler.END
+
+    # Извлекаем подпись первого изображения
+    first_caption = media[0].get('caption', '🚫 Подпись отсутствует.')
+
+    # Сохраняем информацию о текущей публикации для этого пользователя
+    waiting_for_caption[user_id] = key
+    if user_id not in waiting_for_caption:
+        waiting_for_caption[user_id] = True  # Помещаем пользователя в состояние ожидания
+
+    # Создаём разметку для кнопки "Отмена"
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Отмена", callback_data='restart')]]
+    )
+
+    # Отправляем текущую подпись и входим в режим ожидания новой
+    await query.message.reply_text(
+        text=f"Текущая подпись:\n\n{first_caption}\n\nВведите новую подпись. Всё форматирование, например жирный текст, спойлеры, гиперссылки будет сохранено.",
+        parse_mode='HTML',
+        disable_web_page_preview=True,
+        reply_markup=keyboard  # Добавляем кнопки
+    )
+
+    return
+
+
+
+
+
+async def handle_new_caption(update: Update, context: CallbackContext, key) -> int:
+    """Обрабатывает ввод новой подписи."""
+    user_id = str(update.effective_user.id)
+    logger.info(f"Полученный Context: {context.__dict__}")
+    logger.info(f"Полученный user_id: {user_id}")     
+    handle_caption = key  
+    # Логирование полного объекта Update
+    logger.info(f"Полученный Update: {update.to_dict()}")
+    
+    if user_id not in user_data:
+        user_data[user_id] = {}  # Инициализация пустого словаря для пользователя
+    
+    # Получаем новую подпись
+    new_caption = update.message.text.strip()  # Убираем лишние пробелы
+
+    if not new_caption:
+        await update.message.reply_text("🚫 Ошибка: Подпись не может быть пустой.")
+        return WAITING_FOR_NEW_CAPTION
+
+    global media_group_storage
+    media_group_storage = load_publications_from_firebase()
+
+    # Проверяем, существует ли запись
+    user_publications = media_group_storage.get(user_id)
+    if not user_publications or key not in user_publications:
+        await update.message.reply_text("🚫 Запись не найдена.")
+        del waiting_for_caption[user_id]
+        return ConversationHandler.END
+
+    publication = user_publications[key]
+
+    # Проверяем, что запись содержит медиафайлы
+    media = publication.get('media')
+    if not media or not isinstance(media, list):
+        await update.message.reply_text("🚫 Ошибка: В записи отсутствуют медиафайлы.")
+        del waiting_for_caption[user_id]
+        return ConversationHandler.END
+
+    # Форматируем подпись с учётом Telegram-разметки
+    formatted_caption = format_text_to_html(update.message)
+    media[0]['caption'] = formatted_caption
+
+    # Сохраняем обновленные данные в Firebase
+    save_publications_to_firebase(user_id, key, publication)
+    
+    try:
+        user_id = update.effective_user.id        
+        # Создание клавиатуры с кнопками
+        keyboard = [
+            [InlineKeyboardButton("📄 Посмотреть обновлённую запись 📄", callback_data=f"view_{key}")],
+            [
+                InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
+                InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),                
+                InlineKeyboardButton("Удалить", callback_data=f"erase_{key}")
+            ],
+            [InlineKeyboardButton("🗂 Мои папки 🗂", callback_data="scheduled_by_tag")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Отправляем сообщение с кнопками
+        await update.message.reply_text(f"✅ Подпись успешно обновлена на:\n{formatted_caption}", reply_markup=reply_markup, parse_mode='HTML', disable_web_page_preview=True,)
+    except Exception as e:
+        await update.message.reply_text(f"🚫 Ошибка сохранения данных: {e}")
+    finally:
+        del waiting_for_caption[user_id]
+        
+    # Завершаем обработку
+    return ASKING_FOR_ARTIST_LINK
 
 
 
@@ -6163,6 +6372,9 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                             [
                                 InlineKeyboardButton("❌ Удалить 1 изображение ❌", callback_data=f"filedelete_{key}")
                             ],
+                            [
+                                InlineKeyboardButton("✏️ Заменить подпись ✏️", callback_data=f"caption_{key}")
+                            ],    
                             [
                                 InlineKeyboardButton("🗂 Посмотреть папки 🗂", callback_data="scheduled_by_tag")
                             ],                              
@@ -7650,7 +7862,7 @@ def main() -> None:
 
     application.add_handler(CallbackQueryHandler(handle_snooze_with_tag_button, pattern=r"^snooze_with_tag_\d+_\d+$"))  
     application.add_handler(CallbackQueryHandler(handle_tag_selection, pattern=r"^tag_"))
-
+    application.add_handler(CallbackQueryHandler(handle_replace_caption, pattern=r"caption_"))
 
     application.add_handler(CommandHandler("scheduledmark", handle_scheduled_tags))
     application.add_handler(CallbackQueryHandler(handle_scheduled_tags, pattern="^scheduled_by_tag$"))
