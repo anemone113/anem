@@ -161,7 +161,14 @@ def save_channel_to_firebase(chat_id, user_id):
     """
     try:
         ref = db.reference(f'users_publications/channels/{chat_id}')
-        ref.set({'user_id': user_id})
+        existing_data = ref.get() or {}
+        user_ids = existing_data.get('user_ids', [])
+
+        # Добавляем user_id в список, если его еще нет
+        if user_id not in user_ids:
+            user_ids.append(user_id)
+            ref.set({'user_ids': user_ids})
+
         logging.info(f"Канал {chat_id} успешно привязан к пользователю {user_id}.")
     except Exception as e:
         logging.error(f"Ошибка при сохранении ID канала: {e}")
