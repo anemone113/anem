@@ -5329,6 +5329,7 @@ async def handle_scheduled_tags(update: Update, context: CallbackContext) -> Non
     media_group_storage = load_publications_from_firebase()
     tag_counts = {}  # Словарь для подсчёта количества постов на метку
     other_count = 0  # Счётчик для временных меток
+    no_folder_count = 0  # Счётчик для записей без метки ("Отсутствует")
 
     # Проверяем, есть ли записи для данного user_id
     if user_id not in media_group_storage:
@@ -5343,8 +5344,13 @@ async def handle_scheduled_tags(update: Update, context: CallbackContext) -> Non
         if isinstance(data, dict) and 'scheduled' in data:
             tag = data['scheduled']
             
-            # Пропускаем записи с scheduled == null или "Отсутсвует"
-            if not tag or tag == "Отсутствует":
+            # Пропускаем записи с scheduled == null
+            if tag is None:
+                continue
+            
+            # Увеличиваем счётчик для записей без метки
+            if tag == "Отсутствует":
+                no_folder_count += 1
                 continue
 
             # Проверяем, является ли метка временем
@@ -5368,9 +5374,12 @@ async def handle_scheduled_tags(update: Update, context: CallbackContext) -> Non
     # Добавляем кнопку "Прочее", если есть временные метки
     if other_count > 0:
         keyboard.append([InlineKeyboardButton(f"Нет метки ({other_count})", callback_data="filter_tag_other")])
-    total_count = sum(tag_counts.values()) + other_count
-    # Добавляем кнопку "Все отложенные" в конце
 
+    # Добавляем кнопку "Записи без папки", если есть записи с меткой "Отсутствует"
+    if no_folder_count > 0:
+        keyboard.append([InlineKeyboardButton(f"Записи без папки ({no_folder_count})", callback_data="filter_tag_nofolder")])
+
+    total_count = sum(tag_counts.values()) + other_count + no_folder_count
     # Отправляем сообщение с клавиатурой
     if keyboard:
         reply_markup = InlineKeyboardMarkup(keyboard)
