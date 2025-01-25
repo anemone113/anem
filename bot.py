@@ -5644,10 +5644,10 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
         channel_ref = db.reference('users_publications/channels')
         channels_data = channel_ref.get() or {}
 
-        # Ищем каналы, привязанные к текущему пользователю
+        # Ищем каналы, где текущий пользователь указан как администратор
         user_channels = [
             chat_id for chat_id, info in channels_data.items()
-            if info.get('user_id') == user_id
+            if user_id in info.get('user_ids', [])
         ]
 
         if not user_channels:
@@ -5667,8 +5667,7 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
 
             return
 
-
-        # Используем первый привязанный канал для публикации (можно добавить выбор)
+        # Используем первый привязанный канал для публикации
         chat_id = user_channels[0]
 
         # Создаём медиагруппу для отправки в канал
