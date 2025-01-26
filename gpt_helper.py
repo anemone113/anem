@@ -330,7 +330,7 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
         ) 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = response.candidates[0].content.parts[0].text.strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
 
             if use_context:
                 add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
@@ -492,7 +492,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
             return "Извините, я не могу обработать это видео."
 
         # Извлечение текста ответа
-        bot_response = response.candidates[0].content.parts[0].text.strip()
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на анимацию:")  # Добавляем ответ в контекст
         save_context_to_firebase(user_id)                     
         return bot_response
@@ -617,7 +617,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
             return "Извините, я не могу обработать это видео."
 
         # Извлечение текста ответа
-        bot_response = response.candidates[0].content.parts[0].text.strip()
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на видео:")  # Добавляем ответ в контекст 
         save_context_to_firebase(user_id)                    
         return bot_response
@@ -745,7 +745,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
             return "Извините, я не могу обработать этот аудиофайл."
 
         # Извлечение текста ответа
-        bot_response = response.candidates[0].content.parts[0].text.strip()
+        bot_respons = ''.join(part.text for part in response.candidates[0].content.parts).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на аудио:")  # Добавляем ответ в контекст
         save_context_to_firebase(user_id)        
         return bot_response
@@ -904,7 +904,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
         )     
    
         if response.candidates and response.candidates[0].content.parts:
-            response_text = response.candidates[0].content.parts[0].text.strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
 
             if use_context:
                 add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
@@ -973,7 +973,7 @@ async def generate_plant_issue_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = response.candidates[0].content.parts[0].text.strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
 
             return response_text
         else:
@@ -1035,7 +1035,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             )     
        
             if response.candidates and response.candidates[0].content.parts:
-                response = response.candidates[0].content.parts[0].text.strip()
+                response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
             
                 return response
             else:
@@ -1088,7 +1088,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
 
             # Проверяем наличие ответа
             if response.candidates and response.candidates[0].content.parts:
-                response_text = response.candidates[0].content.parts[0].text.strip()
+                response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
 
                 return response_text
             else:
@@ -1151,7 +1151,7 @@ async def generate_plant_help_response(user_id, query=None):
             )     
        
             if response.candidates and response.candidates[0].content.parts:
-                response = response.candidates[0].content.parts[0].text.strip()
+                response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
             
                 return response
             else:
@@ -1208,7 +1208,7 @@ async def generate_mushrooms_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = response.candidates[0].content.parts[0].text.strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
 
             return response_text
         else:
