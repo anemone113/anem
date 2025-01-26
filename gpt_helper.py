@@ -902,8 +902,9 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                 ]
             )
         )     
-   
+        logger.info(f"ссылки response_text: {response}")   
         if response.candidates and response.candidates[0].content.parts:
+            
             response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
 
             if use_context:
