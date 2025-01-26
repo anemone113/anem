@@ -74,7 +74,7 @@ ASKING_FOR_ARTIST_LINK, ASKING_FOR_AUTHOR_NAME, ASKING_FOR_IMAGE, EDITING_FRAGME
 # Сохранение данных состояния пользователя
 user_data = {}
 publish_data = {}
-users_in_send_mode = set()
+users_in_send_mode = {}
 media_group_storage = {}
 is_search_mode = {}
 is_ocr_mode = {}
@@ -285,7 +285,9 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         user_data[user_id] = {'status': 'awaiting_artist_link'}
         return ASKING_FOR_ARTIST_LINK
-
+    # Проверяем, если бот в режиме поиска
+    if users_in_send_mode.get(user_id, False):
+        await duplicate_message(update, context) 
     # Проверяем, если бот в режиме поиска
     if is_search_mode.get(user_id, False):
         if update.message.photo:
@@ -847,17 +849,35 @@ async def stop_gpt(update: Update, context: CallbackContext) -> int:
 
 async def send_reply_with_limit(update, text, reply_markup=None):
     MAX_MESSAGE_LENGTH = 4096
+
     # Разбиваем текст на части, если он превышает максимальную длину
     text_parts = [text[i:i + MAX_MESSAGE_LENGTH] for i in range(0, len(text), MAX_MESSAGE_LENGTH)]
-    
+
     for part in text_parts:
         # Логируем текст перед отправкой
         logging.info(f"Отправка текста в Telegram: {part[:200]}...")  # Логируем первые 200 символов
+
+        # Закрываем незавершенные теги
+        part = close_unfinished_tags(part)
+
         # Убираем обратные слэши перед специальными символами Markdown V2
         part = escape_gpt_markdown_v2(part)
+
         await update.message.reply_text(part, reply_markup=reply_markup, parse_mode='MarkdownV2')
 
+def close_unfinished_tags(text):
+    """
+    Закрывает незавершенные Markdown теги (` и ```).
+    """
+    # Проверка и закрытие незавершенного ```
+    if text.count('```') % 2 != 0:
+        text += '\n```'
 
+    # Проверка и закрытие незавершенного `
+    if text.count('`') % 2 != 0:
+        text += '`'
+
+    return text
 
 def escape_gpt_markdown_v2(text):
     # Проверка на наличие экранирования и удаление, если оно присутствует
@@ -7649,18 +7669,22 @@ TELEGRAM_API_TIMEOUT = 20  # Увеличьте время ожидания
 async def send_mode(update: Update, context: CallbackContext) -> None:
     """Включение режима дублирования сообщений."""
     user_id = update.message.from_user.id
-    users_in_send_mode.add(user_id)
+    if user_id not in users_in_send_mode:
+        users_in_send_mode[user_id] = True    
     await update.message.reply_text('🔄 Режим прямой связи включен. Все последующие сообщения будут дублироваться администрации. Для завершения режима введите /fin')
     
 async def fin_mode(update: Update, context: CallbackContext) -> None:
     """Выключение режима дублирования сообщений и возврат к изначальной логике."""
-    user_id = update.message.from_user.id
-    if user_id in users_in_send_mode:
-        users_in_send_mode.remove(user_id)
-        await update.message.reply_text('✅ Режим пересылки сообщений администрации отключен. Бот вернулся к своему основному режиму работы.')
-    else:
-        await update.message.reply_text('❗ Вы не активировали режим дублирования.')
 
+    try:     
+        user_id = update.effective_user.id
+
+        await update.message.reply_text('✅ Режим пересылки сообщений администрации отключен. Бот вернулся к своему основному режиму работы.')
+
+    except Exception as e:
+        await update.message.reply_text(f"🚫 Ошибка сохранения данных: {e}")
+    finally:
+        del users_in_send_mode[user_id]
 from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
 
 async def duplicate_message(update: Update, context: CallbackContext) -> None:
