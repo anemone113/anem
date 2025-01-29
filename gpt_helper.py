@@ -35,7 +35,7 @@ import pathlib
 from io import BytesIO
 from PIL import Image
 # Google API Key и модель Gemini
-GOOGLE_API_KEY = "AIzaSyBs6qanXx8IU_6F2zlEP3F_MVGk_W0J13k"
+GOOGLE_API_KEY = "AIzaSyCJ9lom_jgT-SUHGG-UYrrcpuWn7s8081g"
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
