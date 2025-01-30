@@ -745,7 +745,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
             return "Извините, я не могу обработать этот аудиофайл."
 
         # Извлечение текста ответа
-        bot_respons = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на аудио:")  # Добавляем ответ в контекст
         save_context_to_firebase(user_id)        
         return bot_response
