@@ -664,7 +664,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
     )
 
     # Определяем значение переменной command_text
-    command_text = context if query else "Опиши содержание видео."
+    command_text = context if query else "Распознай текст в аудио. Если текста нет или распознать его не удалось то опиши содержимое."
 
 
     add_to_context(user_id, query, message_type="Пользователь прислал аудио с подписью:")
