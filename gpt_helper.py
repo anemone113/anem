@@ -851,7 +851,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     # Формируем system_instruction с user_role и relevant_context
     relevant_context = await get_relevant_context(user_id) if use_context else ""
     system_instruction = (
-        f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться."
+        f"Ты телеграм чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться. Ответы пиши на русском если не указано иного."
         f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
     )
 
