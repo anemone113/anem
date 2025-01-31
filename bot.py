@@ -7117,22 +7117,20 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
 
                 # Проверяем, что данные - словарь и содержат 'media'
                 if isinstance(data, dict) and 'media' in data:
-                    media = data['media']  # Извлекаем данные 'media'
+                    media = data['media']  
                     media_group = []
-                    captions_only = []  # Список для подписей без file_id
+                    captions_only = []  
 
-                    # Если 'media' - это список
                     if isinstance(media, list):
                         for media_data in media:
                             if 'file_id' in media_data:
-                                file_url = media_data['file_id']
-                                mime_type, _ = mimetypes.guess_type(file_url)
-
-                                # Определяем, это GIF или изображение
-                                if mime_type == "image/gif":
+                                file_id = media_data['file_id']
+                                
+                                # Определяем, GIF или фото (по расширению или другим данным)
+                                if file_id.endswith('.gif'):
                                     media_group.append(
                                         InputMediaDocument(
-                                            media=file_url,
+                                            media=file_id,
                                             caption=media_data.get('caption', ''),
                                             parse_mode=media_data.get('parse_mode', None)
                                         )
@@ -7140,25 +7138,24 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                                 else:
                                     media_group.append(
                                         InputMediaPhoto(
-                                            media=file_url,
+                                            media=file_id,
                                             caption=media_data.get('caption', ''),
                                             parse_mode=media_data.get('parse_mode', None)
                                         )
                                     )
                             else:
-                                # Если file_id отсутствует, добавляем подпись в captions_only
                                 if 'caption' in media_data:
                                     captions_only.append(media_data['caption'])
-                    # Если 'media' - это словарь
+
                     elif isinstance(media, dict):
-                        for file_id, media_data in media.items():
+                        for _, media_data in media.items():
                             if 'file_id' in media_data:
-                                mime_type, _ = mimetypes.guess_type(media_data['file_id'])
-
-                                if mime_type == "image/gif":
+                                file_id = media_data['file_id']
+                                
+                                if file_id.endswith('.gif'):
                                     media_group.append(
                                         InputMediaDocument(
-                                            media=media_data['file_id'],
+                                            media=file_id,
                                             caption=media_data.get('caption', ''),
                                             parse_mode=media_data.get('parse_mode', None)
                                         )
@@ -7166,31 +7163,27 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                                 else:
                                     media_group.append(
                                         InputMediaPhoto(
-                                            media=media_data['file_id'],
+                                            media=file_id,
                                             caption=media_data.get('caption', ''),
                                             parse_mode=media_data.get('parse_mode', None)
                                         )
                                     )
                             else:
-                                # Если file_id отсутствует, добавляем подпись в captions_only
                                 if 'caption' in media_data:
                                     captions_only.append(media_data['caption'])
 
-                    else:
-                        await query.message.reply_text("🚫 Ошибка: Некорректный формат 'media'.")
-
-                    # Отправляем медиагруппу, если она сформирована
+                    # Отправка медиа-группы
                     if media_group:
                         await context.bot.send_media_group(
                             chat_id=query.message.chat_id,
                             media=media_group
                         )
 
-                    # Отправляем подписи, если они есть и file_id отсутствует
+                    # Отправка подписей без изображений
                     for caption in captions_only:
                         await query.message.reply_text(
                             text=caption,
-                            parse_mode='HTML'  # Или другой формат, если необходимо
+                            parse_mode='HTML'  
                         )
 
                     # Отправляем информацию о записи с кнопками
