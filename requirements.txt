@@ -34,3 +34,4 @@ vk-api==11.9.9
 wikipedia==1.4.0
 wikipedia-api==0.7.1
 yt-dlp==2025.1.12
+huggingface-hub==0.27.1
