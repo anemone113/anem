@@ -208,6 +208,31 @@ def save_context_to_firebase(user_id):
         logging.error(f"Ошибка при сохранении данных пользователя {user_id} в Firebase: {e}")
 
 
+def get_user_model(user_id: int) -> str:
+    """Возвращает модель пользователя из Firebase или значение по умолчанию."""
+    try:
+        ref_models = db.reference(f'user_models/{user_id}')
+        user_model = ref_models.get()
+
+        if user_model:
+            logging.info(f"Модель для пользователя {user_id}: {user_model}")
+            return user_model
+        else:
+            logging.warning(f"Модель для пользователя {user_id} не найдена. Используется значение по умолчанию.")
+            return "stabilityai/stable-diffusion-3.5-large-turbo"
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке модели для пользователя {user_id}: {e}")
+        return "stabilityai/stable-diffusion-3.5-large-turbo"
+
+def set_user_model(user_id: int, model: str):
+    """Устанавливает пользовательскую модель и сохраняет её в Firebase."""
+    try:
+        ref_models = db.reference(f'user_models/{user_id}')
+        ref_models.set(model)
+        logging.info(f"Модель пользователя {user_id} обновлена на: {model}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении модели в Firebase: {e}")
+        
 
 
 import uuid
@@ -1226,3 +1251,79 @@ async def generate_mushrooms_response(user_id, image):
     except Exception as e:
         logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
         return "Ошибка при обработке изображения. Попробуйте снова."
+
+
+
+async def translate_promt_with_gemini(user_id, query=None):
+    if query:
+        # Проверяем наличие кириллических символов
+        contains_cyrillic = bool(re.search("[а-яА-Я]", query))
+
+        logger.info(f"Содержит кириллицу: {contains_cyrillic}")
+
+        # Если кириллицы нет, возвращаем текст без изменений
+        if not contains_cyrillic:
+            return query
+
+        # Если текст не на английском, переводим его
+        context = (
+            f"Переведи запрос в качестве промта для генерации изображения на английский язык. "
+            f"В ответ пришли исключительно готовый промт на английском языке и ничего более. "
+            f"Если запрос уже сформулирован на английском языке, то в ответе просто верни его в том же виде. "
+            f"Текущий запрос:\n{query}"
+        )
+
+        max_retries = 2  # Максимальное количество повторных попыток
+        retry_delay = 3  # Задержка между попытками в секундах
+
+        for attempt in range(max_retries + 1):  # Первая попытка + две повторные
+            try:
+                # Создаём клиент с правильным ключом
+                client = genai.Client(api_key=GOOGLE_API_KEY)
+                google_search_tool = Tool(google_search=GoogleSearch()) 
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash-exp',
+                    contents=context,  # Здесь передаётся переменная context
+                    config=types.GenerateContentConfig(               
+                        temperature=1.4,
+                        top_p=0.95,
+                        top_k=25,
+                        max_output_tokens=1000,
+                        presence_penalty=0.7,
+                        frequency_penalty=0.7,
+                        tools=[google_search_tool],
+                        safety_settings=[
+                            types.SafetySetting(
+                                category='HARM_CATEGORY_HATE_SPEECH',
+                                threshold='BLOCK_NONE'
+                            ),
+                            types.SafetySetting(
+                                category='HARM_CATEGORY_HARASSMENT',
+                                threshold='BLOCK_NONE'
+                            ),
+                            types.SafetySetting(
+                                category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                                threshold='BLOCK_NONE'
+                            ),
+                            types.SafetySetting(
+                                category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                                threshold='BLOCK_NONE'
+                            )
+                        ]
+                    )
+                )     
+           
+                if response.candidates and response.candidates[0].content.parts:
+                    response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+                
+                    return response
+                else:
+                    logging.warning("Ответ от модели не содержит текстового компонента.")
+                    return "Извините, я не могу ответить на этот запрос."
+
+            except Exception as e:
+                logging.error(f"Ошибка при генерации ответа (попытка {attempt + 1}): {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(retry_delay)  # Ждём перед следующей попыткой
+                else:
+                    return "Ошибка при обработке запроса. Попробуйте снова."
