@@ -1353,21 +1353,28 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 
     else:
         # Обработка текстового запроса без изображения
-        add_to_context(user_id, user_message, message_type="user_message")
-        response_text = await generate_gemini_response(user_id, query=user_message)
-        
-        # Логируем ответ перед отправкой
-        logging.info(f"Текстовый ответ, который пытается отправить бот: {response_text}")
-        
-        # Добавление ответа в контекст и отправка пользователю
-        if response_text:
-            
-            # Убираем метку времени и тип сообщения для отображения пользователю
-            await send_reply_with_limit(update, response_text, reply_markup=reset_button)
-        else:
-            await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
+        draw_triggers = ["нарисуй", "нарисуй:", "Нарисуй", "Нарисуй:"]
 
-    return RUNNING_GPT_MODE
+        if any(user_message.startswith(trigger) for trigger in draw_triggers):
+            prompt_text = user_message.split(maxsplit=1)[1] if len(user_message.split()) > 1 else ""
+
+            if not prompt_text:
+                await update.message.reply_text("Пожалуйста, укажите описание для генерации изображения после слова 'нарисуй'.")
+                return RUNNING_GPT_MODE
+
+            # Запускаем асинхронную генерацию без перевода
+            asyncio.create_task(limited_image_generation(update, context, user_id, prompt_text))
+
+        else:
+            add_to_context(user_id, user_message, message_type="user_message")
+            response_text = await generate_gemini_response(user_id, query=user_message)
+
+            if response_text:
+                await send_reply_with_limit(update, response_text, reply_markup=reset_button)
+            else:
+                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
+
+        return RUNNING_GPT_MODE
 
 
 
