@@ -5820,10 +5820,14 @@ async def handle_tag_selection(update: Update, context: CallbackContext) -> None
 
     generation_data = context.user_data.get("generation_data")
     if generation_data:
-        # Если данные о генерации есть, используем их
+        logger.info("Найдено generation_data в context.user_data")
+    
+        # Загрузка существующих публикаций
         media_group_storage = load_publications_from_firebase()
         user_data = media_group_storage.get(str(user_id), {})
-
+    
+        logger.info(f"Загружены публикации для user_id: {user_id}, всего записей: {len(user_data)}")
+    
         # Формируем данные для сохранения
         media_group_data = {
             "media": [
@@ -5835,14 +5839,20 @@ async def handle_tag_selection(update: Update, context: CallbackContext) -> None
             ],
             "scheduled": tag  # Метка (эмодзи)
         }
-
+    
+        # Логируем сформированные данные перед сохранением
+        logger.info(f"Готовим сохранение: user_id={user_id}, message_id={message_id}, data={media_group_data}")
+    
         # Сохраняем данные в Firebase
         user_data[f"{user_id}_{message_id}"] = media_group_data
         media_group_storage[str(user_id)] = user_data
         save_publications_to_firebase(user_id, f"{user_id}_{message_id}", media_group_data)
-
-        # Очищаем данные о генерации из контекста
+    
+        logger.info(f"Успешно сохранено в Firebase: user_id={user_id}, key={user_id}_{message_id}")
+    
+        # Очищаем данные о генерации
         context.user_data.pop("generation_data", None)
+        logger.info("generation_data очищено из context.user_data")
 
         # Уведомление пользователя
         await query.message.reply_text(
