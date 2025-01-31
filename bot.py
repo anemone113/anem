@@ -40,7 +40,9 @@ from gpt_helper import (
     reset_firebase_dialog,
     generate_video_response,
     generate_animation_response,
-    generate_mushrooms_response
+    translate_promt_with_gemini,
+    get_user_model,
+    set_user_model
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -63,6 +65,11 @@ import wikipedia
 import ast
 from telegram.error import Forbidden
 from telegram.helpers import escape, mention_html
+from huggingface_hub import AsyncInferenceClient
+import time
+import itertools
+import os
+from dotenv import load_dotenv
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
@@ -116,6 +123,7 @@ def save_media_group_data(media_group_storage, user_id):
             save_publications_to_firebase(user_id, message_id, data)
     except Exception as e:
         logger.error(f"Ошибка при сохранении данных пользователя ")
+
 
 
 # Загружаем данные при запуске бота
@@ -755,7 +763,8 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("⬅️ Выйти из режима диалога", callback_data='stop_gpt')],
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
-        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],        
+        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
+        [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_style')]         
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправляем сообщение о начале режима общения с GPT
@@ -788,14 +797,32 @@ async def handle_short_gpt_help(update: Update, context: CallbackContext) -> Non
 
 ---Анализ коротких видео и гиф. Так же как и с музыкой, есть лимит 20мб на файл
 
+===============================================================================
 
+Так же в боте доступна генерация изображений. Для этого в режиме диалога с ботом начните своё сообщение с слова "Нарисуй: ***" где вместо *** вбейте свой запрос на любом языке. Если после генерации вы видите надпись "Ошибка при обработке запроса." вместо вашего запроса, то это значит что сломалась нейросеть переводящая запросы на английский. В таком случае вам придётся указать запрос на английском самостоятельно
 
+Примеры запросов:
+<pre>Нарисуй: кот на подоконнике</pre>
+Обычный запрос, все настройки выставлены по-умолчанию.
+
+<pre>нарисуй:765576, ангел в заснеженном лесу (3), [3:2]</pre>
+Запрос с настройками. В данном случае 765576 - это <b>seed</b>, 3  - <b>guidance_scale</b>, а 3:2 - соотношение сторон изображения. <b>Steps</b> в круглых скобках при этом не указан и выставлен по-умолчанию. Так же "нарисуй" написано с маленькой буквы, это тоже правильный вариант.
+
+<pre>Нарисуй дом в корнях огромного дерева (4, 20) [3:5]</pre>
+Тут указан <b>Steps</b> - 20. А так же <b>guidance_scale</b> - 4 и соотношение 3:5. "Нарисуй" написано без двоеточия - такой вариант тоже считывается
+
+<code>seed</code> - это идентификатор каждого конкретного сгенерированного изображения. Если вам понравилась какая-то из генераций, но вы хотите посмотреть как бы она выглядела с другими настройками, то вы можете использовать её seed для того чтобы изменять конкретно данную генерацию лишь слегка корректирую запрос или прочие настройки.
+<code>guidance_scale</code> - это приближение генерации к тексту вашего запроса. Чем число выше, тем сильнее нейросеть пытается воссоздать именно текстовый запрос, однако сама генерация от этого может получитсья хуже, более грубой и с большим числом артефактов. Обычно корректное значение между 2 и 6, но в целом диапазон от 1 до 20
+<code>Steps</code> - это шаги повторных обработок изображения. Чем их больше тем больше на изображении деталей и тем лучше оно прорисовано. Однако слишком большое число существенно замедляет время генерации и даёт не особо красивые перегруженные деталями генерации. Адекватные значения 15-30.
+
+Кроме того в некоторых моделях, наприме SD turbo используются свои очень специфические параметры. В упомянутой turbo напрмиер guidance_scale равен 1 а steps около 4-6 и только в таких значениях данная модель выдаёт хорошие результаты. Так что если вы поменяли настройки в генерации какой-то модели и она "сломалось, то вероятно причина именно в этом.
     """
     keyboard = [
         [InlineKeyboardButton("❌ Сбросить диалог", callback_data='reset_dialog')],
         [InlineKeyboardButton("⬅️ Выйти из режима диалога", callback_data='stop_gpt')],
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
-        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')], 
+        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
+        [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_style')]   
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправляем сообщение с кнопкой
@@ -1316,7 +1343,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
     if update.callback_query and update.callback_query.data == 'reset_dialog':
         user_id = update.callback_query.from_user.id
         user_roles[user_id] = (
-            "Ты играешь роль приятного собеседника - лисы хранительницы леса. Общение происходит в телеграм, тебе доступен журнал переписки, "
+            "Ты играешь роль телеграм чат бота "
         )
         save_context_to_firebase(user_id)
         
@@ -1341,6 +1368,756 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
 
     return RUNNING_GPT_MODE
+
+
+
+
+
+
+
+
+
+
+# Модели и их настройки
+MODELS = {
+    "🌠stable": {
+        "stabilityai/stable-diffusion-3.5-large-turbo": {
+            "add_prompt": "",
+            "negative": True
+        },
+        "stabilityai/stable-diffusion-3.5-large": {
+            "add_prompt": "",
+            "negative": True
+        },
+        "alvdansen/phantasma-anime": {
+            "add_prompt": "",
+            "negative": True
+        },  
+        "alvdansen/frosting_lane_redux": {
+            "add_prompt": "",
+            "negative": True
+        },      
+        "alvdansen/digital-manga-cuties": {
+            "add_prompt": "",
+            "negative": True
+        },                
+        "alvdansen/littletinies": {
+            "add_prompt": "",
+            "negative": True
+        },
+        "alvdansen/soft-and-squishy-linework": {
+            "add_prompt": "",
+            "negative": True
+        },        
+         
+        "alvdansen/BandW-Manga": {
+            "add_prompt": "",
+            "negative": True
+        },
+
+        "alvdansen/soft-ones": {
+            "add_prompt": "",
+            "negative": True
+        },
+        "artificialguybr/PixelArtRedmond": {
+            "add_prompt": "pixel art ",
+            "negative": True
+        },
+        "alvdansen/soft-focus-3d": {
+            "add_prompt": "3d model ",
+            "negative": True
+        },
+        "artificialguybr/analogredmond-v2": {
+            "add_prompt": "photo ",
+            "negative": True
+        },
+        "prithivMLmods/SD3.5-Large-Photorealistic-LoRA": {
+            "add_prompt": "photo ",
+            "negative": True
+        },
+    },
+    "🌃flux": {
+        "black-forest-labs/FLUX.1-dev": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "Shakker-Labs/FLUX.1-dev-LoRA-add-details": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "XLabs-AI/flux-RealismLora": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "dennis-sleepytales/frosting_lane_flux": {
+            "add_prompt": "",
+            "negative": False
+        },          
+        "glif-loradex-trainer/araminta": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "dennis-sleepytales/softserve_anime": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "bingbangboom/flux_dreamscape": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "prithivMLmods/Canopus-LoRA-Flux-Anime": {
+            "add_prompt": "",
+            "negative": False
+        },                                      
+        "dennis-sleepytales/flux_ghibsky": {
+            "add_prompt": "",
+            "negative": False
+        },  
+        "strangerzonehf/Flux-Ghibli-Art-LoRA": {
+            "add_prompt": "Anime ",
+            "negative": False
+        },                    
+        "dataautogpt3/FLUX-AestheticAnime": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "glif/90s-anime-art": {
+            "add_prompt": " anime ",
+            "negative": False
+        },
+        "prithivMLmods/Flux-Dev-Real-Anime-LoRA": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "alvdansen/plushy-world-flux": {
+            "add_prompt": "",
+            "negative": False
+        },
+
+
+
+        "bingbangboom/oneImageLoraTest": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "bingbangboom/flux_oilscape": {
+            "add_prompt": "oil paint ",
+            "negative": False
+        },
+
+        "prithivMLmods/Canopus-Pixar-3D-Flux-LoRA": {
+            "add_prompt": "Pixar 3D ",
+            "negative": False
+        },  
+        "alvdansen/flux-koda": {
+            "add_prompt": "",
+            "negative": False
+        },
+        "alvdansen/flux_film_foto": {
+            "add_prompt": "",
+            "negative": False
+        },
+   
+                               
+    },
+    "💡others": { 
+        "fofr/flux-80s-cyberpunk": {
+            "add_prompt": "80s cyberpunk ",
+            "negative": False
+        },     
+        "nerijs/pixel-art-xl": {
+            "add_prompt": "pixel art ",
+            "negative": True
+        },
+        "sWizad/pokemon-trainer-sprite-pixelart": {
+            "add_prompt": "pixel art ",
+            "negative": True
+        },
+        "artificialguybr/LogoRedmond-LogoLoraForSDXL-V2": {
+            "add_prompt": "logo design ",
+            "negative": True
+        },
+        "artificialguybr/StickersRedmond": {
+            "add_prompt": "sticker design ",
+            "negative": True
+        },
+        "Shakker-Labs/FLUX.1-dev-LoRA-Logo-Design": {
+            "add_prompt": "logo design ",
+            "negative": False
+        },
+        "gokaygokay/Flux-Game-Assets-LoRA-v2": {
+            "add_prompt": "game assets ",
+            "negative": False
+        },
+        "xey/sldr_flux_nsfw_v2-studio": {
+            "add_prompt": "nsfw ",
+            "negative": False
+        },
+    }
+}
+
+MODEL_SHORTNAMES = {
+    # Stable Diffusion
+    "stabilityai/stable-diffusion-3.5-large-turbo": "⏳ SD Turbo ⏳",
+    "stabilityai/stable-diffusion-3.5-large": "SD Large",
+    "alvdansen/phantasma-anime": "Phantasma Anime",
+    "alvdansen/frosting_lane_redux": "Frosting Lane SD", 
+    "alvdansen/digital-manga-cuties": "Manga Cuties",           
+    "alvdansen/littletinies": "Little Tinies",
+    "alvdansen/soft-and-squishy-linework": "Soft Linework",    
+    "alvdansen/BandW-Manga": "Simple Draw",
+    "alvdansen/soft-ones": "Soft Ones",
+    "artificialguybr/PixelArtRedmond": "PixelArt",
+    "alvdansen/soft-focus-3d": "Soft Focus 3D",
+    "artificialguybr/analogredmond-v2": "Старые фотографии",
+    "prithivMLmods/SD3.5-Large-Photorealistic-LoRA": "Фотографии",
+   
+    
+    # FLUX
+    "black-forest-labs/FLUX.1-dev": "FLUX (оригинальный)",
+    "Shakker-Labs/FLUX.1-dev-LoRA-add-details": "FLUX more details",
+    "XLabs-AI/flux-RealismLora": "Realism Lora",
+    "dennis-sleepytales/frosting_lane_flux": "Frosting lane Flux",
+
+    #alvdansen/frosting_lane_flux     
+    "glif-loradex-trainer/araminta": "Araminta Illust Art",
+    "dennis-sleepytales/softserve_anime": "Softserve Anime",
+    #alvdansen/softserve_anime    
+    "bingbangboom/flux_dreamscape": "Dreamscape",
+    "prithivMLmods/Canopus-LoRA-Flux-Anime": "Canopus Anime",          
+    "dennis-sleepytales/flux_ghibsky": "Ghibsky", 
+    #aleksa-codes/flux-ghibsky-illustration
+    "strangerzonehf/Flux-Ghibli-Art-LoRA": "Flux Details Anime",
+    "dataautogpt3/FLUX-AestheticAnime": "Aesthetic Anime",
+    "glif/90s-anime-art": "90s Anime",
+    "prithivMLmods/Flux-Dev-Real-Anime-LoRA": "Real Anime",
+
+    "alvdansen/plushy-world-flux": "Plushy World",    
+    "bingbangboom/oneImageLoraTest": "Pastel",
+    "bingbangboom/flux_oilscape": "OilPaint",
+
+    "prithivMLmods/Canopus-Pixar-3D-Flux-LoRA": "Pixar",
+
+    "alvdansen/flux-koda": "Flux Koda",
+    "alvdansen/flux_film_foto": "Film Foto",
+
+    
+    
+    # OTHERS
+    "nerijs/pixel-art-xl": "PixelArt V2",
+    "sWizad/pokemon-trainer-sprite-pixelart": "Pixel(персонажи)",
+    "artificialguybr/LogoRedmond-LogoLoraForSDXL-V2": "Logo V2",
+    "artificialguybr/StickersRedmond": "Stickers",
+
+    "xey/sldr_flux_nsfw_v2-studio": "NSFW",
+    "Shakker-Labs/FLUX.1-dev-LoRA-Logo-Design": "Flux Logo Design",
+    "gokaygokay/Flux-Game-Assets-LoRA-v2": "3D Game Assets",
+    "fofr/flux-80s-cyberpunk": "Flux 80s Cyberpunk",           
+}
+
+
+
+
+
+
+
+
+
+
+# Обработчик команды выбора стиля
+async def choose_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🌠 Stable Diffusion", callback_data='category_🌠stable')],
+        [InlineKeyboardButton("🌃 FLUX", callback_data='category_🌃flux')],
+        [InlineKeyboardButton("💡 others", callback_data='category_💡others')],
+        [InlineKeyboardButton("Таблица примеров", callback_data='examples_table')]        
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Проверяем, откуда вызвана команда (из текста или кнопки)
+    if update.message:
+        await update.message.reply_text(
+            "Выберите категорию модели\n\n 🌠 Генерация моделей из категории Stable diffusion занимает в среднем 8-30сек.\n 🌃 Из Flux 30-200сек в зависимости от запроса и нагрузки на сервера. \n\n ⏳ SD turbo - самая быстрая модель, генерация одного изображения занимает всего 3-5 секунд в среднем", reply_markup=reply_markup
+        )
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(
+            "Выберите категорию модели\n\n 🌠 Генерация моделей из категории Stable diffusion занимает в среднем 8-30сек.\n 🌃 Из Flux 30-200сек в зависимости от запроса и нагрузки на сервера. \n\n ⏳ SD turbo - самая быстрая модель, генерация одного изображения занимает всего 3-5 секунд в среднем", reply_markup=reply_markup
+        )
+        await update.callback_query.answer()
+
+# Обработчик кнопки "Выбрать стиль"
+async def select_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await choose_style(update, context)
+
+
+async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    category = query.data.split('_')[1]
+    
+    # Список всех категорий
+    categories = ["🌠stable", "🌃flux", "💡others"]
+    other_categories = [c for c in categories if c != category]  # Выбираем две другие категории
+    
+    # Верхние кнопки с другими категориями
+    buttons = [
+        [
+            InlineKeyboardButton(other_categories[0].capitalize(), callback_data=f"category_{other_categories[0]}"),
+            InlineKeyboardButton(other_categories[1].capitalize(), callback_data=f"category_{other_categories[1]}")
+        ]
+    ]
+    
+    # Разделитель
+    buttons.append([InlineKeyboardButton("———————————", callback_data="none")])
+
+    # Карта приоритетных моделей для разных категорий
+    priority_models = {
+        "🌠stable": ("stabilityai/stable-diffusion-3.5-large-turbo", "SD Turbo"),
+        "🌃flux": ("black-forest-labs/FLUX.1-dev", "FLUX (оригинальный)")
+    }
+
+    # Если в текущей категории есть приоритетная модель, добавляем её первой
+    if category in priority_models:
+        model_id, model_name = priority_models[category]
+        if model_id in MODELS[category]:
+            buttons.append([InlineKeyboardButton(model_name, callback_data=f"model_{category}_{model_id}")])
+
+    # Добавляем кнопки с остальными моделями
+    row = []
+    for model in MODELS[category]:
+        if category in priority_models and model == priority_models[category][0]:  # Пропускаем приоритетную модель
+            continue
+        
+        short_name = MODEL_SHORTNAMES.get(model, model)  # Используем укороченное имя или оригинальное
+        btn = InlineKeyboardButton(short_name, callback_data=f"model_{category}_{model}")
+        row.append(btn)
+
+        if len(row) == 2:  # Два в ряд
+            buttons.append(row)
+            row = []
+
+    if row:  # Добавляем последний ряд, если осталась одна кнопка
+        buttons.append(row)
+    
+    # Нижний разделитель
+    buttons.append([InlineKeyboardButton("———————————", callback_data="none")])
+    
+    # Кнопка "Отмена"
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancelmodel")])
+
+    reply_markup = InlineKeyboardMarkup(buttons)
+    await query.edit_message_text(
+        text=f"Доступные модели {category}. \n\n  🌠 Генерация моделей из категории Stable diffusion занимает в среднем 8-30сек.\n 🌃 Из Flux 30-250сек в зависимости от запроса и нагрузки на сервера. \n\n ⏳ SD turbo - самая быстрая модель, генерация одного изображения занимает всего 3-5 секунд в среднем",
+        reply_markup=reply_markup
+    )
+
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+
+
+# Обработчик выбора модели
+async def model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    _, category, model_name = query.data.split('_', 2)
+    user_id = update.effective_user.id
+    
+    # Сохраняем модель в Firebase
+    set_user_model(user_id, model_name)
+    
+    context.user_data['selected_model'] = {
+        'name': model_name,
+        'params': MODELS[category][model_name]
+    }
+    
+    await query.edit_message_text(
+        text=f"✅ Вы выбрали модель с ID: {MODEL_SHORTNAMES.get(model_name, model_name)}\n\n"
+             f"Теперь введите промпт для генерации"
+    )
+
+
+
+def find_model_params(model_name: str) -> dict:
+    """Ищет параметры модели в MODELS по имени."""
+    for category in MODELS.values():
+        if model_name in category:
+            return category[model_name]
+    # Возвращаем параметры по умолчанию, если модель не найдена
+    return MODELS['🌠stable']["stabilityai/stable-diffusion-3.5-large-turbo"]
+
+import itertools
+
+# Два токена API
+# Загружаем переменные окружения из секретного файла
+load_dotenv("/etc/secrets/HF.env")
+
+# Получаем токены API
+HF_API_KEYS = itertools.cycle([
+    os.getenv("HF_API_KEY_1"),  # Первый токен
+    os.getenv("HF_API_KEY_2")   # Второй токен
+])
+
+image_queue = asyncio.Queue()
+user_positions = {}  
+# Глобальный семафор (например, максимум 5 генераций одновременно)
+global_semaphore = asyncio.Semaphore(3)
+
+async def limited_image_generation(update, context, user_id, prompt):
+    """Ограниченная генерация изображений с очередью."""
+    if global_semaphore.locked():  # Если лимит исчерпан
+        position = image_queue.qsize() + 1
+        user_positions[user_id] = position
+        await update.message.reply_text(f"Очередь на генерацию: {position}-й в списке. Ожидайте...")
+
+        await image_queue.put((update, context, user_id, prompt))  # Добавляем в очередь
+    else:
+        await process_next_image(update, context, user_id, prompt)
+async def process_next_image(update, context, user_id, prompt):
+    """Запускает генерацию изображения и проверяет очередь."""
+    async with global_semaphore:
+        await generate_image(update, context, user_id, prompt)
+
+        if not image_queue.empty():  # Если есть ожидающие пользователи
+            next_update, next_context, next_user_id, next_prompt = await image_queue.get()
+            del user_positions[next_user_id]  # Удаляем запись о позиции в очереди
+            await process_next_image(next_update, next_context, next_user_id, next_prompt)        
+
+
+async def generate_image(update, context, user_id, prompt, query_message=None):
+    """Генерация изображения с учетом выбранной модели"""
+    # Получаем модель из контекста или Firebase
+    selected_model = context.user_data.get('selected_model')
+
+    if not selected_model:
+        model_name = get_user_model(user_id)
+        model_params = find_model_params(model_name)
+        selected_model = {
+            'name': model_name,
+            'params': model_params
+        }
+        context.user_data['selected_model'] = selected_model
+
+    model_name = selected_model['name']
+    model_params = selected_model['params']
+    if model_name == "glif-loradex-trainer/araminta":
+        model_name = "glif-loradex-trainer/araminta_k_flux_dev_illustration_art"
+
+    # Чередуем токены API
+    HF_API_KEY = next(HF_API_KEYS)
+    logger.info(f"Используется API-ключ: {HF_API_KEY}")
+
+    client_image = AsyncInferenceClient(api_key=HF_API_KEY, timeout=300)
+
+    # Определяем, куда отправить сообщение
+    response_target = update.message if update.message else query_message
+
+    if response_target:
+        await response_target.reply_text(f"Генерация изображения для: '{prompt}'...")
+
+    # Получаем add_prompt для выбранной модели
+    original_prompt = prompt
+    logger.info(f"original_prompt: {original_prompt}")
+    add_prompt = selected_model['params']['add_prompt']
+
+    retries = 1  # Количество попыток
+    while retries >= 0:
+        try:
+            start_time = time.time()  # Фиксируем начальное время
+            prompt = original_prompt  
+            # Инициализация параметров по умолчанию
+            seed = random.randint(1, 2000000000)  # Генерация случайного seed
+            guidance_scale = None
+            num_inference_steps = None
+            width, height = 1024, 1024  # Значения по умолчанию
+
+            # Парсинг seed из начала текста
+            seed_match = re.match(r"^(\d+),", prompt)
+            if seed_match:
+                seed = int(seed_match.group(1))
+                prompt = re.sub(r"^\d+,", "", prompt).strip()
+
+            # Парсинг соотношения сторон из квадратных скобок
+            aspect_ratio_match = re.search(r"\[(\d+):(\d+)\]$", prompt)
+            if aspect_ratio_match:
+                aspect_width = int(aspect_ratio_match.group(1))
+                aspect_height = int(aspect_ratio_match.group(2))
+                prompt = re.sub(r"\[\d+:\d+\]$", "", prompt).strip()
+
+                # Вычисление ширины и высоты, учитывая ограничения
+                if aspect_width >= aspect_height:
+                    width = min(1400, max(512, int(1400 * (aspect_width / aspect_height))))
+                    height = min(1400, max(512, int(width * (aspect_height / aspect_width))))
+                else:
+                    height = min(1400, max(512, int(1400 * (aspect_height / aspect_width))))
+                    width = min(1400, max(512, int(height * (aspect_width / aspect_height))))
+
+            # Теперь парсим guidance_scale и num_inference_steps
+            params_match = re.search(r"\((\d+(\.\d+)?)(?:,\s*(\d+))?\)", prompt)
+            if params_match:
+                guidance_scale = float(params_match.group(1))  # Всегда будет найдено
+                num_inference_steps = int(params_match.group(3)) if params_match.group(3) else None  # Проверяем наличие второго числа
+                prompt = re.sub(r"\([\d\.]+(?:,\s*\d+)?\)$", "", prompt).strip()
+
+            # Очистка промта от всех парсинговых значений
+            clean_prompt = prompt.strip()
+
+            # Формирование full_prompt на основе очищенного промта и add_prompt
+            mix_prompt = f"{add_prompt} {clean_prompt}"
+            full_prompt = await translate_promt_with_gemini(user_id, query=mix_prompt)
+            logger.info(f"full_prompt: {full_prompt}")
+
+            # Коррекция размеров кратно 64
+            width = max(512, min(1408, width - (width % 64)))
+            height = max(512, min(1408, height - (height % 64)))
+            # **Заданный negative_prompt для большинства изображений**
+            negative_prompt = (
+                "blurry, distorted, deformed, bad anatomy, bad proportions, extra limbs, "
+                "missing fingers, too many fingers, malformed hands, long neck, watermark, "
+                "low quality, low resolution, grainy, unnatural lighting, bad perspective, "
+                "mutated body, disproportional, extra heads, floating limbs, extra eyes, "
+                "bad composition, broken symmetry, duplicate elements, jpeg artifacts"
+                if selected_model['params']['negative']
+                else None
+            )
+
+            logger.info(f"width: {width}")
+            logger.info(f"height: {height}")
+            # Параметры для генерации изображения
+            params = {
+                "height": height,
+                "width": width,
+                "seed": seed,
+                "max_sequence_length": 512,
+            }
+            if selected_model['params']['negative']:
+                params["negative_prompt"] = negative_prompt
+            # Добавляем guidance_scale, если он указан
+            if "guidance_scale" in locals():
+                params["guidance_scale"] = guidance_scale
+
+            # Добавляем num_inference_steps, если он указан
+            if "num_inference_steps" in locals():
+                params["num_inference_steps"] = num_inference_steps
+
+            # Генерация изображения
+            image = await client_image.text_to_image(full_prompt, model=model_name, **params)
+            logger.info(f"prompt на генерацию: {full_prompt}")
+            elapsed_time = time.time() - start_time  # Вычисляем прошедшее время
+
+            caption = (
+                f"`{original_prompt}`\n\n"
+                f"Seed: `{seed}`\n"
+                + (f"Guidance Scale: {guidance_scale}\n" if guidance_scale is not None else "")
+                + (f"Steps: {num_inference_steps}\n" if num_inference_steps is not None else "")
+                + f"Resolution: {width}x{height}\n"
+                f"Время генерации: {elapsed_time:.2f} сек.\n\n"
+                f"Переведённый prompt: `Нарисуй: {full_prompt}`\n"
+                f"Модель: `{model_name}`\n"
+            )
+
+            with io.BytesIO() as output:
+                image.save(output, format="PNG")
+                output.seek(0)
+
+
+                # Загружаем изображение на Catbox
+                catbox_url = await upload_image_to_catbox_in_background(output.getvalue())
+
+                # Определяем источник запроса
+                message = update.message if update.message else update.callback_query.message
+                user_id = update.effective_user.id  # Получаем user_id
+
+                # Создаем клавиатуру с кнопками
+                keyboard = [
+                    [InlineKeyboardButton("📒 Сохранить чтобы не потерять", callback_data=f"save_{user_id}_{message.message_id}")],
+                    [InlineKeyboardButton("🗂 Папки с сохранёнными генерациями", callback_data="scheduled_by_tag")],                    
+                    [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_style')],
+                    [InlineKeyboardButton("🔄 Повторить генерацию", callback_data=f"regenerate_{user_id}_{message.message_id}")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+
+                await message.reply_photo(
+                    photo=output,
+                    caption=escape_gpt_markdown_v2(caption),
+                    parse_mode="MarkdownV2",
+                    reply_markup=reply_markup
+                )              
+            break  # Если все прошло успешно, выходим из цикла
+        except Exception as e:
+            retries -= 1
+            message = update.message if update.message else update.callback_query.message
+
+            if retries >= 0:
+                await message.reply_text(f"⏳ Генерация заняла дольше обычного. Пожалуйста подождите ещё")
+                await asyncio.sleep(10)  # Подождать 10 секунд перед повтором
+            else:
+                await message.reply_text(f"Произошла ошибка при генерации изображения. Попробуйте: \n\n1)Подождать 30 секунд и повторить. \n 2)Сменить модель(стиль), возможно что-то сломалось. \n 3)Если смена стиля не помогла то подождите несколько часов и повторите попытку, возможно что-то с серверами. \n\n Если ничего из этого не помогло то пожалуйтса сообщите о проблеме через команду /send, веротяно что-то сломалось в боте ")
+
+async def regenerate_image(update, context):
+    """Обработчик для повторной генерации с новым seed"""
+    query = update.callback_query
+    await query.answer()
+
+    # Получаем user_id и message_id из callback_data
+    data_parts = query.data.split("_")
+    if len(data_parts) < 3:
+        return  # Неправильный формат callback_data
+
+    user_id = int(data_parts[1])
+    message_id = int(data_parts[2])
+
+    # Получаем сообщение с оригинальным промтом
+    message = await context.bot.forward_message(
+        chat_id=user_id, from_chat_id=update.effective_chat.id, message_id=message_id
+    )
+
+    # Определяем текст сообщения
+    prompt_text = message.text if message.text else message.caption
+    if not prompt_text:
+        return  # Нет текста для обработки
+
+    # Убираем "нарисуй:" или "Нарисуй" в начале
+    prompt = re.sub(r"(?i)^нарисуй:?\s*", "", prompt_text).strip()
+
+    # Убираем seed (если есть)
+    prompt = re.sub(r"^\d+,\s*", "", prompt).strip()
+
+    # Отправляем сообщение о начале генерации
+    
+
+    # Запускаем генерацию
+    await generate_image(update, context, user_id, prompt)
+
+
+async def handle_save_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем user_id и message_id из callback_data
+    parts = query.data.split('_')
+    user_id = int(parts[1])
+    message_id = int(parts[2])
+
+    # Сохраняем данные о генерации в контексте
+    context.user_data["generation_data"] = {
+        "user_id": user_id,
+        "message_id": message_id,
+        "caption": query.message.caption_html,  # HTML-капшн
+        "file_id": query.message.photo[-1].file_id,  # URL изображения
+    }
+
+    # Отображаем клавиатуру с эмодзи
+    emojis = [
+        "👀", "🤷‍♂️", "🧶", "🦊", "🦄", "🦆", "🐳", "🌿", "🌸", "🍓",
+        "🍑", "🍆", "🌈", "🌧", "☀️", "⭐️", "🫖", "🌙", "🌠", "❄️",
+        "🗑", "📎", "✏️", "🎨", "😈", "📷", "📚", "⏳", "✅", "❇️",
+        "❌", "🔄", "🩷", "💛", "💚", "💙", "❤️", "💜", "🖤", "🤍",
+    ]
+    reply_markup = create_emoji_keyboard(emojis, user_id, message_id)
+    await query.message.reply_text("Выберите метку для записи:", reply_markup=reply_markup)
+
+
+
+
+async def upload_image_to_catbox_in_background(image_bytes: bytes):
+    """Фоновая задача для загрузки изображения на Catbox."""
+    file_path = "temp_image.png"  # Локальный путь для временного хранения изображения
+    try:
+        # Сохраняем изображение во временный файл
+        with open(file_path, 'wb') as f:
+            f.write(image_bytes)
+        # Загружаем изображение на Catbox
+        catbox_url = await second_upload_image(file_path)
+        logging.info(f"Изображение успешно загружено на Catbox: {catbox_url}")
+    except Exception as e:
+        logging.error(f"Не удалось загрузить изображение на Catbox: {e}")
+    finally:
+        # Удаляем временный файл
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+async def examples_table_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    # Отправляем промежуточное сообщение
+    loading_message = await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="⏳ Таблица загружается, подождите немного..."
+    )
+
+    # Список URL-ов для изображений с обоих хостингов
+    image_urls = [
+        ("https://files.catbox.moe/5ux771.jpg", "https://i.ibb.co/3mJjVcy5/2.jpg"),
+        ("https://files.catbox.moe/0pqvrr.jpg", "https://i.ibb.co/LhJ7sjj6/3.jpg"),
+        ("https://files.catbox.moe/tqqvrn.jpg", "https://i.ibb.co/dwRCWM14/4.jpg"),
+        ("https://files.catbox.moe/sy67tu.jpg", "https://i.ibb.co/jkhfq6Bm/5.jpg")
+    ]
+
+    async def is_image_available(url):
+        """Проверяет доступность изображения по URL."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.head(url) as response:
+                    return response.status == 200
+        except Exception:
+            return False
+
+    # Формируем медиа группу
+    media_group = []
+    for idx, (catbox_url, ibb_url) in enumerate(image_urls):
+        # Проверяем доступность изображения на catbox
+        if not await is_image_available(catbox_url):
+            image_url = ibb_url  # Если catbox недоступен, используем ibb
+        else:
+            image_url = catbox_url
+
+        # Добавляем описание только к первому изображению
+        caption = (
+            '<b>Пример:</b>\n'
+            '<code>Нарисуй: 322434, цифровой арт с совой сидящей на ветке на фоне луны (3, 15) [3:2]</code>\n\n'
+            'В данном случае 322434 - это seed, 3 - guidance_scale, '
+            '15 - num_inference_steps, 3:2 - соотношение сторон. '
+            'Подробнее смотрите по кнопке помощи.'
+        ) if idx == 0 else None
+
+        media_group.append(
+            InputMediaPhoto(
+                media=image_url,
+                caption=caption,
+                parse_mode='HTML'
+            )
+        )
+
+    # Отправляем медиа группу
+    sent_messages = await context.bot.send_media_group(
+        chat_id=query.message.chat_id,
+        media=media_group
+    )
+
+    # Удаляем промежуточное сообщение
+    await context.bot.delete_message(
+        chat_id=query.message.chat_id,
+        message_id=loading_message.message_id
+    )
+
+    # Добавляем кнопку "Помощь" под последним сообщением медиагруппы
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')]
+    ])
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Нажмите кнопку ниже для получения дополнительной информации:",
+        reply_markup=keyboard
+    )
+
 
 
 
@@ -2030,7 +2807,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Распознать (Растениеи, гриб, текст) 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -2091,7 +2868,7 @@ async def rerestart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Распознать (Растение или текст) 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Распознать (Растение, гриб, текст) 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -7864,7 +8641,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(gpt_plants_more_handler, pattern='^gpt_plants_more$'))
     application.add_handler(CallbackQueryHandler(text_rec_with_gpt, pattern='text_rec_with_gpt$'))
     application.add_handler(CallbackQueryHandler(text_plant_help_with_gpt, pattern='text_plant_help_with_gpt$'))    
-
+    application.add_handler(CallbackQueryHandler(regenerate_image, pattern=r"^regenerate_"))
+    application.add_handler(CallbackQueryHandler(examples_table_handler, pattern='^examples_table$'))
+    
     application.add_handler(CallbackQueryHandler(run_gpt, pattern='run_gpt')) 
     application.add_handler(CallbackQueryHandler(reset_dialog, pattern='^reset_dialog$')) 
     application.add_handler(CallbackQueryHandler(handle_set_role_button, pattern='^set_role_button$'))  
@@ -7895,7 +8674,14 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_snooze_with_tag_button, pattern=r"^snooze_with_tag_\d+_\d+$"))  
     application.add_handler(CallbackQueryHandler(handle_tag_selection, pattern=r"^tag_"))
     application.add_handler(CallbackQueryHandler(handle_replace_caption, pattern=r"caption_"))
+    application.add_handler(CallbackQueryHandler(handle_save_button, pattern=r"^save_\d+_\d+$"))
 
+    application.add_handler(CallbackQueryHandler(select_style, pattern="choose_style"))
+    application.add_handler(CallbackQueryHandler(category_handler, pattern="^category_"))
+    application.add_handler(CallbackQueryHandler(model_handler, pattern="^model_"))
+    application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancelmodel"))
+
+    
     application.add_handler(CommandHandler("scheduledmark", handle_scheduled_tags))
     application.add_handler(CallbackQueryHandler(handle_scheduled_tags, pattern="^scheduled_by_tag$"))
     application.add_handler(CallbackQueryHandler(show_scheduled_by_tag, pattern="^filter_tag_"))
@@ -7909,6 +8695,7 @@ def main() -> None:
     # Обработчик для просмотра конкретной отложенной записи
     application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$'))    
     
+    application.add_handler(CommandHandler("style", choose_style))   
     application.add_handler(CommandHandler('set_role', set_role ))          
     application.add_handler(CommandHandler('send', send_mode))
     application.add_handler(CommandHandler('fin', fin_mode))
