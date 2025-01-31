@@ -5809,14 +5809,51 @@ async def handle_tag_selection(update: Update, context: CallbackContext) -> None
     query = update.callback_query
     await query.answer()
     await query.message.delete()
+
     # Извлекаем выбранный смайлик и данные
     _, tag, user_id_str, message_id_str = query.data.split('_')
     user_id = int(user_id_str)
     message_id = int(message_id_str)
-
+    # Проверяем, есть ли данные о генерации в контексте
     global media_group_storage
     # Загружаем данные
-    media_group_storage = load_publications_from_firebase()
+
+    generation_data = context.user_data.get("generation_data")
+    if generation_data:
+        # Если данные о генерации есть, используем их
+        media_group_storage = load_publications_from_firebase()
+        user_data = media_group_storage.get(str(user_id), {})
+
+        # Формируем данные для сохранения
+        media_group_data = {
+            "media": [
+                {
+                    "caption": generation_data["caption"],  # HTML-капшн
+                    "file_id": generation_data["file_id"],  # URL изображения
+                    "parse_mode": "HTML"
+                }
+            ],
+            "scheduled": tag  # Метка (эмодзи)
+        }
+
+        # Сохраняем данные в Firebase
+        user_data[f"{user_id}_{message_id}"] = media_group_data
+        media_group_storage[str(user_id)] = user_data
+        save_publications_to_firebase(user_id, f"{user_id}_{message_id}", media_group_data)
+
+        # Очищаем данные о генерации из контекста
+        context.user_data.pop("generation_data", None)
+
+        # Уведомление пользователя
+        await query.message.reply_text(
+            f"✅ Запись успешно добавлена в папку {tag}.\n Теперь вы можете найти её там и продолжить редактирование, либо опубликовать",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗂 Посмотреть мои папки 🗂", callback_data="scheduled_by_tag")],
+                [InlineKeyboardButton("‼️ Перезапуск бота ‼️", callback_data='restart')]
+            ])
+        )
+        return
+    media_group_storage = load_publications_from_firebase()   
 
     # Доступ к данным по user_id
     user_data = media_group_storage.get(str(user_id))
@@ -5850,7 +5887,6 @@ async def handle_tag_selection(update: Update, context: CallbackContext) -> None
             [InlineKeyboardButton("‼️ Перезапуск бота ‼️", callback_data='restart')]
         ])
     )
-
 
 
 
