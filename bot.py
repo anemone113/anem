@@ -7120,14 +7120,20 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                     media = data['media']  
                     media_group = []
                     captions_only = []  
-
+                
                     if isinstance(media, list):
                         for media_data in media:
                             if 'file_id' in media_data:
                                 file_id = media_data['file_id']
-                                
-                                # Определяем, GIF или фото (по расширению или другим данным)
-                                if file_id.endswith('.gif'):
+                
+                                # Проверяем, является ли это URL или file_id
+                                if file_id.startswith("http"):
+                                    media_type = "url"
+                                else:
+                                    media_type = "file_id"
+                
+                                # Отправляем файл как документ (если это GIF) или фото
+                                if file_id.endswith('.gif') or media_type == "url" and file_id.lower().endswith('.gif'):
                                     media_group.append(
                                         InputMediaDocument(
                                             media=file_id,
@@ -7146,13 +7152,18 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                             else:
                                 if 'caption' in media_data:
                                     captions_only.append(media_data['caption'])
-
+                
                     elif isinstance(media, dict):
                         for _, media_data in media.items():
                             if 'file_id' in media_data:
                                 file_id = media_data['file_id']
-                                
-                                if file_id.endswith('.gif'):
+                
+                                if file_id.startswith("http"):
+                                    media_type = "url"
+                                else:
+                                    media_type = "file_id"
+                
+                                if file_id.endswith('.gif') or media_type == "url" and file_id.lower().endswith('.gif'):
                                     media_group.append(
                                         InputMediaDocument(
                                             media=file_id,
@@ -7171,21 +7182,20 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                             else:
                                 if 'caption' in media_data:
                                     captions_only.append(media_data['caption'])
-
+                
                     # Отправка медиа-группы
                     if media_group:
                         await context.bot.send_media_group(
                             chat_id=query.message.chat_id,
                             media=media_group
                         )
-
+                
                     # Отправка подписей без изображений
                     for caption in captions_only:
                         await query.message.reply_text(
                             text=caption,
                             parse_mode='HTML'  
                         )
-
                     # Отправляем информацию о записи с кнопками
                     await query.message.reply_text(
                         text=f"Папка: {data.get('scheduled', 'Не указана')}\n\nКоличество медиа в посте: {len(media_group)}",
