@@ -2293,12 +2293,18 @@ async def handle_view_post(update: Update, context: CallbackContext):
         fav_text = f"Этот пост добавлен в избранное {fav_count} раз(а)\n" if fav_count > 0 else ""
         remaining_posts_text = f"Остальные посты с меткой {selected_label}:" 
         # Добавляем дополнительные кнопки перед списком записей
+        if int(query.from_user.id) in favorites:
+            fav_button = InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"favorite_{user_id}_{post_id}")
+        else:
+            fav_button = InlineKeyboardButton("⭐ Сохранить в избранное", callback_data=f"favorite_{user_id}_{post_id}")
+
+        
         extra_buttons = [
             [
                 InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{post_id}"),
                 InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{post_id}")
             ],
-            [InlineKeyboardButton("⭐ Сохранить в избранное",callback_data=f"favorite_{user_id}_{post_id}")],
+            [fav_button],  # Используем динамически выбранную кнопку
             [InlineKeyboardButton("========......========", callback_data="no_action")]
         ]
 
@@ -2343,6 +2349,7 @@ async def handle_view_post(update: Update, context: CallbackContext):
 
 
 async def handle_add_favorite(update: Update, context: CallbackContext):
+    await update.callback_query.answer()    
     query = update.callback_query
     _, owner_id, post_id = query.data.split("_", 2)
     user_id = query.from_user.id
