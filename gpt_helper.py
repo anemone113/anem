@@ -35,6 +35,7 @@ import pathlib
 from io import BytesIO
 from PIL import Image
 import asyncio
+from telegram.ext import CallbackContext
 # Google API Key и модель Gemini
 GOOGLE_API_KEY = "AIzaSyBk3nIr9DKsYMZUjGevTDzKDZs__zVLyP8"
 
@@ -136,7 +137,32 @@ def copy_to_shared_publications(user_id: int, key: str) -> bool:
     return False
 
 
-def add_to_favorites(user_id: int, owner_id: int, post_id: str) -> bool:
+from html import unescape
+async def notify_owner_favorited(context: CallbackContext, owner_id: int, post_data: dict):
+    """Отправляет владельцу уведомление о добавлении его поста в избранное при достижении 3+ пользователей."""
+    try:
+        caption = post_data["media"][0]["caption"]
+        logger.info(f"caption: {caption}")        
+        caption = re.sub(r"<.*?>", "", caption)  # Убираем HTML-теги
+        caption = unescape(caption)  # Декодируем HTML-сущности
+        caption = re.split(r"\bseed\b", caption, flags=re.IGNORECASE)[0]  # Обрезаем по "seed"
+        caption = re.sub(r"^\d+,\s*", "", caption)  # Убираем числа в начале строки
+        
+        # Обрезаем caption до ближайшего пробела перед 23 символами
+        if len(caption) > 26:
+            cutoff = caption[:26].rfind(" ")
+            caption = caption[:cutoff] if cutoff != -1 else caption[:26]
+        
+        message_text = f"🎉 Поздравляем, вашу публикацию «{caption}» добавили в избранное 3 или более человек!"
+
+        # Отправляем сообщение владельцу
+        await context.bot.send_message(chat_id=owner_id, text=message_text)
+    
+    except Exception as e:
+        logger.info(f"Ошибка при отправке уведомления владельцу: {e}")
+
+
+def add_to_favorites(user_id: int, owner_id: int, post_id: str, context: CallbackContext) -> bool:
     """Добавляет или удаляет публикацию из избранного пользователя."""
     ref = db.reference(f"shared_publications/{owner_id}/{post_id}/favorites")
     favorites = ref.get() or []
@@ -148,7 +174,17 @@ def add_to_favorites(user_id: int, owner_id: int, post_id: str) -> bool:
     else:
         favorites.append(user_id)  # Добавляем в избранное
         ref.set(favorites)
+
+        # Загружаем данные о посте и проверяем количество избранных
+        publications = load_shared_publications()
+        post_data = publications.get(owner_id, {}).get(post_id)
+        logger.info(f"post_data {post_data} ")
+
+        if post_data and len(favorites) >= 3:  # Проверяем, достигло ли число 3+
+            asyncio.create_task(notify_owner_favorited(context, owner_id, post_data))
+
         return True  # Добавлен
+
 
 
 def delete_from_firebase(keys, user_id):
