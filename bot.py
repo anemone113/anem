@@ -2354,7 +2354,7 @@ async def handle_add_favorite(update: Update, context: CallbackContext):
     _, owner_id, post_id = query.data.split("_", 2)
     user_id = query.from_user.id
 
-    added = add_to_favorites(user_id, owner_id, post_id)
+    added = add_to_favorites(user_id, owner_id, post_id, context)
 
     # Отправляем сообщение в зависимости от результата
     text = "✅ Пост добавлен в избранное." if added else "❌ Пост удалён из избранного."
