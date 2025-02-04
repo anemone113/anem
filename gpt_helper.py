@@ -757,15 +757,6 @@ async def generate_document_response(document_path, user_id, query=None):
 
         file_extension = os.path.splitext(document_path)[1].lower()
         logging.info(f"file_extension: {file_extension}")
-        if file_extension == ".pdf":
-            with fitz.open(document_path) as pdf:
-                text = "\n".join(page.get_text() for page in pdf)
-        else:
-            with open(document_path, "r", encoding="utf-8", errors="ignore") as file:
-                text = file.read()
-
-        if not text.strip():
-            return "Документ не содержит читаемого текста."
 
         document_path_obj = pathlib.Path(document_path)
         try:
