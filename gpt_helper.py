@@ -34,6 +34,7 @@ import requests
 import pathlib
 from io import BytesIO
 from PIL import Image
+import asyncio
 # Google API Key и модель Gemini
 GOOGLE_API_KEY = "AIzaSyCJ9lom_jgT-SUHGG-UYrrcpuWn7s8081g"
 
@@ -92,6 +93,10 @@ def load_publications_from_firebase():
     except Exception as e:
         logging.error(f"Ошибка при загрузке публикаций из Firebase: {e}")
         return {}
+
+
+
+
 def save_publications_to_firebase(user_id, message_id, data):
     """Сохраняет данные в Firebase, добавляя или обновляя записи только для текущего пользователя."""
     try:
@@ -106,7 +111,44 @@ def save_publications_to_firebase(user_id, message_id, data):
     except Exception as e:
         logging.error(f"Ошибка при сохранении публикации {user_id}_{message_id} в Firebase: {e}")
 
+def load_shared_publications():
+    """Загружает общие публикации из Firebase."""
+    try:
+        ref = db.reference('shared_publications')
+        return ref.get() or {}
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке общих публикаций: {e}")
+        return {}
 
+def save_to_shared_publications(user_id: int, key: str, data: dict) -> None:
+    ref = db.reference(f"shared_publications/{user_id}/{key}")
+    ref.set(data)
+
+def copy_to_shared_publications(user_id: int, key: str) -> bool:
+    """Копирует публикацию из users_publications в shared_publications."""
+    ref_users = db.reference(f"users_publications/{user_id}/{key}")
+    ref_shared = db.reference(f"shared_publications/{user_id}/{key}")
+
+    data = ref_users.get()
+    if data:
+        ref_shared.set(data)  # Копируем данные в shared_publications
+        return True
+    return False
+
+
+def add_to_favorites(user_id: int, owner_id: int, post_id: str) -> bool:
+    """Добавляет или удаляет публикацию из избранного пользователя."""
+    ref = db.reference(f"shared_publications/{owner_id}/{post_id}/favorites")
+    favorites = ref.get() or []
+
+    if user_id in favorites:
+        favorites.remove(user_id)  # Удаляем из избранного
+        ref.set(favorites)
+        return False  # Удалён
+    else:
+        favorites.append(user_id)  # Добавляем в избранное
+        ref.set(favorites)
+        return True  # Добавлен
 
 
 def delete_from_firebase(keys, user_id):
@@ -346,7 +388,7 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
                 temperature=1.0,
                 top_p=0.9,
                 top_k=40,
-                max_output_tokens=1000,
+                max_output_tokens=3000,
                 presence_penalty=0.6,
                 frequency_penalty=0.6,
                 tools=[google_search_tool],
@@ -466,7 +508,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
 
         # Ожидание обработки видео
         while video_file.state == "PROCESSING":
-            time.sleep(10)
+            await asyncio.sleep(3)
             video_file = client.files.get(name=video_file.name)
 
         if video_file.state == "FAILED":
@@ -588,7 +630,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
         # Ожидание обработки видео
         while video_file.state == "PROCESSING":
 
-            time.sleep(10)
+            await asyncio.sleep(3)
             video_file = client.files.get(name=video_file.name)
 
         if video_file.state == "FAILED":
@@ -654,6 +696,95 @@ async def generate_video_response(video_file_path, user_id, query=None):
     except Exception as e:
         logging.error("Ошибка при обработке видео с Gemini:", exc_info=True)
         return "Ошибка при обработке видео. Попробуйте снова."
+
+async def generate_document_response(document_path, user_id, query=None):
+    user_roles_data = user_roles.get(user_id, {})
+    selected_role = user_roles_data.get("selected_role") or user_roles_data.get("default_role", "роль не выбрана")
+
+    relevant_context = await get_relevant_context(user_id)
+    if query and relevant_context:
+        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
+    context = (
+        f"Ты телеграм чат-бот, сейчас ты играешь роль {selected_role}. Собеседник прислал тебе документ с подписью:\n{query}"
+        f"Предыдущий контекст вашей переписки:\n{relevant_context}"        
+    )
+
+    command_text = context 
+
+    add_to_context(user_id, query, message_type="Пользователь прислал документ с подписью:")
+
+    try:
+        if not os.path.exists(document_path):
+            logging.error(f"Файл {document_path} не существует.")
+            return "Документ недоступен. Попробуйте снова."
+
+        file_extension = os.path.splitext(document_path)[1].lower()
+        logging.info(f"file_extension: {file_extension}")
+        if file_extension == ".pdf":
+            with fitz.open(document_path) as pdf:
+                text = "\n".join(page.get_text() for page in pdf)
+        else:
+            with open(document_path, "r", encoding="utf-8", errors="ignore") as file:
+                text = file.read()
+
+        if not text.strip():
+            return "Документ не содержит читаемого текста."
+
+        document_path_obj = pathlib.Path(document_path)
+        try:
+            file_upload = client.files.upload(path=document_path_obj)
+        except Exception as e:
+            print(f"Error uploading file: {e}")
+            return None
+
+        google_search_tool = Tool(google_search=GoogleSearch())
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=file_upload.uri,
+                            mime_type=file_upload.mime_type
+                        )
+                    ]
+                ),
+                command_text
+            ],
+            config=types.GenerateContentConfig(
+                temperature=1.4,
+                max_output_tokens=10000,                
+                top_p=0.95,
+                top_k=25,
+                presence_penalty=0.7,
+                frequency_penalty=0.7,
+                tools=[google_search_tool],
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                ]
+            )
+        )
+        logging.info(f"rense: {response}") 
+        if not response.candidates or not response.candidates[0].content.parts:
+            return "Извините, я не могу обработать этот документ."
+
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+        add_to_context(user_id, bot_response, message_type="Ответ бота на документ:")
+        save_context_to_firebase(user_id)
+        return bot_response
+
+    except FileNotFoundError as fnf_error:
+        logging.info(f"Файл не найден: {fnf_error}")
+        return "Документ не найден. Проверьте путь к файлу."
+
+    except Exception as e:
+        logging.info("Ошибка при обработке документа с Gemini:", exc_info=True)
+        return "Ошибка при обработке документа. Попробуйте снова."
 
 
 
@@ -876,7 +1007,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     # Формируем system_instruction с user_role и relevant_context
     relevant_context = await get_relevant_context(user_id) if use_context else ""
     system_instruction = (
-        f"Ты телеграм чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться. Ответы пиши на русском если не указано иного."
+        f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться."
         f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
     )
 
@@ -896,62 +1027,64 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     if query and use_context:
         add_to_context(user_id, query, message_type="user_message")
 
-
-    try:
-        # Создаём клиент с правильным ключом
-        google_search_tool = Tool(
-            google_search=GoogleSearch()
-        )
-        response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
-            contents=context,  # Здесь передаётся переменная context
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,                
-                temperature=1.4,
-                top_p=0.95,
-                top_k=25,
-                max_output_tokens=1000,
-                presence_penalty=0.7,
-                frequency_penalty=0.7,
-                tools=[google_search_tool],
-                safety_settings=[
-                    types.SafetySetting(
-                        category='HARM_CATEGORY_HATE_SPEECH',
-                        threshold='BLOCK_NONE'
-                    ),
-                    types.SafetySetting(
-                        category='HARM_CATEGORY_HARASSMENT',
-                        threshold='BLOCK_NONE'
-                    ),
-                    types.SafetySetting(
-                        category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
-                        threshold='BLOCK_NONE'
-                    ),
-                    types.SafetySetting(
-                        category='HARM_CATEGORY_DANGEROUS_CONTENT',
-                        threshold='BLOCK_NONE'
-                    )
-                ]
+    attempts = 3  # Количество попыток
+    for attempt in range(attempts):
+        try:
+            # Создаём клиент с правильным ключом
+            google_search_tool = Tool(
+                google_search=GoogleSearch()
             )
-        )     
-   
-        if response.candidates and response.candidates[0].content.parts:
-            
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+            response = client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=context,  # Здесь передаётся переменная context
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,                
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    max_output_tokens=7000,
+                    presence_penalty=0.7,
+                    frequency_penalty=0.7,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HATE_SPEECH',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HARASSMENT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                            threshold='BLOCK_NONE'
+                        )
+                    ]
+                )
+            )     
 
-            if use_context:
-                add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
+            if response.candidates and response.candidates[0].content.parts:
+                response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
 
-            
-            save_context_to_firebase(user_id)
-            return response_text
-        else:
-            logging.warning("Ответ от модели не содержит текстового компонента.")
-            return "Извините, я не могу ответить на этот запрос."
-    
-    except Exception as e:
-        logging.error(f"Ошибка при генерации ответа: {e}")
-        return "Ошибка при обработке запроса. Попробуйте снова."
+                if use_context:
+                    add_to_context(user_id, response_text, message_type="bot_response")
+
+                save_context_to_firebase(user_id)
+                return response_text
+            else:
+                logging.warning("Ответ от модели не содержит текстового компонента.")
+                return "Извините, я не могу ответить на этот запрос."
+
+        except Exception as e:
+            logging.error(f"Ошибка при генерации ответа (попытка {attempt + 1}/{attempts}): {e}")
+            if attempt < attempts - 1:
+                await asyncio.sleep(4)  # Ожидание перед повторной попыткой
+
+    return "Ошибка при обработке запроса. Попробуйте снова позже."
 
 
 def limit_response_length(text):
@@ -1042,7 +1175,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
-                    max_output_tokens=1000,
+                    max_output_tokens=2000,
                     presence_penalty=0.7,
                     frequency_penalty=0.7,
                     tools=[google_search_tool],
@@ -1111,7 +1244,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                     temperature=1.0,
                     top_p=0.9,
                     top_k=40,
-                    max_output_tokens=1000,
+                    max_output_tokens=6000,
                     presence_penalty=0.6,
                     frequency_penalty=0.6,
                     tools=[google_search_tool],
@@ -1158,7 +1291,7 @@ async def generate_plant_help_response(user_id, query=None):
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
-                    max_output_tokens=1000,
+                    max_output_tokens=3000,
                     presence_penalty=0.7,
                     frequency_penalty=0.7,
                     tools=[google_search_tool],
