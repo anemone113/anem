@@ -2229,12 +2229,12 @@ async def handle_select_scheduled(update: Update, context: CallbackContext):
             caption = re.sub(r"^\d+,\s*", "", caption)  # Убираем числа в начале строки
             
             # Обрезаем caption до ближайшего пробела перед 23 символами
-            if len(caption) > 26:
-                cutoff = caption[:26].rfind(" ")
-                caption = caption[:cutoff] if cutoff != -1 else caption[:26]
+            if len(caption) > 31:
+                cutoff = caption[:31].rfind(" ")
+                caption = caption[:cutoff] if cutoff != -1 else caption[:31]
 
             # Добавляем количество добавлений в избранное
-            text_preview = f"{caption} ({fav_count})" if fav_count > 0 else caption
+            text_preview = f"{caption.strip()} ({fav_count})" if fav_count > 0 else caption
 
             post_buttons.append((
                 fav_count,  # Для сортировки
@@ -2254,7 +2254,7 @@ async def handle_select_scheduled(update: Update, context: CallbackContext):
     keyboard = [[button[1]] for button in post_buttons]
     keyboard.append([InlineKeyboardButton("⬅ Назад", callback_data="view_shared")])
     
-    await query.message.edit_text("Выберите публикацию:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.message.edit_text("Выберите публикацию из списка представленного ниже:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 
@@ -2275,6 +2275,8 @@ async def handle_view_post(update: Update, context: CallbackContext):
             return
         
         media = post_data["media"][0]
+
+
         await context.bot.send_photo(
             chat_id=query.message.chat.id,
             photo=media["file_id"],
@@ -2291,14 +2293,14 @@ async def handle_view_post(update: Update, context: CallbackContext):
         selected_label = post_data.get("scheduled", "🧶")
         post_buttons = []
         fav_text = f"Этот пост добавлен в избранное {fav_count} раз(а)\n" if fav_count > 0 else ""
-        remaining_posts_text = f"Остальные посты с меткой {selected_label}:" 
+        remaining_posts_text = f"Ниже можно посмотреть список других постов с меткой {selected_label}:" 
         # Добавляем дополнительные кнопки перед списком записей
         if int(query.from_user.id) in favorites:
             fav_button = InlineKeyboardButton("❌ Удалить из избранного", callback_data=f"favorite_{user_id}_{post_id}")
         else:
             fav_button = InlineKeyboardButton("⭐ Сохранить в избранное", callback_data=f"favorite_{user_id}_{post_id}")
 
-        
+
         extra_buttons = [
             [
                 InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{post_id}"),
@@ -2315,17 +2317,22 @@ async def handle_view_post(update: Update, context: CallbackContext):
                     # Фильтрация записей по выбранной метке
                     if selected_label != "all" and label != selected_label:
                         continue  
-
+                    # 🎯 Обрабатываем caption так же, как в handle_select_scheduled
                     caption = p_data["media"][0]["caption"]
+                    caption = re.sub(r"<.*?>", "", caption)  # Убираем HTML-теги
+                    caption = unescape(caption)  # Декодируем HTML-сущности
+                    caption = re.split(r"\bseed\b", caption, flags=re.IGNORECASE)[0]  # Обрезаем по "seed"
+                    caption = re.sub(r"^\d+,\s*", "", caption)  # Убираем числа в начале строки
 
-                    caption = re.sub(r"<.*?>", "", caption)
-                    caption = unescape(caption)
-                    caption = re.split(r"\bseed\b", caption, flags=re.IGNORECASE)[0]
-                    caption = re.sub(r"^\d+,\s*", "", caption)
-                    text_preview = " ".join(caption.split()[:5])
+                    # Обрезаем caption до ближайшего пробела перед 23 символами
+                    if len(caption) > 31:
+                        cutoff = caption[:31].rfind(" ")
+                        caption = caption[:cutoff] if cutoff != -1 else caption[:31]
+
+                    text_preview = f"{caption.strip()} ({fav_count})" if fav_count > 0 else caption
 
                     post_buttons.append(
-                        InlineKeyboardButton(f"{label}: {text_preview}", callback_data=f"viewneuralpost_{u_id}_{p_id}")
+                        InlineKeyboardButton(f"{label} {text_preview}", callback_data=f"viewneuralpost_{u_id}_{p_id}")
                     )
 
         keyboard = extra_buttons if all(isinstance(i, list) for i in extra_buttons) else [[button] for button in extra_buttons]
@@ -2346,6 +2353,7 @@ async def handle_view_post(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
         await query.answer("Произошла ошибка.")
+
 
 
 async def handle_add_favorite(update: Update, context: CallbackContext):
