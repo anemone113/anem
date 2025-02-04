@@ -9203,7 +9203,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^backtomain_\d+_\d+$"))
     application.add_handler(CallbackQueryHandler(handle_add_favorite, pattern=r"^favorite_\d+_\d+_\d+$"))
 
-
     
     
     application.add_handler(CallbackQueryHandler(run_gpt, pattern='run_gpt')) 
