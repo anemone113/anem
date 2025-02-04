@@ -36,7 +36,7 @@ from io import BytesIO
 from PIL import Image
 import asyncio
 # Google API Key и модель Gemini
-GOOGLE_API_KEY = "AIzaSyCJ9lom_jgT-SUHGG-UYrrcpuWn7s8081g"
+GOOGLE_API_KEY = "AIzaSyBk3nIr9DKsYMZUjGevTDzKDZs__zVLyP8"
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
