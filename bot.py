@@ -1848,15 +1848,19 @@ user_positions = {}
 global_semaphore = asyncio.Semaphore(4)
 
 async def limited_image_generation(update, context, user_id, prompt):
-    """Всегда добавляем задачи в очередь и запускаем обработчик"""
+    """Добавляем задачи в очередь и корректно определяем позицию"""
+    # Проверяем текущий размер очереди
+    position = image_queue.qsize()
+
+    if position > 0:  # Если в очереди уже есть задачи, выдаем позицию
+        user_positions[user_id] = position + 1
+        await update.message.reply_text(f"Очередь на генерацию: {position + 1}-й в списке. Ожидайте...")
+    else:  # Если очередь пуста, пользователь будет первым, но не показываем лишний текст
+        user_positions[user_id] = 1
+
     # Добавляем задачу в очередь
     await image_queue.put((update, context, user_id, prompt))
-    
-    # Обновляем позицию пользователя
-    position = image_queue.qsize()
-    user_positions[user_id] = position
-    await update.message.reply_text(f"Очередь на генерацию: {position}-й в списке. Ожидайте...")
-    
+
     # Запускаем обработку очереди, если не запущена
     asyncio.create_task(process_queue())
 async def process_queue():
