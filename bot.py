@@ -1845,7 +1845,7 @@ HF_API_KEYS = itertools.cycle([
 
 image_queue = asyncio.Queue()
 user_positions = {}
-global_semaphore = asyncio.Semaphore(5)
+global_semaphore = asyncio.Semaphore(4)
 
 async def limited_image_generation(update, context, user_id, prompt):
     """Всегда добавляем задачи в очередь и запускаем обработчик"""
