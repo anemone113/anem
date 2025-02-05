@@ -1408,11 +1408,11 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 await send_reply_with_limit(update, response_text, reply_markup=reset_button)
             else:
                 await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
-
+            return
         except Exception as e:
             logging.error(f"Ошибка при загрузке изображения: {e}")
             await update.message.reply_text("Ошибка при обработке изображения. Попробуйте снова.")
-
+            return
     if update.callback_query and update.callback_query.data == 'reset_dialog':
         user_id = update.callback_query.from_user.id
         user_roles[user_id] = (
