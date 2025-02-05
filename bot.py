@@ -1844,29 +1844,41 @@ HF_API_KEYS = itertools.cycle([
 ])
 
 image_queue = asyncio.Queue()
-user_positions = {}  
-# Глобальный семафор (например, максимум 5 генераций одновременно)
-global_semaphore = asyncio.Semaphore(3)
+user_positions = {}
+global_semaphore = asyncio.Semaphore(5)
 
 async def limited_image_generation(update, context, user_id, prompt):
-    """Ограниченная генерация изображений с очередью."""
-    if global_semaphore.locked():  # Если лимит исчерпан
-        position = image_queue.qsize() + 1
-        user_positions[user_id] = position
-        await update.message.reply_text(f"Очередь на генерацию: {position}-й в списке. Ожидайте...")
-
-        await image_queue.put((update, context, user_id, prompt))  # Добавляем в очередь
-    else:
-        await process_next_image(update, context, user_id, prompt)
-async def process_next_image(update, context, user_id, prompt):
-    """Запускает генерацию изображения и проверяет очередь."""
-    async with global_semaphore:
-        await generate_image(update, context, user_id, prompt)
-
-        if not image_queue.empty():  # Если есть ожидающие пользователи
-            next_update, next_context, next_user_id, next_prompt = await image_queue.get()
-            del user_positions[next_user_id]  # Удаляем запись о позиции в очереди
-            await process_next_image(next_update, next_context, next_user_id, next_prompt)        
+    """Всегда добавляем задачи в очередь и запускаем обработчик"""
+    # Добавляем задачу в очередь
+    await image_queue.put((update, context, user_id, prompt))
+    
+    # Обновляем позицию пользователя
+    position = image_queue.qsize()
+    user_positions[user_id] = position
+    await update.message.reply_text(f"Очередь на генерацию: {position}-й в списке. Ожидайте...")
+    
+    # Запускаем обработку очереди, если не запущена
+    asyncio.create_task(process_queue())
+async def process_queue():
+    """Фоновая задача для обработки очереди"""
+    while True:
+        async with global_semaphore:
+            # Достаем задачу из очереди
+            next_task = await image_queue.get()
+            update, context, user_id, prompt = next_task
+            
+            try:
+                await generate_image(update, context, user_id, prompt)
+            except Exception as e:
+                logger.error(f"Ошибка генерации: {e}")
+                await update.message.reply_text("⚠️ Ошибка при обработке вашего запроса")
+            
+            # Обновляем позиции в очереди
+            for uid in user_positions:
+                if user_positions[uid] > user_positions.get(user_id, 0):
+                    user_positions[uid] -= 1
+            if user_id in user_positions:
+                del user_positions[user_id]     
 
 
 async def generate_image(update, context, user_id, prompt, query_message=None):
