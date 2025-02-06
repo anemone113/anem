@@ -2050,7 +2050,10 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                         "full_caption": caption,
                         "file_id": sent_message.photo[-1].file_id,
                     }
-
+                    keyboard[0][0] = InlineKeyboardButton(
+                        "📒 Сохранить чтобы не потерять",
+                        callback_data=f"save_{user_id}_{sent_message.message_id}"
+                    )
                     # Обновляем callback_data для кнопки публикации
                     keyboard[2][0] = InlineKeyboardButton(
                         "🌃 Опубликовать в общую папку",
@@ -2070,7 +2073,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                         caption=escape_gpt_markdown_v2(caption),
                         parse_mode="MarkdownV2",
                         reply_markup=reply_markup
-                    )                          
+                    )                            
             break  # Если все прошло успешно, выходим из цикла
         except Exception as e:
             logger.info(f"error: {e}")            
@@ -2522,12 +2525,22 @@ async def handle_save_button(update: Update, context: CallbackContext) -> None:
     user_id = int(parts[1])
     message_id = int(parts[2])
 
+    # Проверяем, не был ли caption разбит на части
+    saved_data = context.user_data.get(f"split_message_{user_id}_{message_id}")
+    if saved_data:
+        caption = query.message.text_html
+        file_id = saved_data["file_id"]
+    else:
+        caption = query.message.caption_html
+        logger.info(f"caption2 {caption} ")         
+        file_id = query.message.photo[-1].file_id
+
     # Сохраняем данные о генерации в контексте
     context.user_data["generation_data"] = {
         "user_id": user_id,
         "message_id": message_id,
-        "caption": query.message.caption_html,  # HTML-капшн
-        "file_id": query.message.photo[-1].file_id,  # URL изображения
+        "caption": caption,
+        "file_id": file_id,
     }
 
     # Отображаем клавиатуру с эмодзи
@@ -7596,63 +7609,71 @@ async def fileselect_image_to_delete(update: Update, context: CallbackContext) -
 async def handle_view_scheduled(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
-
+    MAX_CAPTION_LENGTH = 1024
     # Разделяем callback_data
     if '_' in query.data:
         _, key = query.data.split('_', 1)
     else:
         await query.message.reply_text("🚫 Ошибка: Некорректный формат данных.")
         return
-
+    
     global media_group_storage
     # Загружаем данные из файла
     media_group_storage = load_publications_from_firebase()
-
+    
     # ID текущего пользователя
     current_user_id = str(update.effective_user.id)
-
+    
     # Проверяем, что данные есть для текущего пользователя
     if current_user_id in media_group_storage:
         user_publications = media_group_storage[current_user_id]
         data = user_publications.get(key)
-
         if data:
             try:
                 # Если данные - это строка, преобразуем в словарь
                 if isinstance(data, str):
                     data = json.loads(data)
-
+                
                 if isinstance(data, dict) and 'media' in data:
-                    media = data['media']  
+                    media = data['media']
                     media_group = []
-                    captions_only = []  
-
+                    captions_only = []
+                    
                     if isinstance(media, list):
                         for media_data in media:
                             if 'file_id' in media_data:
                                 file_id = media_data['file_id']
-
                                 # Проверяем, является ли это URL или file_id
                                 if file_id.startswith("http"):
                                     media_type = "url"
                                 else:
                                     media_type = "file_id"
-
+                                
+                                caption = media_data.get('caption', '')
+                                parse_mode = media_data.get('parse_mode', None)
+                                
+                                # Проверяем длину caption
+                                if len(caption) > MAX_CAPTION_LENGTH:
+                                    # Если caption слишком длинный, отправляем его отдельно
+                                    caption_to_send = ''
+                                else:
+                                    caption_to_send = caption
+                                
                                 # Отправляем файл как документ (если это GIF) или фото
                                 if file_id.endswith('.gif') or media_type == "url" and file_id.lower().endswith('.gif'):
                                     media_group.append(
                                         InputMediaDocument(
                                             media=file_id,
-                                            caption=media_data.get('caption', ''),
-                                            parse_mode=media_data.get('parse_mode', None)
+                                            caption=caption_to_send,
+                                            parse_mode=parse_mode
                                         )
                                     )
                                 else:
                                     media_group.append(
                                         InputMediaPhoto(
                                             media=file_id,
-                                            caption=media_data.get('caption', ''),
-                                            parse_mode=media_data.get('parse_mode', None)
+                                            caption=caption_to_send,
+                                            parse_mode=parse_mode
                                         )
                                     )
                             else:
@@ -7663,46 +7684,64 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                         for _, media_data in media.items():
                             if 'file_id' in media_data:
                                 file_id = media_data['file_id']
-
                                 if file_id.startswith("http"):
                                     media_type = "url"
                                 else:
                                     media_type = "file_id"
-
+                                
+                                caption = media_data.get('caption', '')
+                                parse_mode = media_data.get('parse_mode', None)
+                                
+                                # Проверяем длину caption
+                                if len(caption) > MAX_CAPTION_LENGTH:
+                                    # Если caption слишком длинный, отправляем его отдельно
+                                    caption_to_send = ''
+                                else:
+                                    caption_to_send = caption
+                                
                                 if file_id.endswith('.gif') or media_type == "url" and file_id.lower().endswith('.gif'):
                                     media_group.append(
                                         InputMediaDocument(
                                             media=file_id,
-                                            caption=media_data.get('caption', ''),
-                                            parse_mode=media_data.get('parse_mode', None)
+                                            caption=caption_to_send,
+                                            parse_mode=parse_mode
                                         )
                                     )
                                 else:
                                     media_group.append(
                                         InputMediaPhoto(
                                             media=file_id,
-                                            caption=media_data.get('caption', ''),
-                                            parse_mode=media_data.get('parse_mode', None)
+                                            caption=caption_to_send,
+                                            parse_mode=parse_mode
                                         )
                                     )
                             else:
                                 if 'caption' in media_data:
                                     captions_only.append(media_data['caption'])
-
+                    
                     # Отправка медиа-группы
                     if media_group:
                         await context.bot.send_media_group(
                             chat_id=query.message.chat_id,
                             media=media_group
                         )
-
+                    
                     # Отправка подписей без изображений
                     for caption in captions_only:
                         await query.message.reply_text(
                             text=caption,
-                            parse_mode='HTML'  
+                            parse_mode='HTML'
                         )
-
+                    
+                    # Отправка caption, если он был слишком длинным
+                    for media_data in media:
+                        caption = media_data.get('caption', '')
+                        if len(caption) > MAX_CAPTION_LENGTH:
+                            await query.message.reply_text(
+                                text=caption,
+                                parse_mode=media_data.get('parse_mode', None)
+                            )
+                    
                     # Отправляем информацию о записи с кнопками
                     await send_scheduled_post_buttons(query, key, data)
                 else:
@@ -7711,6 +7750,7 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                 await query.message.reply_text(f"🚫 Ошибка преобразования данных: {e}")
         else:
             await query.message.reply_text("🚫 Запись не найдена.")
+
 
 
 
