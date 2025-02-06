@@ -2006,6 +2006,8 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
             logger.info(f"prompt на генерацию: {full_prompt}")
             elapsed_time = time.time() - start_time  # Вычисляем прошедшее время
 
+            MAX_CAPTION_LENGTH = 1024  # Максимальная длина caption в Telegram
+
             caption = (
                 f"`{original_prompt}`\n\n"
                 f"Seed: `{seed}, `\n"
@@ -2021,8 +2023,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                 image.save(output, format="PNG")
                 output.seek(0)
 
-
-                # Загружаем изображение на Catbox
+                # Загружаем изображение на Catbox (если нужно)
                 catbox_url = await upload_image_to_catbox_in_background(output.getvalue())
 
                 # Определяем источник запроса
@@ -2040,13 +2041,36 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
 
+                # Проверяем длину caption
+                if len(caption) > MAX_CAPTION_LENGTH:
+                    sent_message = await message.reply_photo(photo=output)
 
-                await message.reply_photo(
-                    photo=output,
-                    caption=escape_gpt_markdown_v2(caption),
-                    parse_mode="MarkdownV2",
-                    reply_markup=reply_markup
-                )              
+                    # Сохраняем информацию о первом сообщении (с фото)
+                    context.user_data[f"split_message_{user_id}_{sent_message.message_id}"] = {
+                        "full_caption": caption,
+                        "file_id": sent_message.photo[-1].file_id,
+                    }
+
+                    # Обновляем callback_data для кнопки публикации
+                    keyboard[2][0] = InlineKeyboardButton(
+                        "🌃 Опубликовать в общую папку",
+                        callback_data=f"neuralpublic_{user_id}_{sent_message.message_id}"
+                    )
+
+                    # Отправляем caption отдельно, но уже в формате HTML
+                    await message.reply_text(
+                        text=escape_gpt_markdown_v2(caption),
+                        parse_mode="MarkdownV2",  # Меняем MarkdownV2 → HTML
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    # Если caption влезает, отправляем обычным способом
+                    sent_message = await message.reply_photo(
+                        photo=output,
+                        caption=escape_gpt_markdown_v2(caption),
+                        parse_mode="MarkdownV2",
+                        reply_markup=reply_markup
+                    )                          
             break  # Если все прошло успешно, выходим из цикла
         except Exception as e:
             logger.info(f"error: {e}")            
@@ -2059,7 +2083,6 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
             else:
                 await message.reply_text(f"Произошла ошибка при генерации изображения. Попробуйте: \n\n1)Подождать 30 секунд и повторить. \n 2)Если пункт 1 не помог, то сменить модель(стиль), возможно что-то сломалось в данной модели. \n 3)Если смена стиля не помогла то подождите несколько часов и повторите попытку, возможно что-то с серверами. \n\n Если ничего из этого не помогло то пожалуйтса сообщите о проблеме через команду /send, веротяно что-то сломалось в боте ")
 
-
 async def handle_neuralpublic_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
@@ -2069,12 +2092,22 @@ async def handle_neuralpublic_button(update: Update, context: CallbackContext) -
     user_id = int(parts[1])
     message_id = int(parts[2])
 
+    # Проверяем, не был ли caption разбит на части
+    saved_data = context.user_data.get(f"split_message_{user_id}_{message_id}")
+    if saved_data:
+        caption = query.message.text_html
+        file_id = saved_data["file_id"]
+    else:
+        caption = query.message.caption_html
+        logger.info(f"caption2 {caption} ")         
+        file_id = query.message.photo[-1].file_id
+
     # Сохраняем данные о генерации в контексте
     context.user_data["shared_generation_data"] = {
         "user_id": user_id,
         "message_id": message_id,
-        "caption": query.message.caption_html,
-        "file_id": query.message.photo[-1].file_id,
+        "caption": caption,
+        "file_id": file_id,
     }
 
     # Отображаем клавиатуру с эмодзи
@@ -2291,14 +2324,28 @@ async def handle_view_post(update: Update, context: CallbackContext):
             return
         
         media = post_data["media"][0]
-
-
-        await context.bot.send_photo(
-            chat_id=query.message.chat.id,
-            photo=media["file_id"],
-            caption=media["caption"],
-            parse_mode="HTML"
-        )
+        caption = media["caption"]
+        logger.info(f"caption {caption}")
+        # Проверяем длину caption
+        if len(caption) > 1024:
+            # Если caption слишком длинный, отправляем фото без подписи
+            await context.bot.send_photo(
+                chat_id=query.message.chat.id,
+                photo=media["file_id"]
+            )
+            send_caption_separately = True
+            logger.info(f"send_caption_separately {send_caption_separately}")                
+        else:
+            # Если caption в пределах лимита, отправляем его вместе с фото
+            await context.bot.send_photo(
+                chat_id=query.message.chat.id,
+                photo=media["file_id"],
+                caption=caption,
+                parse_mode="HTML"
+            )
+            send_caption_separately = False
+            logger.info(f"send_caption_separately {send_caption_separately}")          
+        logger.info(f"send_caption_separately {send_caption_separately}")                
         # Получаем количество добавлений в избранное
         favorites = post_data.get("favorites", [])
         fav_count = len(favorites)
@@ -2360,11 +2407,20 @@ async def handle_view_post(update: Update, context: CallbackContext):
 
         keyboard.append([InlineKeyboardButton("⬅ Другие посты", callback_data="view_shared")])
 
-        await context.bot.send_message(
-            chat_id=query.message.chat.id,
-            text=f"{fav_text}{remaining_posts_text}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        # Если caption был слишком длинным, отправляем его отдельным сообщением
+        if send_caption_separately:
+            await context.bot.send_message(
+                chat_id=query.message.chat.id,
+                text=f"{caption}\n\n{fav_text}{remaining_posts_text}",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=query.message.chat.id,
+                text=f"{fav_text}{remaining_posts_text}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
     except Exception as e:
         logger.error(f"Ошибка: {e}")
