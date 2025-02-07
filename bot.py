@@ -2053,7 +2053,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
             MAX_CAPTION_LENGTH = 1024  # Максимальная длина caption в Telegram
 
             caption = (
-                f"`{original_prompt}`\n\n"
+                f"`Нарисуй: {original_prompt}`\n\n"
                 f"Seed: `{seed}, `\n"
                 + (f"Guidance Scale: {guidance_scale}\n" if guidance_scale is not None else "")
                 + (f"Steps: {num_inference_steps}\n" if num_inference_steps is not None else "")
@@ -2433,6 +2433,7 @@ async def handle_view_post(update: Update, context: CallbackContext):
                     caption = re.sub(r"<.*?>", "", caption)  # Убираем HTML-теги
                     caption = unescape(caption)  # Декодируем HTML-сущности
                     caption = re.split(r"\bseed\b", caption, flags=re.IGNORECASE)[0]  # Обрезаем по "seed"
+                    caption = re.sub(r"^(?:нарисуй|draw)[:,]?\s*", "", caption, flags=re.IGNORECASE)                     
                     caption = re.sub(r"^\d+,\s*", "", caption)  # Убираем числа в начале строки
 
                     # Обрезаем caption до ближайшего пробела перед 23 символами
