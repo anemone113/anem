@@ -2322,6 +2322,7 @@ async def handle_select_scheduled(update: Update, context: CallbackContext):
             caption = re.sub(r"<.*?>", "", caption)  # Убираем HTML-теги
             caption = unescape(caption)  # Декодируем HTML-сущности
             caption = re.split(r"\bseed\b", caption, flags=re.IGNORECASE)[0]  # Обрезаем по "seed"
+            caption = re.sub(r"^(?:нарисуй|draw)[:,]?\s*\d*,?\s*", "", caption, flags=re.IGNORECASE)
             caption = re.sub(r"^\d+,\s*", "", caption)  # Убираем числа в начале строки
             
             # Обрезаем caption до ближайшего пробела перед 23 символами
@@ -2335,7 +2336,7 @@ async def handle_select_scheduled(update: Update, context: CallbackContext):
             post_buttons.append((
                 fav_count,  # Для сортировки
                 InlineKeyboardButton(
-                    f"{label}: {text_preview}",
+                    f"{label} {text_preview}",
                     callback_data=f"viewneuralpost_{owner_id}_{post_id}"
                 )
             ))
