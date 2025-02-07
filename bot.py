@@ -2522,9 +2522,11 @@ async def regenerate_image(update, context):
     else:
         prompt = full_text  # Если шаблон не найден, используем весь текст
 
+    # Убираем ключевые слова в начале строки и возможное число с запятой
+    prompt = re.sub(r"^(?:Нарисуй[:,]?|draw[:,]?)\s*\d*,?\s*", "", prompt, flags=re.IGNORECASE).strip()
 
-    prompt = re.sub(r"^\d+,\s*", "", prompt).strip()
-    logger.info(f"Повторная генерация с prompt: {prompt}")    
+    logger.info(f"Повторная генерация с prompt: {prompt}")
+
     # Запускаем генерацию с новым seed
     await generate_image(update, context, user_id, prompt, query_message=query.message)
 
