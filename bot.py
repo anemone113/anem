@@ -2372,6 +2372,7 @@ async def handle_view_post(update: Update, context: CallbackContext):
         
         media = post_data["media"][0]
         caption = media["caption"]
+        original_caption = caption
         logger.info(f"caption {caption}")
         # Проверяем длину caption
         if len(caption) > 1024:
@@ -2458,7 +2459,7 @@ async def handle_view_post(update: Update, context: CallbackContext):
         if send_caption_separately:
             await context.bot.send_message(
                 chat_id=query.message.chat.id,
-                text=f"{caption}\n\n{fav_text}{remaining_posts_text}",
+                text=f"{original_caption}\n\n{fav_text}{remaining_posts_text}",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
