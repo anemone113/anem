@@ -132,7 +132,51 @@ def save_media_group_data(media_group_storage, user_id):
 
 
 
-# Загружаем данные при запуске бота
+async def sendall(update: Update, context: CallbackContext) -> None:
+    """Отправляет сообщение указанным пользователям с HTML-разметкой."""
+    if not update.message or not update.message.text:
+        await update.message.reply_text("Использование: /sendall [id1, id2, ...] текст сообщения")
+        return
+
+    # Получаем полный текст сообщения без команды
+    message_text = update.message.text[len("/sendall") :].strip()
+
+    if not message_text.startswith("["):
+        await update.message.reply_text("Некорректный формат. Используйте: /sendall [id1, id2] текст сообщения")
+        return
+
+    try:
+        # Извлекаем список user_id из квадратных скобок
+        ids_part, message_text = message_text.split("]", 1)
+        user_ids = ast.literal_eval(ids_part + "]")  # Преобразуем строку в список
+        message_text = message_text.strip()
+
+        if not isinstance(user_ids, list) or not all(isinstance(i, int) for i in user_ids):
+            raise ValueError
+    except Exception:
+        await update.message.reply_text("Ошибка в формате ID. Используйте: /sendall [id1, id2] текст сообщения")
+        return
+
+    if not message_text:
+        await update.message.reply_text("Вы не ввели текст для рассылки.")
+        return
+
+    success_count, fail_count = 0, 0
+
+    for user_id in user_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id, 
+                text=message_text, 
+                parse_mode="HTML"  # Используем HTML-разметку
+            )
+            success_count += 1
+        except Exception as e:
+            fail_count += 1
+            print(f"Ошибка при отправке пользователю {user_id}: {e}")
+
+    await update.message.reply_text(f"Сообщение отправлено {success_count} пользователям, не удалось {fail_count}.")
+
 
 
 async def mainhelp_callback(update: Update, context: CallbackContext):
@@ -9382,7 +9426,7 @@ def main() -> None:
 
     # Обработчик для просмотра конкретной отложенной записи
     application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$'))    
-    
+    application.add_handler(CommandHandler("sendall", sendall))    
     application.add_handler(CommandHandler("style", choose_style))   
     application.add_handler(CommandHandler('set_role', set_role ))          
     application.add_handler(CommandHandler('send', send_mode))
