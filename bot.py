@@ -2433,7 +2433,7 @@ async def handle_view_post(update: Update, context: CallbackContext):
                     caption = re.sub(r"<.*?>", "", caption)  # Убираем HTML-теги
                     caption = unescape(caption)  # Декодируем HTML-сущности
                     caption = re.split(r"\bseed\b", caption, flags=re.IGNORECASE)[0]  # Обрезаем по "seed"
-                    caption = re.sub(r"^(?:нарисуй|draw)[:,]?\s*", "", caption, flags=re.IGNORECASE)                     
+                    caption = re.sub(r"^(?:нарисуй|draw)[:,]?\s*\d*,?\s*", "", caption, flags=re.IGNORECASE)              
                     caption = re.sub(r"^\d+,\s*", "", caption)  # Убираем числа в начале строки
 
                     # Обрезаем caption до ближайшего пробела перед 23 символами
