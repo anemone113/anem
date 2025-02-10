@@ -4291,10 +4291,22 @@ async def watering_button_handler(update: Update, context: CallbackContext) -> N
     """Обрабатывает нажатие на кнопку 'Полито'."""
     query = update.callback_query
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
 
     mark_watering(user_id)  # Добавляем запись о поливе
 
-    await query.answer("Записано! ✅")  # Добавляем await
+    # Генерируем новое сообщение и кнопки
+    message_text, keyboard = await generate_plants_buttons(user_id)
+
+    if keyboard:
+        await query.message.edit_text(
+            text=message_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard
+        )
+
+    await query.answer("Записано! ✅", show_alert=True)
 
 # Словарь для хранения ID сообщений с изображениями растений
 user_plant_messages = {}
@@ -4408,8 +4420,8 @@ def extract_number(text, label):
     return int(match.group(1)) if match else None
 
 def extract_avg_number(text, label):
-    """Извлекает среднее число из диапазона либо одно число."""
-    match = re.search(fr"{label}[:\s]+(\d+)[\-/–]?(\d+)?", text)
+    """Извлекает среднее число из диапазона либо одно число, включая отрицательные значения."""
+    match = re.search(fr"{label}[:\s]+(-?\d+)[\-/–]?(-?\d+)?", text)
     if match:
         numbers = [int(n) for n in match.groups() if n]
         return sum(numbers) // len(numbers) if numbers else None
