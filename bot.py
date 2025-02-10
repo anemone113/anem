@@ -4095,6 +4095,7 @@ def get_season() -> str:
     month = datetime.now().month
     return "winter" if month in {10, 11, 12, 1, 2, 3} else "summer"
 
+user_plants_list_messages = {}
 
 async def handle_myplants_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает нажатие кнопки 'Мои растения'."""
@@ -4104,7 +4105,24 @@ async def handle_myplants_callback(update: Update, context: ContextTypes.DEFAULT
     message_text, keyboard = await generate_plants_buttons(user_id)
     
     if keyboard:
-        await query.message.edit_text(message_text, reply_markup=keyboard, parse_mode="HTML")
+        if user_id in user_plants_list_messages:
+            # Если у нас есть ID предыдущего сообщения, пробуем его отредактировать
+            try:
+                await context.bot.edit_message_text(
+                    text=message_text,
+                    chat_id=query.message.chat_id,
+                    message_id=user_plants_list_messages[user_id],
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                # Если сообщение не найдено (например, было удалено), отправляем новое
+                new_message = await query.message.reply_text(message_text, reply_markup=keyboard, parse_mode="HTML")
+                user_plants_list_messages[user_id] = new_message.message_id
+        else:
+            # Если ещё нет сохранённого ID, отправляем новое сообщение
+            new_message = await query.message.reply_text(message_text, reply_markup=keyboard, parse_mode="HTML")
+            user_plants_list_messages[user_id] = new_message.message_id
     else:
         await query.answer(message_text, show_alert=True)  # Показываем алерт, если список пуст
 
@@ -4373,15 +4391,30 @@ async def delete_plant_callback(update: Update, context: CallbackContext):
 
     delete_user_plant(user_id, plant_name)
 
-    await query.answer(f"✅Растение '{plant_name}' удалено.", show_alert=True)
+    await query.answer(f"✅ Растение '{plant_name}' удалено.", show_alert=True)
 
-    # Удаляем сообщение с растением
+    # Удаляем сообщение с деталями растения
     if user_id in user_plant_messages:
         try:
             await context.bot.delete_message(chat_id=user_id, message_id=user_plant_messages[user_id])
-            del user_plant_messages[user_id]  # Удаляем запись из памяти
+            del user_plant_messages[user_id]
         except Exception as e:
             print(f"Ошибка при удалении сообщения: {e}")
+
+    # Обновляем сообщение со списком растений
+    message_text, keyboard = await generate_plants_buttons(user_id)
+
+    if keyboard and user_id in user_plants_list_messages:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=user_id,
+                message_id=user_plants_list_messages[user_id],
+                text=message_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            print(f"Ошибка при обновлении списка растений: {e}")
 
 
 async def handle_sorting(update: Update, context: CallbackContext):
