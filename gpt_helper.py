@@ -97,6 +97,71 @@ def load_publications_from_firebase():
 
 
 
+def save_to_user_plants(user_id: int, scientific_name: str, data: dict) -> None:
+    """Сохраняет информацию о растении в Firebase."""
+    try:
+        ref = db.reference(f"user_plants/{user_id}/{scientific_name}")
+        ref.set(data)
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении данных о растении: {e}")
+
+
+
+
+def mark_watering(user_id: int) -> None:
+    """Добавляет дату и время полива в Firebase."""
+    try:
+        ref = db.reference(f"user_plants/{user_id}/water_plants")
+        current_time = datetime.now().strftime("%d.%m.%y %H:%M")
+
+        # Получаем текущие записи, если они есть
+        existing_records = ref.get()
+        if existing_records is None:
+            existing_records = []
+
+        # Добавляем новую запись
+        existing_records.append(current_time)
+        ref.set(existing_records)
+
+    except Exception as e:
+        logging.error(f"Ошибка при добавлении даты полива: {e}")
+
+
+def load_water_plants(user_id: int) -> list:
+    """Загружает список дат поливки пользователя из Firebase."""
+    try:
+        ref = db.reference(f"user_plants/{user_id}/water_plants")
+        water_plants = ref.get() or []
+        return water_plants
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке данных о поливке: {e}")
+        return []
+
+
+def load_user_plants(user_id: int) -> dict:
+    """Загружает информацию о растениях пользователя из Firebase, исключая water_plants."""
+    try:
+        ref = db.reference(f"user_plants/{user_id}")
+        data = ref.get() or {}
+        return {key: value for key, value in data.items() if key != "water_plants"}
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке данных о растениях: {e}")
+        return {}
+
+def delete_user_plant(user_id: int, scientific_name: str) -> None:
+    """Удаляет информацию о конкретном растении пользователя из Firebase."""
+    try:
+        ref = db.reference(f"user_plants/{user_id}/{scientific_name}")
+        if ref.get():
+            ref.delete()
+            logging.info(f"Растение '{scientific_name}' удалено для пользователя {user_id}.")
+        else:
+            logging.warning(f"Растение '{scientific_name}' не найдено у пользователя {user_id}.")
+    except Exception as e:
+        logging.error(f"Ошибка при удалении растения '{scientific_name}': {e}")
+
+
+
 
 def save_publications_to_firebase(user_id, message_id, data):
     """Сохраняет данные в Firebase, добавляя или обновляя записи только для текущего пользователя."""
@@ -250,6 +315,24 @@ def save_channel_to_firebase(chat_id, user_id):
         logging.info(f"Канал {chat_id} успешно привязан к пользователю {user_id}.")
     except Exception as e:
         logging.error(f"Ошибка при сохранении ID канала: {e}")
+
+def save_twitter_keys_to_firebase(user_id: int, api_key: str, api_secret: str, access_token: str, access_token_secret: str) -> None:
+    """
+    Сохраняет ключи API и токены доступа для публикации в Twitter в Firebase.
+    """
+    try:
+        ref = db.reference(f'users_publications/twitter_keys/{user_id}')
+        ref.set({
+            "api_key": api_key,
+            "api_secret": api_secret,
+            "access_token": access_token,
+            "access_token_secret": access_token_secret,
+        })
+        logging.info(f"Twitter API ключи успешно сохранены для пользователя {user_id}.")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении Twitter API ключей: {e}")
+        raise  # Передаем ошибку выше для обработки в вызывающей функции
+
 
 def save_vk_keys_to_firebase(user_id: int, owner_id: str, token: str) -> None:
     """
@@ -1062,7 +1145,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                 google_search=GoogleSearch()
             )
             response = client.models.generate_content(
-                model='gemini-2.0-flash-exp',
+                model='gemini-2.0-flash',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,                
@@ -1312,7 +1395,7 @@ async def generate_plant_help_response(user_id, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.0-flash-exp',
+                model='gemini-2.0-flash',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(               
                     temperature=1.4,
