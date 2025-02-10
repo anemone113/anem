@@ -4253,7 +4253,7 @@ async def generate_plants_buttons(user_id: int, sort_by: str = None, reverse: bo
     # Добавляем информацию о поливках
     watering_info = format_watering_info(user_id)   
     # Формируем текст сообщения
-    newplant = [InlineKeyboardButton("🌱 Добавить новое растение 🌱", callback_data='start_ocr')], 
+    newplant = [InlineKeyboardButton("🌱 Добавить новое растение 🌱", callback_data='start_ocr')] 
 
     message_text = f"<pre>Вода - поливать раз в Х дней\nt°С - Средняя комфортная температура\nt°Min - минимальная температура\nСвет - теневыносливость, где 10 это самые светолюбивые растения 1 это самые теневыносливые\n\nВаши текущие растения:\n{header}\n" + "\n".join(rows) + f"</pre>\n\n{watering_info}"
     keyboard = InlineKeyboardMarkup([waterkeyboard] + [pre_buttons] + [sort_buttons] + buttons + [navigation_buttons] + [newplant])
