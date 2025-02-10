@@ -4391,12 +4391,12 @@ async def handle_sorting(update: Update, context: CallbackContext):
 
 def extract_watering(text, label):
     """Извлекает среднее число полива из текста."""
-    match = re.search(fr"{label}:.*?(\d+)\s*раз\s*в\s*(\d+)[-/](\d+)", text)
+    match = re.search(fr"{label}[:\s]+(\d+)\s*раз\s*в\s*(\d+)[\-/–](\d+)", text)
     if match:
         numbers = list(map(int, match.groups()[1:]))  # Берём второе и третье числа (диапазон дней)
         return sum(numbers) // len(numbers) if numbers else None
 
-    match = re.search(fr"{label}:.*?(\d+)\s*раз\s*в\s*(\d+)", text)
+    match = re.search(fr"{label}[:\s]+(\d+)\s*раз\s*в\s*(\d+)", text)
     if match:
         return int(match.group(2))  # Берём число дней
 
@@ -4404,12 +4404,12 @@ def extract_watering(text, label):
 
 def extract_number(text, label):
     """Извлекает одно число из текста."""
-    match = re.search(fr"{label}:.*?(\d+)", text)
+    match = re.search(fr"{label}[:\s]+(\d+)", text)
     return int(match.group(1)) if match else None
 
 def extract_avg_number(text, label):
     """Извлекает среднее число из диапазона либо одно число."""
-    match = re.search(fr"{label}:.*?(\d+)(?:[-/](\d+))?", text)
+    match = re.search(fr"{label}[:\s]+(\d+)[\-/–]?(\d+)?", text)
     if match:
         numbers = [int(n) for n in match.groups() if n]
         return sum(numbers) // len(numbers) if numbers else None
