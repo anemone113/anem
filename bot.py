@@ -85,7 +85,7 @@ from dotenv import load_dotenv
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-IMGBB_API_KEY = '351e44b04c1fe07732c20a4a65c1d751'
+IMGBB_API_KEY = 'd3e73e10edd1fc973949138b3c388334'
 GROUP_CHAT_ID = -1002233281756
 
 # Состояния
@@ -6208,6 +6208,7 @@ async def process_image(photo_url):
     проверяет разрешение и размер, применяет необходимые преобразования.
     GIF-файлы остаются без изменений.
     """
+    logger.info(f"photo_url: {photo_url}")      
     try:
         # Загрузка изображения из URL
         async with aiohttp.ClientSession() as session:
