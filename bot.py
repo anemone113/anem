@@ -4774,15 +4774,15 @@ async def upload_image(file_path: str) -> str:
     except Exception as e:
         logging.error(f"Ошибка загрузки на imgbb: {e}")
         try:
-            # Попытка загрузки на Free Image Hosting
-            return await upload_image_to_freeimage(file_path)
+            # Попытка загрузки на Catbox
+            return await upload_image_to_catbox(file_path)
         except Exception as e:
-            logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
+            logging.error(f"Ошибка загрузки на Catbox: {e}")
             try:
-                # Попытка загрузки на Catbox
-                return await upload_image_to_catbox(file_path)
+                # Попытка загрузки на Free Image Hosting
+                return await upload_image_to_freeimage(file_path)
             except Exception as e:
-                logging.error(f"Ошибка загрузки на Catbox: {e}")
+                logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
                 try:
                     # Попытка загрузки на Imgur
                     return await upload_image_to_imgur(file_path)
