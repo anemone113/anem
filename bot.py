@@ -85,7 +85,7 @@ from dotenv import load_dotenv
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-IMGBB_API_KEY = 'd3e73e10edd1fc973949138b3c388334'
+IMGBB_API_KEY = '201102aa07fa88004788bfa1c0b2fcae'
 GROUP_CHAT_ID = -1002233281756
 
 # Состояния
@@ -4781,20 +4781,20 @@ async def upload_image(file_path: str) -> str:
     except Exception as e:
         logging.error(f"Ошибка загрузки на imgbb: {e}")
         try:
-            # Попытка загрузки на Catbox
-            return await upload_image_to_catbox(file_path)
+            # Попытка загрузки на Imgur
+            return await upload_image_to_imgur(file_path)
         except Exception as e:
-            logging.error(f"Ошибка загрузки на Catbox: {e}")
+            logging.error(f"Ошибка загрузки на Imgur: {e}")
             try:
                 # Попытка загрузки на Free Image Hosting
                 return await upload_image_to_freeimage(file_path)
             except Exception as e:
                 logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
                 try:
-                    # Попытка загрузки на Imgur
-                    return await upload_image_to_imgur(file_path)
+                    # Попытка загрузки на Catbox
+                    return await upload_image_to_catbox(file_path)
                 except Exception as e:
-                    logging.error(f"Ошибка загрузки на Imgur: {e}")
+                    logging.error(f"Ошибка загрузки на Catbox: {e}")                  
                     try:
                         # Попытка загрузки на Cloudinary
                         return await upload_image_to_cloudinary(file_path)
