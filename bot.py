@@ -4776,10 +4776,10 @@ async def upload_image_to_freeimage(file_path: str) -> str:
 # Основная функция загрузки изображения с проверкой доступности сервисов
 async def upload_image(file_path: str) -> str:
     try:
-        # Попытка загрузки на imgbb
-        return await upload_image_to_imgbb(file_path)
+        # Попытка загрузки на Catbox
+        return await asyncio.wait_for(upload_image_to_catbox(file_path), timeout=5)
     except Exception as e:
-        logging.error(f"Ошибка загрузки на imgbb: {e}")
+        logging.error(f"Ошибка загрузки на Catbox: {e}")       
         try:
             # Попытка загрузки на Imgur
             return await upload_image_to_imgur(file_path)
@@ -4791,10 +4791,9 @@ async def upload_image(file_path: str) -> str:
             except Exception as e:
                 logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
                 try:
-                    # Попытка загрузки на Catbox
-                    return await upload_image_to_catbox(file_path)
+                    return await upload_image_to_imgbb(file_path)
                 except Exception as e:
-                    logging.error(f"Ошибка загрузки на Catbox: {e}")                  
+                    logging.error(f"Ошибка загрузки на imgbb: {e}")                 
                     try:
                         # Попытка загрузки на Cloudinary
                         return await upload_image_to_cloudinary(file_path)
