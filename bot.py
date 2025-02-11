@@ -4701,19 +4701,26 @@ async def upload_image_to_cloudinary(file_path: str) -> str:
 
 # Функция для загрузки изображения на imgbb
 async def upload_image_to_imgbb(file_path: str) -> str:
-    timeout = ClientTimeout(total=4)  # Таймаут в 10 секунд
-    async with aiohttp.ClientSession() as session:
-        with open(file_path, 'rb') as f:
-            form = aiohttp.FormData()
-            form.add_field('key', IMGBB_API_KEY)
-            form.add_field('image', f)
+    timeout = aiohttp.ClientTimeout(total=4)  # Таймаут в 4 секунды
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            with open(file_path, 'rb') as f:
+                form = aiohttp.FormData()
+                form.add_field('key', IMGBB_API_KEY)
+                form.add_field('image', f)
 
-            async with session.post('https://api.imgbb.com/1/upload', data=form) as response:
-                if response.status == 200:
-                    response_json = await response.json()
-                    return response_json['data']['url']
-                else:
-                    raise Exception(f"Ошибка загрузки на imgbb: {response.status}")
+                async with session.post('https://api.imgbb.com/1/upload', data=form) as response:
+                    response_text = await response.text()  # Читаем полный ответ от сервера
+                    
+                    if response.status == 200:
+                        response_json = await response.json()
+                        return response_json['data']['url']
+                    else:
+                        logging.error(f"Ошибка загрузки на imgbb: {response.status}, ответ: {response_text}")
+                        raise Exception(f"Ошибка загрузки на imgbb: {response.status}, ответ: {response_text}")
+        except Exception as e:
+            logging.exception(f"Ошибка при загрузке изображения: {e}")
+            raise
 
 # Функция для загрузки изображения на Imgur
 async def upload_image_to_imgur(file_path: str) -> str:
