@@ -2884,11 +2884,19 @@ async def second_upload_image(file_path: str) -> str:
         # Попытка загрузки на Catbox с таймаутом 5 секунд
         return await asyncio.wait_for(upload_catbox(file_path), timeout=5)
     except asyncio.TimeoutError:
-        print("Таймаут при загрузке на Catbox. Переход к FreeImage.")
-        return await upload_free_image(file_path)
+        print("Таймаут при загрузке на Catbox. Переход к ImgBB.")
+        try:
+            return await upload_image_to_imgbb(file_path)
+        except Exception as e:
+            print(f"Ошибка при загрузке на ImgBB: {e}. Переход к FreeImage.")
+            return await upload_free_image(file_path)
     except Exception as e:
-        print(f"Ошибка при загрузке на Catbox: {e}")
-        return await upload_free_image(file_path)
+        print(f"Ошибка при загрузке на Catbox: {e}. Переход к ImgBB.")
+        try:
+            return await upload_image_to_imgbb(file_path)
+        except Exception as imgbb_error:
+            print(f"Ошибка при загрузке на ImgBB: {imgbb_error}. Переход к FreeImage.")
+            return await upload_free_image(file_path)
 
 async def upload_catbox(file_path: str) -> str:
     async with aiohttp.ClientSession() as session:
