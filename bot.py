@@ -6209,48 +6209,57 @@ async def convert_image_repost(photo_url: str):
 
 
 async def process_image(photo_url):
-    logger.info(f"Downloading image from: {photo_url}")      
+    """
+    Загружает изображение, конвертирует его в формат JPG,
+    проверяет разрешение и размер, применяет необходимые преобразования.
+    GIF-файлы остаются без изменений.
+    """
     try:
+        # Загрузка изображения из URL
         async with aiohttp.ClientSession() as session:
             async with session.get(photo_url) as response:
-                logger.info(f"Response status: {response.status}")
-                
-                if response.status != 200:
-                    raise Exception(f"Failed to fetch image, status: {response.status}")
-                
-                content_length = response.headers.get('Content-Length', 'Unknown')
-                logger.info(f"Content-Length: {content_length}")
-                
-                img_data = await response.read()
-                logger.info(f"Downloaded {len(img_data)} bytes successfully")
+                if response.status == 200:
+                    img_data = await response.read()
+                    with open('temp_image.jpg', 'wb') as f:
+                        f.write(img_data)
+                else:
+                    raise Exception("Failed to fetch image from URL")
 
+        # Открываем изображение
         img = Image.open(io.BytesIO(img_data))
 
+        # Если формат GIF, возвращаем исходные данные
         if img.format == "GIF":
             logger.info("Image is a GIF, returning original data")
             output = io.BytesIO(img_data)
             output.seek(0)
             return output, True
 
+        # Конвертация в формат JPEG (если не JPEG)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
 
+        # Уменьшение разрешения, если большая сторона > 2300px
         max_dimension = 2500
         if max(img.width, img.height) > max_dimension:
             scale = max_dimension / max(img.width, img.height)
             new_size = (int(img.width * scale), int(img.height * scale))
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
+        # Сохраняем изображение в буфер памяти и проверяем размер
         output = io.BytesIO()
         img.save(output, format="JPEG", quality=100)
         output.seek(0)
-
-        max_file_size = 2 * 1024 * 1024  
+        
+        # Проверка размера файла (если > 2MB, сжимаем)
+        max_file_size = 2 * 1024 * 1024  # 2MB
         if len(output.getvalue()) > max_file_size:
+            # Попробуем снизить качество
             output = io.BytesIO()
             img.save(output, format="JPEG", quality=85)
             output.seek(0)
 
+            # Если файл всё ещё больше 2MB, уменьшаем разрешение
             if len(output.getvalue()) > max_file_size:
                 scale = (max_file_size / len(output.getvalue())) ** 0.5
                 new_size = (int(img.width * scale), int(img.height * scale))
@@ -6259,10 +6268,11 @@ async def process_image(photo_url):
                 img.save(output, format="JPEG", quality=85)
                 output.seek(0)
 
-        return output, False  
+        return output, False  # Возвращаем обработанное изображение и флаг is_gif=False
     except Exception as e:
         logger.error(f"Error processing image: {e}")
         return None, False
+
 
 
 
