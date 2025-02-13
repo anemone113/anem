@@ -10,7 +10,6 @@ def home():
 
 @app.route('/map')
 def show_map():
-
     return f'''
     <html>
     <head>
@@ -21,12 +20,12 @@ def show_map():
         </script>
     </head>
     <body>
-        <iframe width="100%" height="300px" frameborder="0" allowfullscreen 
+        <iframe width="100%" height="600px" frameborder="0" allowfullscreen 
             allow="geolocation" 
-            src="//umap.openstreetmap.fr/ru/map/anemone_1177482?scaleControl=false&miniMap=true&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=null&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true&datalayers=ad0d1cbb-4dd3-4476-8111-c8a40f97126b%2Ca5a444be-fdb5-44aa-81a7-2a0c4b889705&measureControl=true#9/55.6147/37.3123">
+            src="//umap.openstreetmap.fr/ru/map/anemone_1177482?scaleControl=true&miniMap=false&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=false&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true&measureControl=true&datalayers=ad0d1cbb-4dd3-4476-8111-c8a40f97126b%2Ca5a444be-fdb5-44aa-81a7-2a0c4b889705&locateControl=true&starControl=false#9/55.6147/37.3123">
         </iframe>
         <p>
-            <a href="//umap.openstreetmap.fr/ru/map/anemone_1177482?scaleControl=false&miniMap=true&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=null&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true&datalayers=ad0d1cbb-4dd3-4476-8111-c8a40f97126b%2Ca5a444be-fdb5-44aa-81a7-2a0c4b889705&measureControl=true#9/55.6147/37.3123">
+            <a href="//umap.openstreetmap.fr/ru/map/anemone_1177482?scaleControl=true&miniMap=false&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=false&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true&measureControl=true&datalayers=ad0d1cbb-4dd3-4476-8111-c8a40f97126b%2Ca5a444be-fdb5-44aa-81a7-2a0c4b889705&locateControl=true&starControl=false#9/55.6147/37.3123">
                 Смотреть в полноэкранном режиме
             </a>
         </p>
