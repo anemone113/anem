@@ -1479,10 +1479,11 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             return ASKING_FOR_ROLE
     if update.message.document:
         mime_type = update.message.document.mime_type
-        file_name = update.message.document.file_name.lower()
+        file_name = update.message.document.file_name.lower() if update.message.document.file_name else ""
         
+        # Проверяем MIME-тип или расширение файла
         if mime_type in ("text/plain", "application/pdf") or file_name.endswith((".txt", ".pdf")):
-            return await handle_documentgpt(update, context)      
+            return await handle_documentgpt(update, context)       
     if update.message.audio or update.message.voice:
         return await handle_audio(update, context)
     if update.message.animation:  # Проверка на GIF
