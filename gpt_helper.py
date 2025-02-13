@@ -94,7 +94,33 @@ def load_publications_from_firebase():
     except Exception as e:
         logging.error(f"Ошибка при загрузке публикаций из Firebase: {e}")
         return {}
+def save_publications_to_firebase(user_id, message_id, data):
+    """Сохраняет данные в Firebase, добавляя или обновляя записи только для текущего пользователя."""
+    try:
+        # Подготовка пути для обновления
+        path = f"users_publications/{user_id}/{message_id}"
+        updates = {path: data}
+        
+        # Обновляем только указанный путь
+        ref = db.reference()
+        ref.update(updates)  # Обновляет данные только по пути path
+        
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении публикации {user_id}_{message_id} в Firebase: {e}")
 
+
+def load_shared_publications():
+    """Загружает общие публикации из Firebase."""
+    try:
+        ref = db.reference('shared_publications')
+        return ref.get() or {}
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке общих публикаций: {e}")
+        return {}
+
+def save_to_shared_publications(user_id: int, key: str, data: dict) -> None:
+    ref = db.reference(f"shared_publications/{user_id}/{key}")
+    ref.set(data)
 
 
 def save_to_user_plants(user_id: int, scientific_name: str, data: dict) -> None:
@@ -105,8 +131,22 @@ def save_to_user_plants(user_id: int, scientific_name: str, data: dict) -> None:
     except Exception as e:
         logging.error(f"Ошибка при сохранении данных о растении: {e}")
 
+def save_to_user_mapplants(user_id: int, name: str, data: dict) -> None:
+    """Сохраняет информацию о растении в Firebase."""
+    try:
+        ref = db.reference(f"map_plants/{user_id}/{name}")
+        ref.set(data)
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении данных о растении: {e}")
 
-
+def load_all_plants_data() -> dict:
+    """Загружает данные о всех растениях всех пользователей из Firebase."""
+    try:
+        ref = db.reference("map_plants")
+        return ref.get() or {}
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке данных о растениях: {e}")
+        return {}
 
 def mark_watering(user_id: int) -> None:
     """Добавляет дату и время полива в Firebase."""
@@ -160,36 +200,6 @@ def delete_user_plant(user_id: int, scientific_name: str) -> None:
     except Exception as e:
         logging.error(f"Ошибка при удалении растения '{scientific_name}': {e}")
 
-
-
-
-def save_publications_to_firebase(user_id, message_id, data):
-    """Сохраняет данные в Firebase, добавляя или обновляя записи только для текущего пользователя."""
-    try:
-        # Подготовка пути для обновления
-        path = f"users_publications/{user_id}/{message_id}"
-        updates = {path: data}
-        
-        # Обновляем только указанный путь
-        ref = db.reference()
-        ref.update(updates)  # Обновляет данные только по пути path
-        
-    except Exception as e:
-        logging.error(f"Ошибка при сохранении публикации {user_id}_{message_id} в Firebase: {e}")
-
-def load_shared_publications():
-    """Загружает общие публикации из Firebase."""
-    try:
-        ref = db.reference('shared_publications')
-        return ref.get() or {}
-    except Exception as e:
-        logging.error(f"Ошибка при загрузке общих публикаций: {e}")
-        return {}
-
-def save_to_shared_publications(user_id: int, key: str, data: dict) -> None:
-    ref = db.reference(f"shared_publications/{user_id}/{key}")
-    ref.set(data)
-
 def copy_to_shared_publications(user_id: int, key: str) -> bool:
     """Копирует публикацию из users_publications в shared_publications."""
     ref_users = db.reference(f"users_publications/{user_id}/{key}")
@@ -200,8 +210,6 @@ def copy_to_shared_publications(user_id: int, key: str) -> bool:
         ref_shared.set(data)  # Копируем данные в shared_publications
         return True
     return False
-
-
 from html import unescape
 async def notify_owner_favorited(context: CallbackContext, owner_id: int, post_data: dict):
     """Отправляет владельцу уведомление о добавлении его поста в избранное при достижении 3+ пользователей."""
@@ -507,7 +515,7 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
                 temperature=1.0,
                 top_p=0.9,
                 top_k=40,
-                max_output_tokens=3000,
+                max_output_tokens=1000,
                 presence_penalty=0.6,
                 frequency_penalty=0.6,
                 tools=[google_search_tool],
@@ -826,7 +834,7 @@ async def generate_document_response(document_path, user_id, query=None):
 
     context = (
         f"Ты телеграм чат-бот, сейчас ты играешь роль {selected_role}. Собеседник прислал тебе документ с подписью:\n{query}"
-        f"Предыдущий контекст вашей переписки:\n{relevant_context}"        
+        f"Предыдущий контекст вашей переписки:\n{relevant_context}"            
     )
 
     command_text = context 
@@ -840,6 +848,7 @@ async def generate_document_response(document_path, user_id, query=None):
 
         file_extension = os.path.splitext(document_path)[1].lower()
         logging.info(f"file_extension: {file_extension}")
+
 
         document_path_obj = pathlib.Path(document_path)
         try:
@@ -1118,7 +1127,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     relevant_context = await get_relevant_context(user_id) if use_context else ""
     system_instruction = (
         f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться."
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"      
     )
 
 
@@ -1152,7 +1161,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
-                    max_output_tokens=7000,
+                    max_output_tokens=5000,
                     presence_penalty=0.7,
                     frequency_penalty=0.7,
                     tools=[google_search_tool],
@@ -1203,11 +1212,11 @@ def limit_response_length(text):
     return text[:MAX_MESSAGE_LENGTH - 3] + '...' if len(text) > MAX_MESSAGE_LENGTH else text
 
 
-async def generate_plant_issue_response(user_id, image):
+async def generate_mushrooms_response(user_id, image):
     """Генерирует текстовое описание проблемы с растением на основе изображения."""
 
     # Формируем статичный контекст для запроса
-    context = "Определи, что за проблема с растением (болезнь, вредители и т.д.) и предложи решение, ответ напиши на русском:"
+    context = "Определи что это за гриб. Кратко расскажи о нём, где растёт и чаще всего встречается, как выглядит, какие-то особенности, съедобен или нет, другую важную информацию. Если у тебя есть несколько вариантов то перечисли их. Если необходимо используй html разметку доступную в telegram. Суммарная длина текста не должна быть выше 300 слов:"
 
     try:
         # Преобразование изображения в формат JPEG и подготовка данных для модели
@@ -1261,6 +1270,71 @@ async def generate_plant_issue_response(user_id, image):
         return "Ошибка при обработке изображения. Попробуйте снова."
 
 
+async def generate_mapplants_response(user_id, image):
+    """Генерирует текстовое описание проблемы с растением на основе изображения."""
+
+    # Формируем статичный контекст для запроса
+    context = (
+        "Распознай растение на фото, по следующим пунктам:\n"
+        "0) Что это. Гриб, растение, дерево, ягода. Этот пункт начни с фразы \"0)Это: \" В ответе напиши только одно слово из перечисленных, если ничего не подходит то напиши \"распознать не вышло\"\n"
+        "1) Русскоязычные названия, от самого популярного до самых редких, если есть. Этот пункт начни с фразы \"1)Русские названия: \" В ответе перечисли только название или названия без лишних пояснений\n"
+        "2) Общая краткая информация и описание, как выглядит, не длиннее 30 слов. Этот пункт начни с фразы \"2)Общая информация: \"\n"
+        "3) Где обычно растёт, на какой территории и в какой местности, не длиннее 15 слов. Этот пункт начни с фразы \"3)Произрастает: \"\n"
+        "4) Где и как применяется, ядовит или нет, не длиннее 20 слов. Этот пункт начни с фразы \"4)Применение: \"\n"
+        "5) Дополнительная важная или интересная информация по этому растению, если есть. Этот пункт начни с фразы \"5)Дополнительно: \"\n\n"
+        "Строго придерживайся заданного формата ответа, это нужно для того, чтобы корректно работал код программы.\n"
+        "Никакого лишнего текста кроме заданных пунктов не пиши.\n"        
+    )
+    try:
+        # Преобразование изображения в формат JPEG и подготовка данных для модели
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="JPEG")
+        image_data = image_buffer.getvalue()
+        image_buffer.close() 
+
+        # Формируем части запроса для модели
+        image_part = Part.from_bytes(image_data, mime_type="image/jpeg")
+        text_part = Part.from_text(f"{context}\n")
+
+        contents = [image_part, text_part]
+        # Настройки безопасности
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+
+        # Создание клиента и генерация ответа от модели
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                temperature=1.0,
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=1000,
+                presence_penalty=0.6,
+                frequency_penalty=0.6,
+                tools=[google_search_tool],
+                safety_settings=safety_settings
+            )
+        )
+
+        # Проверяем наличие ответа
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+
+            return response_text
+        else:
+            logging.warning("Gemini не вернул ответ на запрос для изображения.")
+            return "Не удалось определить проблему растения."
+
+    except Exception as e:
+        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
+        return "Ошибка при обработке изображения. Попробуйте снова."
 
 
 
@@ -1379,6 +1453,64 @@ async def generate_text_rec_response(user_id, image=None, query=None):
         return "Неверный запрос. Укажите изображение или текст для обработки."
 
 
+async def generate_plant_issue_response(user_id, image):
+    """Генерирует текстовое описание проблемы с растением на основе изображения."""
+
+    # Формируем статичный контекст для запроса
+    context = ("Определи, что за проблема с растением (болезнь, вредители и т.д.) и предложи решение, ответ напиши на русском. ")
+
+
+    try:
+        # Преобразование изображения в формат JPEG и подготовка данных для модели
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="JPEG")
+        image_data = image_buffer.getvalue()
+        image_buffer.close() 
+
+        # Формируем части запроса для модели
+        image_part = Part.from_bytes(image_data, mime_type="image/jpeg")
+        text_part = Part.from_text(f"{context}\n")
+
+        contents = [image_part, text_part]
+        # Настройки безопасности
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+
+        # Создание клиента и генерация ответа от модели
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                temperature=1.0,
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=1000,
+                presence_penalty=0.6,
+                frequency_penalty=0.6,
+                tools=[google_search_tool],
+                safety_settings=safety_settings
+            )
+        )
+
+        # Проверяем наличие ответа
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+
+            return response_text
+        else:
+            logging.warning("Gemini не вернул ответ на запрос для изображения.")
+            return "Не удалось определить проблему растения."
+
+    except Exception as e:
+        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
+        return "Ошибка при обработке изображения. Попробуйте снова."
+
 
 async def generate_plant_help_response(user_id, query=None):
     """Генерирует текстовое описание проблемы с растением на основе текста."""
@@ -1386,8 +1518,8 @@ async def generate_plant_help_response(user_id, query=None):
     # Если передан текстовый запрос
     if query:
         # Формируем контекст с текущим запросом
-        context = (
-            f"Запрос:\n{query}"     
+        context = (         
+                f"Запрос:\n{query}"     
         )
 
         try:
@@ -1401,7 +1533,7 @@ async def generate_plant_help_response(user_id, query=None):
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
-                    max_output_tokens=3000,
+                    max_output_tokens=1000,
                     presence_penalty=0.7,
                     frequency_penalty=0.7,
                     tools=[google_search_tool],
