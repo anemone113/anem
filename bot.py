@@ -579,8 +579,8 @@ async def start(update: Update, context: CallbackContext) -> int:
         await file.download_to_drive(image_path)
 
         # Загружаем изображение на Catbox и обновляем сообщение
-        await loading_message.edit_text("Изображение загружается на Catbox...")
-        img_url = await second_upload_image(image_path)
+        await loading_message.edit_text("Изображение загружается, подождите немного...")
+        img_url = await plants_upload_image(image_path)
         inat_url = "https://www.inaturalist.org/computer_vision_demo"
 
         context.user_data['img_url'] = img_url
@@ -2981,7 +2981,24 @@ async def search_image_saucenao(image_path: str):
                     logging.error(f"Ошибка {response.status}: {await response.text()}")
                     return None, [], None, None, None, None, None, None, None
 
-
+async def plants_upload_image(file_path: str) -> str:
+    try:
+        # Попытка загрузки на ImgBB с таймаутом 5 секунд
+        return await asyncio.wait_for(upload_image_to_imgbb(file_path), timeout=5)
+    except asyncio.TimeoutError:
+        print("Таймаут при загрузке на ImgBB. Переход к Catbox.")
+        try:
+            return await upload_catbox(file_path)
+        except Exception as e:
+            print(f"Ошибка при загрузке на Catbox: {e}. Переход к FreeImage.")
+            return await upload_free_image(file_path)
+    except Exception as e:
+        print(f"Ошибка при загрузке на ImgBB: {e}. Переход к Catbox.")
+        try:
+            return await upload_catbox(file_path)
+        except Exception as catbox_error:
+            print(f"Ошибка при загрузке на Catbox: {catbox_error}. Переход к FreeImage.")
+            return await upload_free_image(file_path)
 
 
 async def second_upload_image(file_path: str) -> str:
@@ -4042,7 +4059,6 @@ async def convert_to_geojson(data: dict) -> dict:
                                 "color": mapping["color"],
                                 "iconUrl": mapping["iconUrl"],
                                 "iconClass": mapping["iconClass"],
-                                "popupShape": "Large",
                                 "showLabel": True,
                                 "labelInteractive": True,
                             },
