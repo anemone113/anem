@@ -4076,15 +4076,15 @@ async def generate_umap_url(geojson_url: str) -> str:
 async def view_map():
     # Загрузка данных
     all_plants_data = load_all_plants_data()
-    geojson_data = await convert_to_geojson(all_plants_data) 
+    geojson_data = await convert_to_geojson(all_plants_data)
 
-    # Загрузка GeoJSON на Catbox
-    geojson_url = await upload_geojson_to_catbox(geojson_data)
+    # Загружаем GeoJSON на GitHub
+    geojson_url = await upload_geojson_to_github(geojson_data)
     if not geojson_url:
         return None
 
     # Генерация URL карты
-    return await generate_umap_url(geojson_url)  
+    return await generate_umap_url(geojson_url)
 
 
 async def show_map(update: Update, context: CallbackContext):
@@ -4093,26 +4093,49 @@ async def show_map(update: Update, context: CallbackContext):
         await query.answer()  # Гасим нажатие кнопки
     
     umap_url = await view_map()
-    keyboard = [[InlineKeyboardButton("Посмотреть на карте", url=umap_url)]]
+    webapp_url = "https://anemone.onrender.com/map"  # URL твоей карты
+
+    keyboard = [
+        [InlineKeyboardButton("Посмотреть на карте", url=umap_url)],
+        [InlineKeyboardButton("Открыть в WebApp", web_app=WebAppInfo(url=webapp_url))]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.effective_chat.send_message("Вот ваша карта:", reply_markup=reply_markup)
 
-async def upload_geojson_to_catbox(geojson_data: dict) -> str:
-    """
-    Загружает GeoJSON на Catbox и возвращает URL.
-    
-    :param geojson_data: GeoJSON объект.
-    :return: URL загруженного файла.
-    """
-    url = "https://catbox.moe/user/api.php"
-    files = {"fileToUpload": ("plants.geojson", json.dumps(geojson_data))}
-    data = {"reqtype": "fileupload"}
-    response = requests.post(url, files=files, data=data)
-    if response.status_code == 200:
-        return response.text
-    else:
-        logging.error(f"Ошибка при загрузке GeoJSON на Catbox: {response.status_code}")
+
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO = "sylar112/anemone"  # Твой репозиторий
+FILE_PATH = "plants.geojson"  # Имя файла
+BRANCH = "main"  # Ветка, куда загружать
+
+# 🔹 Функция загрузки GeoJSON на GitHub
+async def upload_geojson_to_github(geojson_data: dict) -> str:
+    try:
+        url = f"https://api.github.com/repos/{REPO}/contents/{FILE_PATH}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+
+        # Получаем SHA текущего файла (нужно для обновления)
+        resp = requests.get(url, headers=headers)
+        sha = resp.json().get("sha", None)
+
+        data = {
+            "message": "Обновление GeoJSON",
+            "content": base64.b64encode(json.dumps(geojson_data, ensure_ascii=False, indent=4).encode()).decode(),
+            "branch": BRANCH,
+        }
+        if sha:
+            data["sha"] = sha  # Добавляем SHA для обновления
+
+        resp = requests.put(url, headers=headers, json=data)
+        if resp.status_code == 201 or resp.status_code == 200:
+            return f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/{FILE_PATH}"  # Прямая ссылка на файл
+        else:
+            logging.error(f"Ошибка GitHub API: {resp.json()}")
+            return ""
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке GeoJSON: {e}")
         return ""
 
 
