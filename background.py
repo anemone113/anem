@@ -2,7 +2,6 @@ from flask import Flask, request, make_response
 from threading import Thread
 import time
 import requests
-from bot import view_map
 app = Flask('')
 
 @app.route('/')
@@ -11,6 +10,7 @@ def home():
 
 @app.route('/map')
 def show_map():
+    from bot import view_map
     # Получаем URL карты
     umap_url = asyncio.run(view_map())  # Вызываем асинхронную функцию
 
