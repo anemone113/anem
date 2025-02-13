@@ -4061,6 +4061,7 @@ async def convert_to_geojson(data: dict) -> dict:
                                 "iconClass": mapping["iconClass"],
                                 "showLabel": True,
                                 "labelInteractive": True,
+                                "labelDirection": "right",                                
                             },
                         },
                     }
