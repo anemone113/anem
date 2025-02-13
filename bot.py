@@ -3419,6 +3419,8 @@ async def finish_ocr(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("🌱 Растения, грибы, текст 🌱", callback_data='start_ocr')],
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:  # Если функция вызвана через нажатие кнопки
