@@ -4117,7 +4117,7 @@ async def show_map(update: Update, context: CallbackContext):
         await query.answer()  # Гасим нажатие кнопки
     
     umap_url = await view_map()
-    webapp_url = "https://anemone.onrender.com/map"  # URL твоей карты
+    webapp_url = "https://umap.openstreetmap.fr/ru/map/anemone_1177482?scaleControl=true&miniMap=false&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=false&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true&measureControl=true&datalayers=ad0d1cbb-4dd3-4476-8111-c8a40f97126b%2Ca5a444be-fdb5-44aa-81a7-2a0c4b889705&locateControl=true&starControl=false#9/55.6147/37.3123"  # URL твоей карты
 
     keyboard = [
         [InlineKeyboardButton("Посмотреть на карте", url=umap_url)],
