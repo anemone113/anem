@@ -24,7 +24,7 @@ def show_map():
         </script>
     </head>
     <body>
-        <iframe width="100%" height="500px" frameborder="0" allowfullscreen src="{umap_url}"></iframe>
+        <iframe width="100%" height="500px" frameborder="0" allowfullscreen src="https://umap.openstreetmap.fr/ru/map/anemone_1177482#10/55.8796/37.5746"></iframe>
     </body>
     </html>
     '''
