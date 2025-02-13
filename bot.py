@@ -618,7 +618,13 @@ async def start(update: Update, context: CallbackContext) -> int:
     logger.info(f"status {status}")
     if waiting_for_vk.get(user_id, False):
 
-        return await handle_vk_keys_input(update, context)    
+        return await handle_vk_keys_input(update, context) 
+    if waiting_for_twitter.get(user_id, False):
+        return await handle_twitter_keys_input(update, context) 
+
+    if waiting_for_coordinates.get(user_id, False):
+        return await handle_coordinates(update, context) 
+    
     if users_in_send_mode.get(user_id, False):
         await duplicate_message(update, context)         
     if waiting_for_forward.get(user_id, False):
