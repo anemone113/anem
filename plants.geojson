@@ -6,6 +6,27 @@
             "geometry": {
                 "type": "Point",
                 "coordinates": [
+                    38.323044,
+                    55.667561
+                ]
+            },
+            "properties": {
+                "name": "Дуб",
+                "description": "{{https://i.ibb.co/dsLRHzks/temp-image.jpg|300}}\n1)Русские названия: Дуб\n2)Общая информация: Дуб - это крупное дерево с мощным стволом и раскидистой кроной. Листья лопастные, плоды - желуди.\n3)Произрастает: В умеренном климате Северного полушария, в лесах и парках.\n4)Применение: В строительстве, мебельном производстве. Желуди иногда используются в пищу. Не ядовит.\n5)Дополнительно: Дуб является символом силы, долголетия и мудрости.",
+                "_umap_options": {
+                    "color": "ForestGreen",
+                    "iconUrl": "/uploads/pictogram/garden.svg",
+                    "iconClass": "Drop",
+                    "showLabel": true,
+                    "labelInteractive": true
+                }
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
                     37.0872,
                     55.966748
                 ]
