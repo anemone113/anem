@@ -1,0 +1,137 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    37.18584,
+                    55.776131
+                ]
+            },
+            "properties": {
+                "name": "Дуб",
+                "description": "{{https://files.catbox.moe/te2eju.jpg|300}}\n1)Русские названия: Дуб\n2)Общая информация: Дуб – это листопадное дерево с крупными, лопастными листьями и плодами – жёлудями. Дерево может достигать больших размеров и жить сотни лет.\n3)Произрастает: В умеренном климате Северного полушария, в лесах и парках.\n4)Применение: Древесина используется в строительстве и производстве мебели. Жёлуди могут быть ядовиты.\n5)Дополнительно: Дуб – символ силы, долголетия и мудрости во многих культурах.",
+                "_umap_options": {
+                    "color": "ForestGreen",
+                    "iconUrl": "/uploads/pictogram/garden.svg",
+                    "iconClass": "Drop",
+                    "popupShape": "Large",
+                    "showLabel": true,
+                    "labelInteractive": true
+                }
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    37.35,
+                    55.5
+                ]
+            },
+            "properties": {
+                "name": "Земляника лесная",
+                "description": "{{https://files.catbox.moe/6wu1bp.jpg|300}}\n1)Русские названия: Земляника лесная\n2)Общая информация: Это небольшое травянистое растение с красными, ароматными ягодами. Листья тройчатые, цветки белые.\n3)Произрастает: В лесах, на лугах и опушках Евразии и Северной Америки.\n4)Применение: Употребляется в пищу в свежем и переработанном виде. Не ядовита.\n5)Дополнительно: Ягоды земляники богаты витаминами и антиоксидантами.",
+                "_umap_options": {
+                    "color": "ForestGreen",
+                    "iconUrl": "/uploads/pictogram/garden.svg",
+                    "iconClass": "Drop",
+                    "popupShape": "Large",
+                    "showLabel": true,
+                    "labelInteractive": true
+                }
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    37.354244,
+                    55.966593
+                ]
+            },
+            "properties": {
+                "name": "Ландыш майский",
+                "description": "{{https://files.catbox.moe/2ueiuo.jpg|300}}\n1)Русские названия: Ландыш майский\n2)Общая информация: Многолетнее травянистое растение с двумя-тремя крупными листьями и душистыми белыми цветками-колокольчиками.\n3)Произрастает: В умеренном климате Евразии, в лиственных и смешанных лесах, на опушках.\n4)Применение: Используется в медицине, ядовит.\n5)Дополнительно: Ландыш занесен в Красные книги многих регионов.",
+                "_umap_options": {
+                    "color": "ForestGreen",
+                    "iconUrl": "/uploads/pictogram/garden.svg",
+                    "iconClass": "Drop",
+                    "popupShape": "Large",
+                    "showLabel": true,
+                    "labelInteractive": true
+                }
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    38.061606,
+                    55.782754
+                ]
+            },
+            "properties": {
+                "name": "Лисичка обыкновенная",
+                "description": "{{https://files.catbox.moe/hawu39.jpg|300}}\n1)Русские названия: Лисичка обыкновенная, лисичка настоящая\n2)Общая информация: Плодовое тело жёлтого цвета, шляпка и ножка срастаются. Форма неправильная, волнистая. Размер небольшой, до 10 см в диаметре.\n3)Произрастает: В хвойных и смешанных лесах, на почве, часто большими группами.\n4)Применение: Съедобный гриб, используется в кулинарии. Не ядовит.\n5)Дополнительно: Содержит много витаминов и микроэлементов. Практически не бывает червивой.",
+                "_umap_options": {
+                    "color": "SaddleBrown",
+                    "iconUrl": "/uploads/pictogram/convenience.svg",
+                    "iconClass": "Drop",
+                    "popupShape": "Large",
+                    "showLabel": true,
+                    "labelInteractive": true
+                }
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    37.361268,
+                    55.92453
+                ]
+            },
+            "properties": {
+                "name": "Ольха чёрная",
+                "description": "{{https://files.catbox.moe/qt3yuf.jpg|300}}\n1)Русские названия: Ольха чёрная, Ольха клейкая\n2)Общая информация: Дерево с гладкой серой корой, высотой до 30 метров. Листья округлые, плоды - маленькие шишки.\n3)Произрастает: В Европе, Западной Сибири, на Кавказе, в лиственных и смешанных лесах.\n4)Применение: В медицине, строительстве, для дубления кож. Не ядовита.\n5)Дополнительно: Ольха улучшает почву, обогащая её азотом.",
+                "_umap_options": {
+                    "color": "ForestGreen",
+                    "iconUrl": "/uploads/pictogram/garden.svg",
+                    "iconClass": "Drop",
+                    "popupShape": "Large",
+                    "showLabel": true,
+                    "labelInteractive": true
+                }
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    37.394462,
+                    55.928426
+                ]
+            },
+            "properties": {
+                "name": "Осина",
+                "description": "{{https://files.catbox.moe/o9bv39.jpg|300}}\n1)Русские названия: Осина, Тополь дрожащий\n2)Общая информация: Лиственное дерево с гладкой, зеленовато-серой корой. Листья округлые, зубчатые, дрожат на ветру. Высота до 35 метров.\n3)Произрастает: В умеренном и холодном климате Евразии, в лесах и лесостепях.\n4)Применение: В строительстве, медицине, для озеленения. Не ядовито.\n5)Дополнительно: Осина быстро растет и является важным источником пищи для животных.",
+                "_umap_options": {
+                    "color": "ForestGreen",
+                    "iconUrl": "/uploads/pictogram/garden.svg",
+                    "iconClass": "Drop",
+                    "popupShape": "Large",
+                    "showLabel": true,
+                    "labelInteractive": true
+                }
+            }
+        }
+    ]
+}
