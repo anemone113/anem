@@ -1,9 +1,9 @@
-from flask import Flask
-from flask import request
+from flask import Flask, request, make_response
 from threading import Thread
 import time
 import requests
 app = Flask('')
+
 @app.route('/')
 def home():
     return "I'm alive"
@@ -14,16 +14,23 @@ def show_map():
     <html>
     <head>
         <title>Карта</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <script>
+            Telegram.WebApp.ready();
+        </script>
     </head>
     <body>
-        <iframe width="100%" height="500px" frameborder="0" allowfullscreen allow="geolocation"
-        src="https://umap.openstreetmap.fr/ru/map/?scaleControl=false&miniMap=false&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=null&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true"></iframe>
-        <p><a href="https://umap.openstreetmap.fr/ru/map/?scaleControl=false&miniMap=false&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=null&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true">Смотреть в полноэкранном режиме</a></p>
+        <iframe width="100%" height="500px" frameborder="0" allowfullscreen src="https://umap.openstreetmap.fr/ru/map/"></iframe>
     </body>
     </html>
     '''
+
 def run():
-  app.run(host='0.0.0.0', port=80)
+    app.run(host='0.0.0.0', port=80)
+
 def keep_alive():
-  t = Thread(target=run)
-  t.start()
+    t = Thread(target=run)
+    t.start()
+
+if __name__ == '__main__':
+    keep_alive()
