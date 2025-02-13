@@ -2,6 +2,7 @@ from flask import Flask, request, make_response
 from threading import Thread
 import time
 import requests
+from bot import view_map
 app = Flask('')
 
 @app.route('/')
@@ -10,7 +11,10 @@ def home():
 
 @app.route('/map')
 def show_map():
-    return '''
+    # Получаем URL карты
+    umap_url = asyncio.run(view_map())  # Вызываем асинхронную функцию
+
+    return f'''
     <html>
     <head>
         <title>Карта</title>
@@ -20,7 +24,7 @@ def show_map():
         </script>
     </head>
     <body>
-        <iframe width="100%" height="500px" frameborder="0" allowfullscreen src="https://umap.openstreetmap.fr/ru/map/"></iframe>
+        <iframe width="100%" height="500px" frameborder="0" allowfullscreen src="{umap_url}"></iframe>
     </body>
     </html>
     '''
