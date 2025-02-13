@@ -18,7 +18,8 @@
                     "iconUrl": "/uploads/pictogram/garden.svg",
                     "iconClass": "Drop",
                     "showLabel": true,
-                    "labelInteractive": true
+                    "labelInteractive": true,
+                    "labelDirection": "right"
                 }
             }
         },
@@ -39,7 +40,8 @@
                     "iconUrl": "/uploads/pictogram/convenience.svg",
                     "iconClass": "Drop",
                     "showLabel": true,
-                    "labelInteractive": true
+                    "labelInteractive": true,
+                    "labelDirection": "right"
                 }
             }
         },
@@ -60,7 +62,8 @@
                     "iconUrl": "/uploads/pictogram/garden.svg",
                     "iconClass": "Drop",
                     "showLabel": true,
-                    "labelInteractive": true
+                    "labelInteractive": true,
+                    "labelDirection": "right"
                 }
             }
         }
