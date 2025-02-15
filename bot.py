@@ -4131,7 +4131,7 @@ async def show_map(update: Update, context: CallbackContext):
 
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-REPO = "sylar112/anemone"  # Твой репозиторий
+REPO = "sylar112/geojson"  # Твой репозиторий
 FILE_PATH = "plants.geojson"  # Имя файла
 BRANCH = "main"  # Ветка, куда загружать
 
