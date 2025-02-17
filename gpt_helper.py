@@ -35,7 +35,8 @@ import pathlib
 from io import BytesIO
 from PIL import Image
 import asyncio
-from telegram.ext import CallbackContext
+from telegram.ext import CallbackContext, ContextTypes
+from telegram import Update
 # Google API Key и модель Gemini
 GOOGLE_API_KEY = "AIzaSyBk3nIr9DKsYMZUjGevTDzKDZs__zVLyP8"
 
@@ -134,19 +135,113 @@ def save_to_user_plants(user_id: int, scientific_name: str, data: dict) -> None:
 def save_to_user_mapplants(user_id: int, name: str, data: dict) -> None:
     """Сохраняет информацию о растении в Firebase."""
     try:
-        ref = db.reference(f"map_plants/{user_id}/{name}")
-        ref.set(data)
+        # Разделяем данные на общие и уникальные
+        common_data = {
+            "Full_text": data.get("Full_text"),
+            "Type": data.get("Type")
+        }
+        user_specific_data = {
+            "coordinates": data.get("coordinates"),
+            "img_url": data.get("img_url"),
+            "user_full_text": data.get("user_full_text")
+        }
+
+        # Сохраняем общие данные в plants_info
+        info_ref = db.reference(f"plants_info/{name}")
+        info_ref.update(common_data)
+
+        # Генерируем уникальный ключ для новой записи
+        record_key = db.reference(f"map_plants/{user_id}/{name}").push().key
+
+        # Добавляем уникальную запись для пользователя
+        user_ref = db.reference(f"map_plants/{user_id}/{name}/{record_key}")
+        user_ref.set(user_specific_data)
+
+        logging.info(f"Добавлена новая запись для растения '{name}' у пользователя {user_id}.")
+        return record_key
     except Exception as e:
         logging.error(f"Ошибка при сохранении данных о растении: {e}")
 
 def load_all_plants_data() -> dict:
     """Загружает данные о всех растениях всех пользователей из Firebase."""
     try:
-        ref = db.reference("map_plants")
-        return ref.get() or {}
+        map_plants_ref = db.reference("map_plants")
+        plants_info_ref = db.reference("plants_info")
+        map_plants_data = map_plants_ref.get() or {}
+        plants_info_data = plants_info_ref.get() or {}
+
+        # Добавляем общую информацию к данным пользователей
+        for user_id, plants in map_plants_data.items():
+            for plant_name, records in plants.items():
+                if plant_name in plants_info_data:
+                    for record_key, record_data in records.items():
+                        record_data.update(plants_info_data[plant_name])
+
+        return map_plants_data
     except Exception as e:
         logging.error(f"Ошибка при загрузке данных о растениях: {e}")
         return {}
+
+def update_to_user_mapplants(user_id: int, name: str, new_name: str, new_data: dict) -> None:
+    """Переименовывает растение пользователя, обновляя существующие данные."""
+    try:
+        # Получаем ссылку на старое растение
+        old_ref = db.reference(f"map_plants/{user_id}/{name}")
+        old_data = old_ref.get() or {}
+        
+        if not old_data:
+            logging.warning(f"Растение '{name}' не найдено у пользователя {user_id}.")
+            return
+
+        # Проверяем, существует ли new_name в plants_info
+        info_ref = db.reference(f"plants_info/{new_name}")
+        existing_info = info_ref.get() or {}
+
+        # Если new_name отсутствует в plants_info, добавляем его
+        if not existing_info:
+            common_data = {
+                "Full_text": new_data.get("Full_text"),
+                "Type": new_data.get("Type")
+            }
+            info_ref.update(common_data)
+            logging.info(f"Добавлена новая общая информация для растения '{new_name}'.")
+        else:
+            logging.info(f"Общая информация для растения '{new_name}' уже существует.")
+
+        # Генерируем уникальный record_key для новой записи
+        new_record_ref = db.reference(f"map_plants/{user_id}/{new_name}").push()
+        record_key = new_record_ref.key
+
+        # Подготавливаем новые пользовательские данные
+        user_specific_data = {
+            "coordinates": new_data.get("coordinates", old_data.get("coordinates")),
+            "img_url": new_data.get("img_url", old_data.get("img_url"))
+        }
+
+        # Добавляем новую запись для new_name
+        new_record_ref.set(user_specific_data)
+        logging.info(f"Добавлена новая запись для растения '{new_name}' у пользователя {user_id}.")
+
+        # Удаляем старую запись с name
+        old_ref.delete()
+        logging.info(f"Старая запись для растения '{name}' удалена у пользователя {user_id}.")
+
+    except Exception as e:
+        logging.error(f"Ошибка при обновлении данных о растении: {e}")
+
+
+def delete_user_plant_record(user_id: int, name: str, record_key: str) -> None:
+    """Удаляет конкретную запись о растении пользователя."""
+    try:
+        ref = db.reference(f"map_plants/{user_id}/{name}/{record_key}")
+        if not ref.get():
+            logging.warning(f"Запись '{record_key}' для растения '{name}' не найдена у пользователя {user_id}.")
+            return
+        ref.delete()
+        logging.info(f"Запись '{record_key}' для растения '{name}' у пользователя {user_id} удалена.")
+    except Exception as e:
+        logging.error(f"Ошибка при удалении записи о растении: {e}")
+
 
 def mark_watering(user_id: int) -> None:
     """Добавляет дату и время полива в Firebase."""
@@ -524,7 +619,7 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
         ) 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
             if use_context:
                 add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
@@ -635,7 +730,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
 
         # Ожидание обработки видео
         while video_file.state == "PROCESSING":
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             video_file = client.files.get(name=video_file.name)
 
         if video_file.state == "FAILED":
@@ -686,7 +781,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
             return "Извините, я не могу обработать это видео."
 
         # Извлечение текста ответа
-        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на анимацию:")  # Добавляем ответ в контекст
         save_context_to_firebase(user_id)                     
         return bot_response
@@ -757,7 +852,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
         # Ожидание обработки видео
         while video_file.state == "PROCESSING":
 
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             video_file = client.files.get(name=video_file.name)
 
         if video_file.state == "FAILED":
@@ -811,7 +906,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
             return "Извините, я не могу обработать это видео."
 
         # Извлечение текста ответа
-        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на видео:")  # Добавляем ответ в контекст 
         save_context_to_firebase(user_id)                    
         return bot_response
@@ -892,7 +987,7 @@ async def generate_document_response(document_path, user_id, query=None):
         if not response.candidates or not response.candidates[0].content.parts:
             return "Извините, я не могу обработать этот документ."
 
-        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на документ:")
         save_context_to_firebase(user_id)
         return bot_response
@@ -1009,7 +1104,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                 ]
             )            
         )
- 
+
         # Проверка ответа
         if not response.candidates:
             logging.warning("Gemini вернул пустой список кандидатов.")
@@ -1020,17 +1115,17 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
             return "Извините, я не могу обработать этот аудиофайл."
 
         # Извлечение текста ответа
-        bot_response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+        bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
         add_to_context(user_id, bot_response, message_type="Ответ бота на аудио:")  # Добавляем ответ в контекст
         save_context_to_firebase(user_id)        
         return bot_response
 
     except FileNotFoundError as fnf_error:
-        logging.error(f"Файл не найден: {fnf_error}")
+        logging.info(f"Файл не найден: {fnf_error}")
         return "Аудиофайл не найден. Проверьте путь к файлу."
 
     except Exception as e:
-        logging.error("Ошибка при обработке аудиофайла с Gemini:", exc_info=True)
+        logging.info("Ошибка при обработке аудиофайла с Gemini:", exc_info=True)
         return "Ошибка при обработке аудиофайла. Попробуйте снова."
 
 
@@ -1161,7 +1256,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
-                    max_output_tokens=5000,
+                    max_output_tokens=3500,
                     presence_penalty=0.7,
                     frequency_penalty=0.7,
                     tools=[google_search_tool],
@@ -1187,7 +1282,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
             )     
 
             if response.candidates and response.candidates[0].content.parts:
-                response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+                response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
                 if use_context:
                     add_to_context(user_id, response_text, message_type="bot_response")
@@ -1258,7 +1353,7 @@ async def generate_mushrooms_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
             return response_text
         else:
@@ -1325,7 +1420,7 @@ async def generate_mapplants_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
             return response_text
         else:
@@ -1344,7 +1439,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
     # Если передан текстовый запрос
     if query:
         # Формируем контекст с текущим запросом
-        context = (
+        context = (         
             f"Запрос:\n{query}"     
         )
 
@@ -1359,7 +1454,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
-                    max_output_tokens=2000,
+                    max_output_tokens=1000,
                     presence_penalty=0.7,
                     frequency_penalty=0.7,
                     tools=[google_search_tool],
@@ -1385,7 +1480,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             )     
        
             if response.candidates and response.candidates[0].content.parts:
-                response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+                response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
             
                 return response
             else:
@@ -1428,7 +1523,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                     temperature=1.0,
                     top_p=0.9,
                     top_k=40,
-                    max_output_tokens=6000,
+                    max_output_tokens=1000,
                     presence_penalty=0.6,
                     frequency_penalty=0.6,
                     tools=[google_search_tool],
@@ -1438,7 +1533,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
 
             # Проверяем наличие ответа
             if response.candidates and response.candidates[0].content.parts:
-                response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+                response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
                 return response_text
             else:
@@ -1500,7 +1595,7 @@ async def generate_plant_issue_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
             return response_text
         else:
@@ -1512,6 +1607,178 @@ async def generate_plant_issue_response(user_id, image):
         return "Ошибка при обработке изображения. Попробуйте снова."
 
 
+async def generate_barcode_response(user_id, image=None, query=None):
+    context = "Найди в интернете отзывы об этом продукте и пришли в ответ краткую сводку о найденных положительных и отрицательных отзывах. Ответ разбей по категориям: \"0)Название товара: \" \n\n \"1)Оценка: */5 (с точностью до сотых) \nОбщее краткое впечатление: \" (не длиннее 35 слов, оценку сформулируй на основании полученных данных где 5 - наилучший товар)\n\n \"2)Положительные отзывы: \" что хвалят и почему(не длиннее 50 слов)\n\n \"3)Отрицательные отзывы: \" Чем недовольны и почему, постарайся выделить наиболее существенные претензии(не длиннее 70 слов)\n\n Строго придерживайся заданного формата ответа, это нужно для того, чтобы корректно работал код программы."
+    try:
+        # Преобразование изображения в формат JPEG и подготовка данных для модели
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="JPEG")
+        image_data = image_buffer.getvalue()
+        image_buffer.close() 
+
+        # Формируем части запроса для модели
+        image_part = Part.from_bytes(image_data, mime_type="image/jpeg")
+        text_part = Part.from_text(f"{context}\n")
+
+        contents = [image_part, text_part]
+        # Настройки безопасности
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+
+        # Создание клиента и генерация ответа от модели
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                temperature=1.0,
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=1000,
+                presence_penalty=0.6,
+                frequency_penalty=0.6,
+                tools=[google_search_tool],
+                safety_settings=safety_settings
+            )
+        )
+        # Проверяем наличие ответа
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+
+            return response_text
+        else:
+            logging.warning("Gemini не вернул ответ на запрос для штрихкод.")
+            return "Не удалось распознать штрихкод."
+
+    except Exception as e:
+        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
+        return "Ошибка при обработке изображения. Попробуйте снова."
+
+async def generate_barcode_analysis(user_id, query=None):
+    """Генерирует текстовое описание проблемы с растением на основе текста."""
+
+    # Если передан текстовый запрос
+    if query:
+        system_instruction = (
+            f"На основании предоставленной информации определи название данного продукта. В ответ напиши только название и ничего более кроме названия."   
+            f"Если информации недостаточно то сообщи об этом"            
+        )
+        context = (         
+                f"Текущая доступная информация о продукте: {query}"    
+        )
+
+        try:
+            # Создаём клиент с правильным ключом
+            client = genai.Client(api_key=GOOGLE_API_KEY)
+            google_search_tool = Tool(google_search=GoogleSearch()) 
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=context,  # Здесь передаётся переменная context
+                config=types.GenerateContentConfig( 
+                    system_instruction=system_instruction,                              
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    max_output_tokens=1000,
+                    presence_penalty=0.7,
+                    frequency_penalty=0.7,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HATE_SPEECH',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HARASSMENT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                            threshold='BLOCK_NONE'
+                        )
+                    ]
+                )
+            )     
+       
+            if response.candidates and response.candidates[0].content.parts:
+                response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+          
+                return response
+            else:
+                logging.warning("Ответ от модели не содержит текстового компонента.")
+                return "Извините, ошибка обработки."
+        except Exception as e:
+            logging.error(f"Ошибка при генерации ответа: {e}")
+            return "Ошибка при обработке запроса. Попробуйте снова."  
+
+
+async def generate_barcode_otzyvy(user_id, query=None):
+    """Генерирует текстовое описание проблемы с растением на основе текста."""
+
+    # Если передан текстовый запрос
+    if query:
+        logging.info(f"query: {query}")          
+        context = (         
+                f"Найди в интернете отзывы о продукте {query}"    
+        )
+
+        try:
+            # Создаём клиент с правильным ключом
+            client = genai.Client(api_key=GOOGLE_API_KEY)
+            google_search_tool = Tool(google_search=GoogleSearch()) 
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=context,  # Здесь передаётся переменная context
+                config=types.GenerateContentConfig(                             
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    max_output_tokens=1000,
+                    presence_penalty=0.7,
+                    frequency_penalty=0.7,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HATE_SPEECH',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_HARASSMENT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            threshold='BLOCK_NONE'
+                        ),
+                        types.SafetySetting(
+                            category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                            threshold='BLOCK_NONE'
+                        )
+                    ]
+                )
+            )     
+       
+            if response.candidates and response.candidates[0].content.parts:
+                response = ''.join(part.text or '' for part in response.candidates[0].content.parts).strip()
+                logging.info(f"response: {response}")            
+                return response
+            else:
+                logging.warning("Ответ от модели не содержит текстового компонента.")
+                return "Извините, ошибка обработки."
+        except Exception as e:
+            logging.error(f"Ошибка при генерации ответа: {e}")
+            return "Ошибка при обработке запроса. Попробуйте снова."  
+
+
 async def generate_plant_help_response(user_id, query=None):
     """Генерирует текстовое описание проблемы с растением на основе текста."""
 
@@ -1521,7 +1788,7 @@ async def generate_plant_help_response(user_id, query=None):
         context = (         
                 f"Запрос:\n{query}"     
         )
-
+        logging.info(f"context: {context}")
         try:
             # Создаём клиент с правильным ключом
             client = genai.Client(api_key=GOOGLE_API_KEY)
@@ -1557,9 +1824,9 @@ async def generate_plant_help_response(user_id, query=None):
                     ]
                 )
             )     
-       
+            logging.info(f"response: {response}")       
             if response.candidates and response.candidates[0].content.parts:
-                response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+                response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
             
                 return response
             else:
@@ -1574,7 +1841,7 @@ async def generate_mushrooms_response(user_id, image):
     """Генерирует текстовое описание проблемы с растением на основе изображения."""
 
     # Формируем статичный контекст для запроса
-    context = "Определи что это за гриб. Если у тебя несколько вариантов то перечисли их от наиболее вероятного к менее вероятным. К каждому грибу напиши варианты его названия, кратко расскажи о нём, где растёт и чаще всего встречается, как выглядит, какие-то особенности, съедобен или нет, другую важную информацию. Суммарная длина текста не должна быть выше 200 слов:"
+    context = "Определи что это за гриб. Кратко расскажи о нём, где растёт и чаще всего встречается, как выглядит, какие-то особенности, съедобен или нет, другую важную информацию. Если у тебя есть несколько вариантов то перечисли их. Если необходимо используй html разметку доступную в telegram. Суммарная длина текста не должна быть выше 300 слов:"
 
     try:
         # Преобразование изображения в формат JPEG и подготовка данных для модели
@@ -1616,7 +1883,7 @@ async def generate_mushrooms_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
             return response_text
         else:
@@ -1689,7 +1956,7 @@ async def translate_promt_with_gemini(user_id, query=None):
                 )     
            
                 if response.candidates and response.candidates[0].content.parts:
-                    response = ''.join(part.text for part in response.candidates[0].content.parts).strip()
+                    response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
                 
                     return response
                 else:
