@@ -420,13 +420,15 @@ def log_user_state(user_id: int):
 
 async def webapp_command(update: Update, context: CallbackContext) -> None:
     webapps = [
-        ("🗺️ Яндекс Карты", "https://yandex.ru/maps/213/moscow/?ll=37.497386%2C55.872099&utm_medium=allapps&utm_source=face&z=14"),
-        ("🗺️ Старинные Карты", "https://retromap.ru/"),
-        ("🌐 Google Переводчик", "https://translate.google.com/?sl=en&tl=ru&op=translate"),
+        ("🌐 Гугл", "https://www.google.ru/?hl=ru"),
+        ("🌐 Яндекс", "https://ya.ru/"),    
+        ("🗺️ Яндекс Карты", "https://yandex.ru/maps/213/moscow/?ll=38.094953%2C55.782537&utm_medium=allapps&utm_source=face&z=12.2"),
+        ("🗺️ Старинные Карты", "https://retromap.ru/0719113_0420092_55.956119,37.200393"),
+        ("📑 Google Переводчик", "https://translate.google.com/?sl=en&tl=ru&op=translate"),
         ("🧠 DeepL Переводчик", "https://www.deepl.com/en/translator"),        
-        ("📺 RickTube", "https://ricktube.ru/"),
+        ("▶️ YouTube", "https://ricktube.ru/"),
         ("🖼️ img/txt to 3D", "https://huggingface.co/spaces/tencent/Hunyuan3D-2"),
-        ("🌪️ Windy", "https://www.windy.com"),        
+        ("🌪️ Windy", "https://www.windy.com/ru/-%D0%9D%D0%B0%D1%81%D1%82%D1%80%D0%BE%D0%B9%D0%BA%D0%B8/settings?57.111,38.057,5"),        
         ("🌦️ Погода на карте", "https://yandex.ru/pogoda/ru/maps?ll=37.7556_55.810300000000005&z=9"),
     ]
 
