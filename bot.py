@@ -345,6 +345,7 @@ https://ссылка_2
 
 
 
+
 def format_text_to_html(message):
     # Выбираем текст или подпись, если они есть
     raw_text = message.text or message.caption
@@ -414,6 +415,36 @@ def log_user_state(user_id: int):
     logger.info(f"waiting_for_twitter: {waiting_for_twitter.get(user_id, False)}")
     logger.info(f"waiting_for_coordinates : {waiting_for_coordinates .get(user_id, False)}")
     logger.info("---------------------------------")
+
+
+
+async def webapp_command(update: Update, context: CallbackContext) -> None:
+    webapps = [
+        ("🗺️ Яндекс Карты", "https://yandex.ru/maps/213/moscow/?ll=37.497386%2C55.872099&utm_medium=allapps&utm_source=face&z=14"),
+        ("🗺️ Старинные Карты", "https://retromap.ru/"),
+        ("🌐 Google Переводчик", "https://translate.google.com/?sl=en&tl=ru&op=translate"),
+        ("🧠 DeepL Переводчик", "https://www.deepl.com/en/translator"),        
+        ("📺 RickTube", "https://ricktube.ru/"),
+        ("🖼️ img/txt to 3D", "https://huggingface.co/spaces/tencent/Hunyuan3D-2"),
+        ("🌪️ Windy", "https://www.windy.com"),        
+        ("🌦️ Погода на карте", "https://yandex.ru/pogoda/ru/maps?ll=37.7556_55.810300000000005&z=9"),
+    ]
+
+    keyboard = [
+        [InlineKeyboardButton(text, web_app=WebAppInfo(url=url)) for text, url in webapps[i:i+2]]
+        for i in range(0, len(webapps), 2)
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Выберите веб-приложение:", reply_markup=reply_markup)
+
+
+# Список каомодзи
+KAOMOJI_LIST = [
+    "≽^⎚⩊⎚^≼", "/ᐠ˵> ˕ <˵マ", "/ᐠ - ˕ -マ", "≽^• ˕ •^≼", "≽/ᐠ - ˕ -マ≼ Ⳋ", "/ᐠ≽•ヮ•≼マ", "/ᐠ. .ᐟ\\ Ⳋ", "ฅ ฅ", "≽^-⩊-^≼", "/ᐠ_ ꞈ _ᐟ\\ɴʏᴀ~", "≽^- ˕ -^≼"  
+]
+
+
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     # Логируем полное состояние пользователя
@@ -444,9 +475,11 @@ async def start(update: Update, context: CallbackContext) -> int:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Отправляем сообщение с кнопкой
+        # Выбираем случайный каомодзи
+        random_kaomoji = random.choice(KAOMOJI_LIST)
+
         await message_to_reply.reply_text(
-            '🌠Привет ≽^• ˕ •^≼\n\n'
+            f'🌠Привет <code>{random_kaomoji}</code>\n\n'
             'Этот бот поможет вам создать публикацию для телеграм канала или вк группы с изображениями высокого разрешения.\n\n'
             'Для начала, пожалуйста, отправьте мне текст, который будет служить подписью к вашей будущей записи в телеграм посте. Текст перенесётся в пост в том форматировании в котором вы его отправите \n\nЕсли текста нет, то напишите "нет".\n\nЛибо воспользуйтесь одной из кнопок(в кнопке 🦊 доступна безлимитная генерация изображений и много чего ещё):\n\n',                       
 
@@ -3401,8 +3434,10 @@ async def restart(update: Update, context: CallbackContext) -> int:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    random_kaomoji = random.choice(KAOMOJI_LIST)
+
     await message_to_reply.reply_text(
-        '✅Бот успешно перезапущен \n⸜(⸝⸝⸝´꒳`⸝⸝⸝)⸝\n\n'
+        f'🌠Привет <code>{random_kaomoji}</code>\n\n'
         'Этот бот поможет вам создать публикацию для телеграм канала или вк группы с изображениями высокого разрешения.\n\n'
         'Для начала пожалуйста отправьте мне текст который будет служить подписью к вашей будущей записи в телеграм посте.  \n\nЕсли текста нет, то напишите "нет"\n\nЛибо воспользуйтесь одной из кнопок ниже. В режиме диалога с ботом доступна безлимитная генерация изображений\n\n',                       
 
@@ -11078,7 +11113,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(sort_by_criteria, pattern=r"^sort_\w+_\w+$"))
 
     # Обработчик для просмотра конкретной отложенной записи
-    application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$'))    
+    application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$')) 
+    application.add_handler(CommandHandler('webapp', webapp_command))    
     application.add_handler(CommandHandler("sendall", sendall))    
     application.add_handler(CommandHandler("data", data_command))      
     application.add_handler(CommandHandler("style", choose_style))   
