@@ -57,7 +57,11 @@ from gpt_helper import (
     delete_user_plant,
     save_to_user_mapplants,
     generate_mapplants_response,
-    load_all_plants_data
+    load_all_plants_data,
+    generate_barcode_response,
+    generate_barcode_analysis,
+    generate_barcode_otzyvy,
+    update_to_user_mapplants
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -299,11 +303,11 @@ async def mainhelp_callback(update: Update, context: CallbackContext):
     Позволяет попытаться найти автора изображения, его ник и страницы в соцсетях. Также может распознать скрин из аниме или мультфильмов с точностью до указания серии и минуты, откуда он сделан. 
     Кроме того может проверить вероятность того, сгенерировано ли изображение нейросетью или же нарисовано вручную.
 
-    <b>===Кнопка "Распознать"===</b>  
-    Позволяет распознать текст или растение по их фотографии. Также с помощью встроенной в функцию нейросети можно сделать различные манипуляции с распознанным текстом или узнать, что с растением (болезни, вредители). Кроме того почитать информацию о распознанном растении или получить советы по уходу за ним. Ещё можно добавлять растения в список своих растений и сортировать по различных критериям ухода, кроме того можно отмечать и отслеживать даты полива, а так же ставить метки с растенями и грибами на общую карту чтобы не потерять место произрастания
+    <b>===Кнопка "Растения, грибы, текст, поиск"===</b>  
+    Позволяет распознать текст или растение по их фотографии. Также с помощью встроенной в функцию нейросети можно сделать различные манипуляции с распознанным текстом или узнать, что с растением (болезни, вредители). Кроме того почитать информацию о распознанном растении или советы по уходу за ним. Ещё можно добавлять растения в список своих растений и сортировать по различных критериям ухода, кроме того можно отмечать и отслеживать даты полива, а так же ставить метки с растенями и грибами на общую карту чтобы не потерять место произрастания
 
     <b>===Кнопка "Поговорить с ботом"===</b>  
-    Переключает в режим диалога с ботом. У этого режима также есть много интересных особенностей вроде распознавания видео или анализа содержимого веб-страниц. У этого режима есть отдельная кнопка помощи, если необходимо.
+    Переключает в режим диалога с ботом. У этого режима также есть много интересных особенностей вроде распознавания голосовых, музыки, видео, поиск в сети или анализа содержимого веб-страниц. Так же в этом режиме можно генерировать изображения по текстовому запросу. У этого режима есть отдельная кнопка помощи, если необходимо.
 
     <b>===Основной режим бота==="</b>
     Основной режим бота позволяет создавать, сохранять и публиковать посты. По умолчанию, если загружать вручную, изображения в телеграм загружаются и отображаются в разрешении 1280 пикселей. Если же загружать их через бота (через API telegram), то в таком случае изображение загружается и отображается с разрешением 2560 пикселей, что более чем в 2 раза превышает ручную загрузку и потому даёт лучшее качество отображения.
@@ -331,7 +335,7 @@ https://ссылка_2
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными записями 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Растения, грибы, текст 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -434,7 +438,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         keyboard = [
             [InlineKeyboardButton("🗂 Папки с сохранёнными записями 🗂", callback_data="scheduled_by_tag")],
             [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-            [InlineKeyboardButton("🌱 Растения, грибы, текст 🌱", callback_data='start_ocr')],            
+            [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],             
             [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
             [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
         ]
@@ -442,7 +446,7 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         # Отправляем сообщение с кнопкой
         await message_to_reply.reply_text(
-            '🌠Привет ⸜(⸝⸝⸝´꒳`⸝⸝⸝)⸝\n\n'
+            '🌠Привет ≽^• ˕ •^≼\n\n'
             'Этот бот поможет вам создать публикацию для телеграм канала или вк группы с изображениями высокого разрешения.\n\n'
             'Для начала, пожалуйста, отправьте мне текст, который будет служить подписью к вашей будущей записи в телеграм посте. Текст перенесётся в пост в том форматировании в котором вы его отправите \n\nЕсли текста нет, то напишите "нет".\n\nЛибо воспользуйтесь одной из кнопок(в кнопке 🦊 доступна безлимитная генерация изображений и много чего ещё):\n\n',                       
 
@@ -485,12 +489,23 @@ async def start(update: Update, context: CallbackContext) -> int:
         bing_search_url = f"https://www.bing.com/images/search?view=detailv2&iss=sbi&form=SBIVSP&sbisrc=UrlPaste&q=imgurl:{img_url}"
 
         keyboard = [
-            [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],
-            [InlineKeyboardButton("Все результаты на SauceNAO", url=search_url)],
-            [InlineKeyboardButton("Поиск через Yandex Images", url=yandex_search_url)],
-            [InlineKeyboardButton("Поиск через Google Images", url=google_search_url)],
-            [InlineKeyboardButton("Поиск через Bing Images", url=bing_search_url)],
-            [InlineKeyboardButton("Завершить поиск", callback_data='finish_search')],
+            [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],           
+            [
+                InlineKeyboardButton("Найти в Yandex Images", url=yandex_search_url),
+                InlineKeyboardButton("🔍 Yandex WebApp", web_app=WebAppInfo(url=yandex_search_url))
+            ],
+            [
+                InlineKeyboardButton("Найти в Google Images", url=google_search_url),
+                InlineKeyboardButton("🔍 Google WebApp", web_app=WebAppInfo(url=google_search_url))
+            ],
+            [
+                InlineKeyboardButton("Найти в Bing Images", url=bing_search_url),
+                InlineKeyboardButton("🔍 Bing WebApp", web_app=WebAppInfo(url=bing_search_url))
+            ],
+            [
+                InlineKeyboardButton("Найти на SauceNAO", url=search_url),
+                InlineKeyboardButton("🔍 SauceNAO WebApp", web_app=WebAppInfo(url=search_url))
+            ],
             [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)        
@@ -568,7 +583,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                "Пожалуйста, отправьте изображение для распознавания. Либо нажмите на кнопку чтобы посмотреть ваши растения если вы их сохраняли или растения на карте",
+                "Пожалуйста, отправьте изображение для распознавания, либо нажмите на кнопки чтобы посмотреть ваши растения если вы их сохраняли. Или чтобы посмотреть или добавить растение на карту",
                 reply_markup=reply_markup
             )
             return ASKING_FOR_OCR
@@ -587,13 +602,11 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         # Формируем клавиатуру с кнопками для распознавания
         keyboard = [
-            [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='plantmap_gpt')],          
-            [InlineKeyboardButton("🪴Добавить в мои растения 🪴", callback_data='plantsave_to_my_plants')],        
-            [InlineKeyboardButton("📋Распознать текст через GPT📋", callback_data='text_rec_with_gpt')],  # Новая кнопка            
-            [InlineKeyboardButton("🌿Распознать растение🌿", callback_data='recognize_plant')],
-            [InlineKeyboardButton("🍄‍🟫Распознать гриб🍄‍🟫", callback_data='mushrooms_gpt')],            
-            [InlineKeyboardButton("🍂Что не так с растением?🍂", callback_data='text_plant_help_with_gpt')],
-            [InlineKeyboardButton("Распознать на iNaturalist", url=inat_url)],
+            [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='plantmap_gpt')],     
+            [InlineKeyboardButton("🪴 Добавить в мои растения 🪴", callback_data='plantsave_to_my_plants')], 
+            [InlineKeyboardButton("🌿🍄‍🟫Распознать гриб/растение🍄‍🟫🌿", callback_data='plants_and_mushrooms_menu')],                      
+            [InlineKeyboardButton("📋Распознать текст📋", callback_data='text_rec_with_gpt')],
+            [InlineKeyboardButton("💬Найти отзывы💬", callback_data='barcode_with_gpt')],              # Новая кнопка            
             [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
 
         ]
@@ -601,14 +614,15 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         # Обновляем сообщение с кнопками после успешной загрузки
         await loading_message.edit_text(
-            "Изображение успешно загружено! "
+            "≽/ᐠ - ˕ -マ≼ Ⳋ Изображение успешно загружено!\n "
             "Что именно вы желаете сделать? "
             "Обычно обработка запроса на распознавание занимает до 10-15 секунд. "
-            "Распознавание текста через GPT поддерживает текст, написанный от руки, "
+            "Распознавание текста поддерживает текст, написанный от руки, "
             "но читаемым почерком.\n\n"
             "Через кнопку \"Добавить в мои растения\" вы можете сразу же автоматически "
             "добавить это растение в список своих растений.\n"
-            "Кнопка \"Добавить это растение на карту\" распознаёт растение и добавляет его на карту по вашим координатам",
+            "Кнопка \"Добавить это растение на карту\" распознаёт растение или гриб и добавляет его на карту по вашим координатам\n\n"
+            "Кнопка \"Найти отзывы\" автоматически находит в интернете и присылает выжимку отзывов на товар с фотографии\n\n",             
             reply_markup=reply_markup
         )
 
@@ -616,25 +630,23 @@ async def start(update: Update, context: CallbackContext) -> int:
 
     status = user_data[user_id].get('status')
     logger.info(f"status {status}")
+    # Проверяем, если бот в режиме поиска
+    if users_in_send_mode.get(user_id, False):
+        await duplicate_message(update, context)       
     if waiting_for_vk.get(user_id, False):
-
-        return await handle_vk_keys_input(update, context) 
+        return await handle_vk_keys_input(update, context)  
     if waiting_for_twitter.get(user_id, False):
         return await handle_twitter_keys_input(update, context) 
 
     if waiting_for_coordinates.get(user_id, False):
         return await handle_coordinates(update, context) 
-    
-    if users_in_send_mode.get(user_id, False):
-        await duplicate_message(update, context)         
-    if waiting_for_forward.get(user_id, False):
 
+    if waiting_for_forward.get(user_id, False):
         return await handle_forwarded_message(update, context)
+
     if waiting_for_caption.get(user_id, False):
         key = waiting_for_caption[user_id]
         return await handle_new_caption(update, context, key)
-
-
 
     # Проверяем, если бот в режиме GPT
     if is_gpt_mode.get(user_id, False):
@@ -645,6 +657,10 @@ async def start(update: Update, context: CallbackContext) -> int:
 
     if is_asking_mode.get(user_id, False):
         return await receive_followup_question(update, context)
+
+    # Проверяем, если бот в режиме поиска
+    if users_in_send_mode.get(user_id, False):
+        await duplicate_message(update, context)  
 
 
 
@@ -912,11 +928,67 @@ async def start(update: Update, context: CallbackContext) -> int:
     elif status == 'awaiting_author_name':
         return await handle_author_name(update, context)
     elif status == 'awaiting_image':
-        return await handle_image(update, context)
+        return await handle_image(update, context)       
     else:
         await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
 
         return ConversationHandler.END
+
+
+# Обработчик для нового меню "Грибы и растения"
+async def plants_and_mushrooms_menu(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    inat_url = "https://www.inaturalist.org/computer_vision_demo"
+    # Формируем клавиатуру для меню "Грибы и растения"
+    keyboard = [
+        [InlineKeyboardButton("🌿 Распознать растение 🌿", callback_data='recognize_plant')],
+        [InlineKeyboardButton("🍄‍🟫 Распознать гриб 🍄‍🟫", callback_data='mushrooms_gpt')],
+        [InlineKeyboardButton("🍂 Что не так с растением? 🍂", callback_data='text_plant_help_with_gpt')],
+        [InlineKeyboardButton("Распознать на iNaturalist", url=inat_url)],        
+        [InlineKeyboardButton("⬅️ Назад", callback_data='plants_and_mushrooms_backmenu')]  # Кнопка "Назад"
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем сообщение с новой клавиатурой
+    await query.edit_message_text(
+        "Что именно вы желаете распознать? Кнопка \"Распознать растение\" работает через специально обученную на растениях нейросеть и потому полученные с её помощью результаты в высокой степени достоверны. \n\n Кнопка \"Распознать гриб\" использует более общую нейросеть и может ошибаться, будьте осторожны",
+        reply_markup=reply_markup
+    )
+    return ASKING_FOR_OCR
+
+# Обработчик для кнопки "Назад"
+async def plants_and_mushrooms_backmenu(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    # Формируем основную клавиатуру
+    keyboard = [
+        [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='plantmap_gpt')],     
+        [InlineKeyboardButton("🪴 Добавить в мои растения 🪴", callback_data='plantsave_to_my_plants')], 
+        [InlineKeyboardButton("🌿🍄‍🟫Распознать гриб/растение🍄‍🟫🌿", callback_data='plants_and_mushrooms_menu')],                      
+        [InlineKeyboardButton("📋Распознать текст📋", callback_data='text_rec_with_gpt')],
+        [InlineKeyboardButton("💬Найти отзывы💬", callback_data='barcode_with_gpt')],              # Новая кнопка            
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Возвращаемся к исходному меню
+    await query.edit_message_text(
+        "/ᐠ - ˕ -マ≼ Ⳋ Изображение успешно загружено!\n "
+        "Что именно вы желаете сделать? "
+        "Обычно обработка запроса на распознавание занимает до 10-15 секунд. "
+        "Распознавание текста поддерживает текст, написанный от руки, "
+        "но читаемым почерком.\n\n"
+        "Через кнопку \"Добавить в мои растения\" вы можете сразу же автоматически "
+        "добавить это растение в список своих растений.\n"
+        "Кнопка \"Добавить это растение на карту\" распознаёт растение или гриб и добавляет его на карту по вашим координатам\n\n",
+        "Кнопка \"Найти отзывы\" автоматически находит в интернете и присылает выжимку отзывов на товар с фотографии\n\n",        
+        reply_markup=reply_markup
+    ) 
+
+    return ASKING_FOR_OCR
+
 
 async def run_gpt(update: Update, context: CallbackContext) -> int:
     if update.message:
@@ -2792,7 +2864,8 @@ async def examples_table_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Добавляем кнопку "Помощь" под последним сообщением медиагруппы
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
-        [InlineKeyboardButton("🎨 Сменить модель(стиль)", callback_data='choose_style')] 
+        [InlineKeyboardButton("🎨 Сменить модель(стиль)", callback_data='choose_style')],
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')] 
     ])
     await context.bot.send_message(
         chat_id=query.message.chat_id,
@@ -2847,7 +2920,7 @@ async def start_search(update: Update, context: CallbackContext) -> int:
 
     # Создаем кнопку "Отменить поиск"
     keyboard = [
-        [InlineKeyboardButton("Отменить поиск", callback_data='finish_search')]
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -3322,7 +3395,7 @@ async def restart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Растения, грибы, текст 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -3387,7 +3460,7 @@ async def rerestart(update: Update, context: CallbackContext) -> int:
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Растения, грибы, текст 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],            
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
         [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
     ]
@@ -3407,34 +3480,34 @@ async def rerestart(update: Update, context: CallbackContext) -> int:
 
 
 async def start_ocr(update: Update, context: CallbackContext) -> int:
-    if update.message:
-        user_id = update.message.from_user.id  # Когда вызвано командой /search
-        message_to_reply = update.message
-    elif update.callback_query:
-        user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
-        message_to_reply = update.callback_query.message
-        await update.callback_query.answer()    
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
 
-    is_ocr_mode[user_id] = True    
-    is_search_mode[user_id] = False
-    is_gpt_mode[user_id] = False
-  # Устанавливаем флаг для пользователя в режим поиска
-    umap_url = await view_map()
+    is_ocr_mode[query.from_user.id] = True    
+    is_search_mode[query.from_user.id] = False
+    is_gpt_mode[query.from_user.id] = False
+
     # Создаем кнопку "Отменить поиск"
     keyboard = [
         [InlineKeyboardButton("🪴 Мои растения 🪴", callback_data='myplants')],
-        [InlineKeyboardButton("🗺 Посмотреть на карте 🗺", callback_data='show_map')],
-        [InlineKeyboardButton("Отменить режим распознавания", callback_data='finish_ocr')],
-
+        [InlineKeyboardButton("🗺 Карта растений 🗺", callback_data='show_map')],
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Отправляем сообщение с кнопкой
-    await message_to_reply.reply_text(
-        "Пожалуйста, отправьте изображение для поиска, распознавания или занесения в список ваших растений. Лучше отправлять сжатые изображения, тогда бот работает быстрее. Оригиналы в виде файлов отправляйте только по необходимости (мелкий текст, мелкие растения и тд)\n\n Так же вы можете посмотреть ранее добавленные в свои  или на карту растения по кнопкам ниже",
-        reply_markup=reply_markup
-    )
-    
+    # Если это вызвано через callback_query (нажатие кнопки), то редактируем сообщение
+    if query:
+        await query.edit_message_text(
+            text="Пожалуйста, отправьте изображение для поиска отзывов, распознавания, размещения на карту или занесения в список ваших растений. Лучше отправлять сжатые изображения, тогда бот работает быстрее. Оригиналы в виде файлов отправляйте только по необходимости (мелкий текст, мелкие растения и тд)\n\n Так же вы можете посмотреть ранее добавленные растения по кнопкам ниже",
+            reply_markup=reply_markup
+        )
+    else:
+        # Если вызвано напрямую (не через кнопку), отправляем новое сообщение
+        await update.message.reply_text(
+            text="Пожалуйста, отправьте изображение для поиска отзывов, распознавания, размещения на карту или занесения в список ваших растений. Лучше отправлять сжатые изображения, тогда бот работает быстрее. Оригиналы в виде файлов отправляйте только по необходимости (мелкий текст, мелкие растения и тд)\n\n Так же вы можете посмотреть ранее добавленные растения по кнопкам ниже",            reply_markup=reply_markup
+        )
+
     return ASKING_FOR_OCR
 
 async def finish_ocr(update: Update, context: CallbackContext) -> int:
@@ -3747,7 +3820,7 @@ async def text_plant_help_with_gpt(update, context):
             
             # Создаем клавиатуру
             keyboard = [
-                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -3914,10 +3987,176 @@ async def receive_followup_question(update, context):
 
 
 
+
+import re
+
+from urllib.parse import quote  # Импортируем функцию quote
+
+async def barcode_with_gpt(update, context):
+    query = update.callback_query
+
+    user_id = query.from_user.id
+    img_url = context.user_data.get('img_url')
+    
+    if not img_url:
+        await query.answer("Изображение не найдено.", show_alert=True)
+        return
+    
+    try:
+        # Открываем изображение
+        with open('temp_image.jpg', 'rb') as file:
+            image = Image.open(file)
+            image.load()
+            
+            # Запрос к Gemini (или другой модели для генерации ответа)
+            response = await generate_barcode_response(user_id, image=image, query=None)
+            logging.info(f"response: {response}")              
+            # Вычленение названия товара между "0)Название товара:" и "1)Общее краткое впечатление:"
+            product_name_match = re.search(
+                r'0\)\s*Название товара\s*[:：]\s*"?(.+?)"?\s*\n1\)',
+                response,
+                re.IGNORECASE
+            )
+            logging.info(f"product_name_match: {product_name_match}") 
+            product_name = product_name_match.group(1).strip() if product_name_match else "Не найдено"
+            logging.info(f"product_name: {product_name}")             
+            # Кодируем product_name для использования в URL
+            encoded_product_name = quote(product_name)
+
+            # Очистка response от текста до "1)"
+            match = re.search(r'товара:\s*', response, re.IGNORECASE)  # \s* убирает пробелы после "товара:"
+            if match:
+                response = response[match.end():]  # Обрезаем начиная сразу после "товара: "
+
+            # Просто отправляем ответ в Telegram
+            await context.bot.send_message(chat_id=user_id, text=f"{response}")
+            
+            # Создаем кнопки для поиска отзывов
+            google_search_url = f"https://www.google.com/search?q={encoded_product_name}+отзывы"
+            yandex_search_url = f"https://yandex.ru/search/?text={encoded_product_name}+отзывы"
+            
+            keyboard = [
+                [InlineKeyboardButton("🔍 Поиск отзывов в Google", web_app=WebAppInfo(url=google_search_url))],
+                [InlineKeyboardButton("🔍 Поиск отзывов в Яндекс", web_app=WebAppInfo(url=yandex_search_url))],
+                [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Отправляем сообщение с кнопками
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="Вы можете найти отзывы об этом товаре самостоятельно по кнопкам ниже, прислать новое фото или вернуться в главное меню:",
+                reply_markup=reply_markup
+            )  
+            if query:
+                await query.answer()                      
+    except Exception as e:
+        logging.error(f"Ошибка при обработке изображения: {e}")
+        await query.answer("Ошибка при обработке изображения.", show_alert=True)
+
+
+async def barcode_with_gpt_maybe(update, context):
+    query = update.callback_query
+    user_id = query.from_user.id
+    img_url = context.user_data.get('img_url')
+
+    if not img_url:
+        await query.answer("Изображение не найдено.", show_alert=True)
+        return
+
+    try:
+        with open('temp_image.jpg', 'rb') as file:
+            image = Image.open(file)
+            image.load()
+            
+            # Запрос к Gemini
+            response = await generate_barcode_response(user_id, image=image, query=None)
+            barcode = extract_barcode(response)
+
+            if barcode:
+                context.user_data['barcode_text'] = barcode  # Сохраняем штрихкод
+                await query.answer(f"Штрихкод найден: {barcode}", show_alert=True)
+
+                # Запускаем поиск отзывов
+                await process_barcode_search(update, context)
+            else:
+                await query.answer("Штрихкод не найден.", show_alert=True)
+                
+    except Exception as e:
+        logging.error(f"Ошибка при обработке изображения: {e}")
+        await query.answer("Ошибка при обработке изображения.", show_alert=True)
+
+
+
+
+def extract_barcode(text: str) -> str | None:
+    """
+    Извлекает из текста штрихкод (последовательность цифр 8-14 знаков).
+    Если штрихкод не найден, возвращает None.
+    """
+    matches = re.findall(r'\b\d{8,14}\b', text)
+    return matches[0] if matches else None
+
+GOOGLE_CSE_ID = "b232a6db8dceb4ac8"  # ID вашей поисковой системы Google Custom Search
+GOOGLE_API_KEY = "AIzaSyCLq5s14u58HVmA5vQ3tBLTAVn3ljeoo2I"  # Ваш API-ключ Google
+async def search_barcode_reviews(barcode, user_id):  # Добавляем user_id в аргументы
+    query = f"{barcode} отзывы"
+    url = f"https://www.googleapis.com/customsearch/v1?q={query}&cx={GOOGLE_CSE_ID}&key={GOOGLE_API_KEY}"
+    
+    logging.info(f"Google Search Query: {query}")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                data = await response.json()
+                
+                search_results = [
+                    {
+                        "title": item.get("title", "No Title"),
+                        "link": item.get("link", "No Link"),
+                        "snippet": item.get("snippet", "No Snippet")
+                    }
+                    for item in data.get("items", [])
+                ]
+
+                logging.info(f"search_results: {search_results}")
+
+                generate_results = search_results[:4]
+                analysis_text = await generate_barcode_analysis(user_id, generate_results)  # Возвращает текст
+                otzyvy = await generate_barcode_otzyvy(user_id, analysis_text)
+
+                return otzyvy  # Просто возвращаем текст
+
+    except Exception as e:
+        logging.info(f"Ошибка при поиске: {e}")
+        return "Ошибка при получении отзывов."
+
+# Вызов функции для поиска отзывов по штрихкоду
+async def process_barcode_search(update, context):
+    query = update.callback_query
+    barcode = context.user_data.get('barcode_text')
+    user_id = update.effective_user.id
+
+    logging.info(f"barcode: {barcode}, user_id: {user_id}")
+
+    if not barcode:
+        await query.message.reply_text("Штрихкод не найден.")
+        return
+
+    await query.message.reply_text(f"Ищу отзывы по штрихкоду {barcode}...")
+    otzyvy = await search_barcode_reviews(barcode, user_id)  # Получаем готовый текст
+
+    await query.message.reply_text(otzyvy)  # Просто отправляем текст
+
+
+
+
+
+
 async def plantmap_gpt(update, context):
     user_id = update.effective_user.id
     img_url = context.user_data.get('img_url')
-
+    await update.callback_query.answer()
     if not img_url:
         await update.callback_query.answer("Изображение не найдено.")
         return
@@ -3925,7 +4164,6 @@ async def plantmap_gpt(update, context):
     waiting_message = await update.callback_query.message.reply_text("Растение добавляется, ожидайте...")
 
     try:
-        processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
 
         with open('temp_image.jpg', 'rb') as file:
             image = Image.open(file)
@@ -3954,80 +4192,351 @@ async def plantmap_gpt(update, context):
                 "Type": plant_type,
                 "img_url": img_url
             }
-            save_to_user_mapplants(user_id, name, data)
-
+            record_key = save_to_user_mapplants(user_id, name, data)
+            logging.info(f"record_key: {record_key}")  
             if user_id in is_ocr_mode:
                 is_ocr_mode[user_id] = False
             if user_id not in waiting_for_coordinates:
                 waiting_for_coordinates[user_id] = True
-                waiting_for_coordinates[user_id] = name  # Сохраняем название растения
-            await update.callback_query.message.reply_text(f"Растение '{name}' добавлено успешно!Теперь пришлите координаты этого растения")                
+                waiting_for_coordinates[user_id] = {"name": name, "record_key": record_key}
+                  # Сохраняем название растения
+            # Создаем кнопку с WebApp
+            webapp_url2 = "https://epsg.io/map#srs=4326&x=38.371124&y=56.035226&z=9&layer=streets"            
+            keyboard = [
+                [InlineKeyboardButton("Получить координаты", web_app=WebAppInfo(url=webapp_url2))],
+            ]
 
+            # Создаем клавиатуру
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            # Формируем сообщение об успешном добавлении
+            success_message = (
+                f"Растение '<b>{name}</b>' добавлено успешно!\n"
+                "Если автоматически распозналось неверное название, то пожалуйста пришлите верное.\n\n"
+                "Если же название распознано верно, то пришлите координаты. Это можно сделать через карту встроенную в телеграм:\n"
+                "1) Нажмите кнопку 'прикрепить'(скрепка),\n"
+                "2) Выберите раздел 'геопозиция',\n"
+                "3) Выберите на карте нужное место,\n"
+                "4) Нажмите 'Отправить выбранную геопозицию'.\n\n"            
+                "Либо вы можете прислать координаты вручную, в формате 'долгота, широта', либо 'долгота широта', например:\n"
+                "<pre>37.153434 55.963768</pre>\n\n"
+                "Так же вы можете воспользоваться кнопкой ниже, она откроет карту на которой вы сможете найти нужное место и скопировать координаты"
+                )
+            
+            # Заменяем сообщение "ожидайте..." на сообщение об успехе
+            await context.bot.edit_message_text(
+                chat_id=update.callback_query.message.chat_id,
+                message_id=waiting_message.message_id,
+                text=success_message,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
     except Exception as e:
         logging.error(f"Ошибка в plantmap_gpt: {e}")
         await update.callback_query.message.reply_text(f"Ошибка при обработке: {e}")
 
+
+async def scientific_gpt(update, context):
+    user_id = update.effective_user.id
+    query = update.callback_query
+    await query.answer()
+    
+    # Получаем scientific_name из контекста
+    scientific_name = context.user_data.get('scientific_name')
+    if not scientific_name:
+        await query.message.reply_text("Научное название растения не найдено.")
+        return
+    
+    # Отправляем сообщение ожидания
+    waiting_message = await query.message.reply_text("Информация о растении добавляется, ожидайте...")
+    
+    try:
+        # Формируем запрос для получения информации о растении
+        query_text = (
+            f"Дай информацию по растению с названием {scientific_name}, по следующим пунктам:\n"
+            "0) Что это. Гриб, растение, дерево, ягода. Этот пункт начни с фразы \"0)Это: \" В ответе напиши только одно слово из перечисленных, если ничего не подходит то напиши \"распознать не вышло\"\n"
+            "1) Русскоязычные названия, от самого популярного до самых редких, если есть. Этот пункт начни с фразы \"1)Русские названия: \" В ответе перечисли только название или названия без лишних пояснений. Если русского названия нет то напиши исходное название игнорируя то что оно не является русским\n"
+            "2) Общая краткая информация и описание, как выглядит, не длиннее 30 слов. Этот пункт начни с фразы \"2)Общая информация: \"\n"
+            "3) Где обычно растёт, на какой территории и в какой местности, не длиннее 15 слов. Этот пункт начни с фразы \"3)Произрастает: \"\n"
+            "4) Где и как применяется, ядовит или нет, не длиннее 20 слов. Этот пункт начни с фразы \"4)Применение: \"\n"
+            "5) Дополнительная важная или интересная информация по этому растению, если есть. Этот пункт начни с фразы \"5)Дополнительно: \"\n\n"
+            "Строго придерживайся заданного формата ответа, это нужно для того, чтобы корректно работал код программы.\n"
+            "Никакого лишнего текста кроме заданных пунктов не пиши.\n"
+        )
+        
+        # Генерация ответа через модель
+        response = await generate_plant_help_response(user_id, query=query_text)
+        
+        # Парсим ответ
+        name_match = re.search(r"1\)Русские названия:?\s*([^,\n2]+)", response)
+        type_match = re.search(r"0\)Это:\s*(\S+)", response)
+        if not name_match or not type_match:
+            await query.message.reply_text("Ошибка: не удалось извлечь данные из ответа.")
+            return
+        
+        name = name_match.group(1).strip().capitalize()
+        plant_type = type_match.group(1)
+        
+        # Удаляем "0)Это: " из полного текста
+        full_text = re.sub(r"0\)Это:.*?\n", "", response, count=1, flags=re.DOTALL).strip()
+        
+        # Сохранение в Firebase
+        data = {
+            "Full_text": full_text,
+            "Type": plant_type,
+            "scientific_name": scientific_name
+        }
+        record_key = save_to_user_mapplants(user_id, name, data)
+        logging.info(f"record_key: {record_key}")
+        
+        if user_id in is_ocr_mode:
+            is_ocr_mode[user_id] = False
+        if user_id not in waiting_for_coordinates:
+            waiting_for_coordinates[user_id] = True
+            waiting_for_coordinates[user_id] = {"name": name, "record_key": record_key}
+        # Создаем кнопку с WebApp
+        webapp_url2 = "https://epsg.io/map#srs=4326&x=38.371124&y=56.035226&z=9&layer=streets"            
+        keyboard = [
+            [InlineKeyboardButton("Получить координаты", web_app=WebAppInfo(url=webapp_url2))],
+        ]        
+        # Формируем сообщение об успешном добавлении
+        success_message = (
+            f"Растение '<b>{name}</b>' добавлено успешно!\n"
+            "Теперь пришлите координаты. Это можно сделать через карту встроенную в телеграм:\n"
+            "1) Нажмите кнопку 'прикрепить'(скрепка),\n"
+            "2) Выберите раздел 'геопозиция',\n"
+            "3) Выберите на карте нужное место,\n"
+            "4) Нажмите 'Отправить выбранную геопозицию'.\n\n"            
+            "Либо вы можете прислать координаты вручную, в формате 'долгота, широта', либо 'долгота широта', например:\n"
+            "<pre>37.153434 55.963768</pre>\n\n"
+            "Так же вы можете воспользоваться кнопкой ниже, она откроет карту на которой вы сможете найти нужное место и скопировать координаты"            
+        )
+        
+        # Заменяем сообщение "ожидайте..." на сообщение об успехе
+        await context.bot.edit_message_text(
+            chat_id=update.callback_query.message.chat_id,
+            message_id=waiting_message.message_id,
+            text=success_message,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logging.error(f"Ошибка в scientific_gpt: {e}")
+        await query.message.reply_text(f"Ошибка при обработке: {e}")
+
+
+
+async def add_new_plant(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    await update.callback_query.answer()
+    if user_id in is_ocr_mode:
+        is_ocr_mode[user_id] = False    
+    # Переключаем пользователя в режим ожидания координат
+    waiting_for_coordinates[user_id] = True
+    waiting_for_coordinates[user_id] = {"name": "", "record_key": ""}    
+    await update.callback_query.message.reply_text(
+        "Вы вошли в режим добавления растения. Пожалуйста, пришлите название растения, которое вы хотите добавить на карту. \n\n"
+        "Так же вы можете в квадратных скобках указать текст, который будет отображаться при нажатии на метку вместо стандартного текста. \n"
+        "Например:\n"
+        "<pre>Опята [тут много опят]</pre>",
+        parse_mode="HTML"  # Указываем парсмод HTML
+    )
+
+
 import re
 import logging
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
 async def handle_coordinates(update, context):
     user_id = update.effective_user.id
+    img_url = context.user_data.get('img_url')
 
+    # Проверяем, что пользователь находится в состоянии ожидания координат
     if user_id not in waiting_for_coordinates:
         await update.message.reply_text("Я не жду от вас координат. Сначала добавьте растение.")
         return
 
-    name = waiting_for_coordinates[user_id]
+    data = waiting_for_coordinates[user_id]
+    logging.info(f"data: {data}")
 
+    # Проверяем, есть ли уже name и record_key в данных
+    name = data.get("name")
+    record_key = data.get("record_key")
+
+    # Проверяем, что именно прислал пользователь
     if update.message.location:
         lat = update.message.location.latitude
         lon = update.message.location.longitude
     elif update.message.text:
-        # Регулярное выражение для поиска координат
-        coord_pattern = r"^\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*$"
-        match = re.match(coord_pattern, update.message.text.strip())
+        user_input = update.message.text.strip()
+        # Регулярное выражение для поиска текста в квадратных скобках
+        brackets_pattern = r"\[([^\]]+)\]"
+        brackets_match = re.search(brackets_pattern, user_input)
+        
+        # Если найдены квадратные скобки, извлекаем текст из них
+        if brackets_match:
+            user_full_text = brackets_match.group(1).strip()  # Текст внутри скобок
+            user_input = re.sub(brackets_pattern, "", user_input).strip()  # Удаляем скобки и их содержимое из user_input
+        else:
+            user_full_text = None  # Если скобок нет, переменная остаётся пустой
+        # Обновлённое регулярное выражение для поддержки запятой или пробела как разделителя
+        coord_pattern = r"^\s*(-?\d+\.?\d*)\s*[, ]\s*(-?\d+\.?\d*)\s*$"
+        match = re.match(coord_pattern, user_input)
 
-        if not match:
-            await update.message.reply_text("Некорректный формат координат. Отправьте в формате: 56.002237, 37.088522")
-            return
+        if match:
+            lon, lat = map(float, match.groups())
+            # Теперь lon и lat содержат долготу и широту
+        else:
+            # Пользователь ввёл не координаты, а, возможно, название растения
+            waiting_message = await update.message.reply_text(f"Вы указали '{user_input}'. Ищу информацию об этом растении...")
+            try:
+                query = (
+                    f"Дай информацию по растению с названием {user_input}, по следующим пунктам:\n"
+                    "0) Что это. Гриб, растение, дерево, ягода. Этот пункт начни с фразы \"0)Это: \" В ответе напиши только одно слово из перечисленных, если ничего не подходит то напиши \"распознать не вышло\"\n"
+                    "1) Русскоязычные названия, от самого популярного до самых редких, если есть. Этот пункт начни с фразы \"1)Русские названия: \" В ответе перечисли только название или названия без лишних пояснений\n"
+                    "2) Общая краткая информация и описание, как выглядит, не длиннее 30 слов. Этот пункт начни с фразы \"2)Общая информация: \"\n"
+                    "3) Где обычно растёт, на какой территории и в какой местности, не длиннее 15 слов. Этот пункт начни с фразы \"3)Произрастает: \"\n"
+                    "4) Где и как применяется, ядовит или нет, не длиннее 20 слов. Этот пункт начни с фразы \"4)Применение: \"\n"
+                    "5) Дополнительная важная или интересная информация по этому растению, если есть. Этот пункт начни с фразы \"5)Дополнительно: \"\n\n"
+                    "Строго придерживайся заданного формата ответа, это нужно для того, чтобы корректно работал код программы.\n"
+                    "Никакого лишнего текста кроме заданных пунктов не пиши.\n"
+                )
+                response = await generate_plant_help_response(user_id, query)
+                
+                name_match = re.search(r"1\)Русские названия: ?([^,\n2]+)", response)
+                type_match = re.search(r"0\)Это:\s*(\S+)", response)
+                
+                if not name_match or not type_match:
+                    await update.message.reply_text("Ошибка: не удалось извлечь данные о растении.")
+                    return
+                
+                new_name = name_match.group(1).strip().capitalize()
+                plant_type = type_match.group(1)
+                full_text = re.sub(r"0\)Это:.*?\n", "", response, count=1, flags=re.DOTALL).strip()
+                
+                data = {
+                    "Full_text": full_text,
+                    "Type": plant_type,
+                    "img_url": img_url if img_url is not None else "изображение отсутствует",
+                    "user_full_text": user_full_text
+                }
 
-        lat, lon = map(float, match.groups())
+                # Если name и record_key отсутствуют, вызываем save_to_user_mapplants
+                if not name or not record_key:
+                    record_key = save_to_user_mapplants(user_id, new_name, data)
+                    waiting_for_coordinates[user_id] = {
+                        "name": new_name,
+                        "record_key": record_key  # Храним новое название растения
+                    }
+                else:
+                    # Если name и record_key есть, вызываем update_to_user_mapplants
+                    update_to_user_mapplants(user_id, name, new_name, data)
+                    waiting_for_coordinates[user_id] = {
+                        "name": new_name,  # Храним новое название растения
+                        "record_key": record_key  # Сохраняем record_key, чтобы потом записать координаты
+                    }
+
+                # Создаем кнопку с WebApp
+                webapp_url2 = "https://epsg.io/map#srs=4326&x=38.371124&y=56.035226&z=9&layer=streets"       
+                # Создаем кнопку "В главное меню"
+                keyboard = [
+                    [InlineKeyboardButton("Получить координаты", web_app=WebAppInfo(url=webapp_url2))],
+                    [InlineKeyboardButton("🌌Отмена🌌", callback_data='restart')]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Формируем текст сообщения
+                success_message = (
+                    f"Растение '<b>{new_name}</b>' добавлено успешно! Если вы указали не то название то можете прислать верное\n"
+                    "Теперь пришлите координаты. Это можно сделать через карту встроенную в телеграм:\n"
+                    "1) Нажмите кнопку 'прикрепить'(скрепка),\n"
+                    "2) Выберите раздел 'геопозиция',\n"
+                    "3) Выберите на карте нужное место,\n"
+                    "4) Нажмите 'Отправить выбранную геопозицию'.\n\n"            
+                    "Либо вы можете прислать координаты вручную, в формате 'долгота, широта', либо 'долгота широта', например:\n"
+                    "<pre>37.153434 55.963768</pre>\n\n"
+                    "Так же вы можете воспользоваться кнопкой ниже, она откроет карту на которой вы сможете найти нужное место и скопировать координаты"
+                )
+
+                # Редактируем сообщение, добавляя кнопку
+                # Универсальное получение chat_id
+                if update.message:
+                    chat_id = update.message.chat_id
+                elif update.callback_query and update.callback_query.message:
+                    chat_id = update.callback_query.message.chat_id
+                else:
+                    logger.error("Не удалось определить chat_id")
+                    return
+
+                # Отправка или редактирование сообщения
+                try:
+                    if update.callback_query and update.callback_query.message:
+                        # Если это callback-запрос, редактируем существующее сообщение
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=waiting_message.message_id,
+                            text=success_message,
+                            parse_mode='HTML',
+                            reply_markup=reply_markup
+                        )
+                    elif update.message:
+                        # Если это текстовое сообщение, отправляем новое сообщение
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=success_message,
+                            parse_mode='HTML',
+                            reply_markup=reply_markup
+                        )               
+                except Exception as e:
+                    logger.error(f"Ошибка при отправке/редактировании сообщения: {e}")                        
+                return
+            except Exception as e:
+                logging.error(f"Ошибка при получении информации о растении: {e}")
+                await update.message.reply_text("Ошибка при обработке запроса о растении.")
+                return
     else:
-        await update.message.reply_text("Пожалуйста, отправьте геолокацию через карту Telegram или текстом в формате: 56.002237, 37.088522")
+        await update.message.reply_text("Ошибка: не удалось определить координаты.")
         return
 
+    # Сохранение координат
     try:
-        ref = db.reference(f"map_plants/{user_id}/{name}")
-        current_data = ref.get() or {}  # Загружаем текущие данные, если их нет — создаём пустой словарь
-
-        current_data["coordinates"] = f"{lat}, {lon}"  # Сохраняем координаты в виде строки
-
-        ref.set(current_data)  # Обновляем данные в Firebase
+        ref = db.reference(f"map_plants/{user_id}/{name}/{record_key}")
+        current_data = ref.get() or {}
+        current_data["coordinates"] = f"{lat}, {lon}"
+        ref.set(current_data)
 
         del waiting_for_coordinates[user_id]
-
         is_ocr_mode[user_id] = True
-        # Получаем ссылку на карту
+
         umap_url = await view_map()
-        if not umap_url:
-            await update.message.reply_text(f"Координаты {lat}, {lon} для '{name}' успешно сохранены, но карта недоступна.")
-            return
+        webapp_url = "https://umap.openstreetmap.fr/ru/map/anemone_1177482?scaleControl=true&miniMap=false&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=false&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true&measureControl=true&datalayers=ad0d1cbb-4dd3-4476-8111-c8a40f97126b%2Ca5a444be-fdb5-44aa-81a7-2a0c4b889705&locateControl=true&starControl=false#9/55.6147/37.3123"  # URL твоей карты
+        # Создание клавиатуры
+        keyboard = [
+            [InlineKeyboardButton("💠Запустить карту в телеграм💠", web_app=WebAppInfo(url=webapp_url))],    
+            [InlineKeyboardButton("🌐Посмотреть в браузере🌐", url=webapp_url)],
+            [InlineKeyboardButton("✏️ Добавить ещё по названию ✏️", callback_data='addnewplant')],        
+            [InlineKeyboardButton("📷 Добавить ещё по фото 📷", callback_data='start_ocr')],
+            [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+        ]
 
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Посмотреть на карте", url=umap_url)]]
+        # Оборачиваем клавиатуру в InlineKeyboardMarkup
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Отправляем сообщение с клавиатурой
+        await update.message.reply_text(
+            f"Координаты {lon}, {lat} для '{name}' успешно сохранены! И растение теперь отображается на карте. Вы можете продолжить присылать растения",
+            reply_markup=reply_markup  # Передаем reply_markup вместо keyboard
         )
-
-        await update.message.reply_text(f"Координаты {lat}, {lon} для '{name}' успешно сохранены!", reply_markup=keyboard)
-        
     except Exception as e:
         logging.error(f"Ошибка при сохранении координат: {e}")
         await update.message.reply_text("Произошла ошибка при сохранении координат.")
 
 
+
+
 async def convert_to_geojson(data: dict) -> dict:
     """
-    Преобразует данные о растениях в формат GeoJSON с учетом типа растения.
-    
+    Преобразует данные о растениях в формат GeoJSON с учетом типа растения. 
     :param data: Словарь с данными о растениях (результат load_all_plants_data).
     :return: GeoJSON объект.
     """
@@ -4035,50 +4544,71 @@ async def convert_to_geojson(data: dict) -> dict:
         "Дерево": {"iconUrl": "/uploads/pictogram/park.svg", "color": "DarkOliveGreen", "iconClass": "Default"},
         "Ягода": {"iconUrl": "/uploads/pictogram/greengrocer.svg", "color": "OrangeRed", "iconClass": "Default"},
         "Гриб": {"iconUrl": "/uploads/pictogram/convenience.svg", "color": "SaddleBrown", "iconClass": "Drop"},
-        "Растение": {"iconUrl": "/uploads/pictogram/garden.svg", "color": "ForestGreen", "iconClass": "Drop"}
+        "Растение": {"iconUrl": "/uploads/pictogram/garden.svg", "color": "ForestGreen", "iconClass": "Drop"},
     }
-    
+
     features = []
+    logging.info(f"data: {data}")
     for user_id, plants in data.items():
-        for plant_name, plant_info in plants.items():
-            coordinates = plant_info.get("coordinates", "").split(",")
-            if len(coordinates) == 2:
-                try:
-                    longitude = float(coordinates[0].strip())
-                    latitude = float(coordinates[1].strip())
-                    plant_type = plant_info.get("Type", "Растение")  # По умолчанию "Растение"
-                    mapping = type_mappings.get(plant_type, type_mappings["Растение"])  # Подставляем соответствующие значения
-                    
-                    img_url = plant_info.get("img_url", "")
-                    full_text = plant_info.get("Full_text", "")
-                    description = f"{{{{{img_url}|300}}}}\n{full_text}"
-                    
-                    feature = {
-                        "type": "Feature",
-                        "geometry": {
-                            "type": "Point",
-                            "coordinates": [latitude, longitude],
-                        },
-                        "properties": {
-                            "name": plant_name,
-                            "description": description,
-                            "_umap_options": {
-                                "color": mapping["color"],
-                                "iconUrl": mapping["iconUrl"],
-                                "iconClass": mapping["iconClass"],
-                                "showLabel": True,
-                                "labelInteractive": True,
-                                "labelDirection": "right",                                
+        for plant_name, records in plants.items():
+            # Достаем общие данные о растении
+            common_data = records.pop("common_data", {})
+
+            for record_key, record_data in records.items():
+                coordinates = record_data.get("coordinates", "").split(",")
+                if len(coordinates) == 2:
+                    try:
+                        longitude = float(coordinates[0].strip())
+                        latitude = float(coordinates[1].strip())
+
+                        # Подставляем общие данные
+                        full_text = record_data.get("Full_text", "")
+                        user_full_text = record_data.get("user_full_text", "")                        
+                        plant_type = record_data.get("Type", "Растение")
+                        mapping = type_mappings.get(plant_type, type_mappings["Растение"])
+
+                        img_url = record_data.get("img_url", "")
+                        logging.info(f"img_url: {img_url}")                        
+                        if user_full_text and user_full_text.strip():
+                            text_to_use = user_full_text
+                        else:
+                            text_to_use = full_text
+
+                        # Проверяем, есть ли img_url, и формируем description соответственно
+                        if img_url and img_url.strip() and img_url != "изображение отсутствует":
+                            description = f"{{{{{img_url}|300}}}}\n{text_to_use}"
+                        else:
+                            description = text_to_use
+
+                        feature = {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [latitude, longitude],
                             },
-                        },
-                    }
-                    features.append(feature)
-                except ValueError:
-                    logging.warning(f"Неверный формат координат для растения {plant_name}")
+                            "properties": {
+                                "name": plant_name,
+                                "description": description,
+                                "_umap_options": {
+                                    "color": mapping["color"],
+                                    "iconUrl": mapping["iconUrl"],
+                                    "iconClass": mapping["iconClass"],
+                                    "showLabel": True,
+                                    "labelInteractive": True,
+                                    "labelDirection": "right",
+                                },
+                            },
+                        }
+                        logging.info(f"feature: {feature}")                       
+                        features.append(feature)
+                    except ValueError:
+                        logging.warning(f"Неверный формат координат для растения {plant_name} у пользователя {user_id}")
+
     return {
         "type": "FeatureCollection",
         "features": features,
     }
+
 
 async def generate_umap_url(geojson_url: str) -> str:
     """
@@ -4100,8 +4630,8 @@ async def generate_umap_url(geojson_url: str) -> str:
 async def view_map():
     # Загрузка данных
     all_plants_data = load_all_plants_data()
+  
     geojson_data = await convert_to_geojson(all_plants_data)
-
     # Загружаем GeoJSON на GitHub
     geojson_url = await upload_geojson_to_github(geojson_data)
     if not geojson_url:
@@ -4115,18 +4645,30 @@ async def show_map(update: Update, context: CallbackContext):
     query = update.callback_query
     if query:
         await query.answer()  # Гасим нажатие кнопки
-    
-    umap_url = await view_map()
+    await view_map()
+
     webapp_url = "https://umap.openstreetmap.fr/ru/map/anemone_1177482?scaleControl=true&miniMap=false&scrollWheelZoom=true&zoomControl=true&editMode=disabled&moreControl=true&searchControl=null&tilelayersControl=null&embedControl=false&datalayersControl=true&onLoadPanel=none&captionBar=false&captionMenus=true&measureControl=true&datalayers=ad0d1cbb-4dd3-4476-8111-c8a40f97126b%2Ca5a444be-fdb5-44aa-81a7-2a0c4b889705&locateControl=true&starControl=false#9/55.6147/37.3123"  # URL твоей карты
-    youtube_url = "https://m.youtube.com"
     keyboard = [
-        [InlineKeyboardButton("Посмотреть на карте", url=umap_url)],
-        [InlineKeyboardButton("Открыть в WebApp", web_app=WebAppInfo(url=webapp_url))],
-        [InlineKeyboardButton("YouTube", web_app=WebAppInfo(url=youtube_url))],
+        [InlineKeyboardButton("💠Запустить карту в телеграм💠", web_app=WebAppInfo(url=webapp_url))],    
+        [InlineKeyboardButton("🌐Посмотреть в браузере🌐", url=webapp_url)],
+        [InlineKeyboardButton("✏️ Добавить растение по названию ✏️", callback_data='addnewplant')],        
+        [InlineKeyboardButton("📷 Добавить растение по фото 📷", callback_data='start_ocr')],
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.effective_chat.send_message("Вот ваша карта:", reply_markup=reply_markup)
+
+    # Если это вызвано через callback_query (нажатие кнопки), то редактируем сообщение
+    if query:
+        await query.edit_message_text(
+            text="Тут вы можете посмотреть карту с растениями и грибами которые добавили на неё пользователи:",
+            reply_markup=reply_markup
+        )
+    else:
+        # Если вызвано напрямую (не через кнопку), отправляем новое сообщение
+        await update.effective_chat.send_message(
+            text="Тут вы можете посмотреть карту с растениями и грибами которые добавили на неё пользователи:",
+            reply_markup=reply_markup
+        )
 
 
 
@@ -4157,10 +4699,10 @@ async def upload_geojson_to_github(geojson_data: dict) -> str:
         if resp.status_code == 201 or resp.status_code == 200:
             return f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/{FILE_PATH}"  # Прямая ссылка на файл
         else:
-            logging.error(f"Ошибка GitHub API: {resp.json()}")
+            logging.info(f"Ошибка GitHub API: {resp.json()}")
             return ""
     except Exception as e:
-        logging.error(f"Ошибка при загрузке GeoJSON: {e}")
+        logging.info(f"Ошибка при загрузке GeoJSON: {e}")
         return ""
 
 
@@ -4221,6 +4763,7 @@ async def save_to_my_plants(update: Update, context: CallbackContext) -> None:
         "min_temp": extract_avg_number(response_text, "Минимальная температура"),
     }
     save_to_user_plants(user_id, scientific_name, plant_data)
+    rus_name = extract_rus_name(response_text)        
     # Создаем кнопку "Отменить поиск"
     keyboard = [
         [InlineKeyboardButton("🪴 Мои растения 🪴", callback_data='myplants')],
@@ -4229,9 +4772,10 @@ async def save_to_my_plants(update: Update, context: CallbackContext) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправка подтверждения пользователю
-    await waiting_message.edit_text(f"✅ Растение '{scientific_name}' успешно добавлено в ваши растения! Вы можете продолжить присылать фото растений, или посмотреть список",
+    await waiting_message.edit_text(f"✅ Растение '{rus_name}' успешно добавлено в ваши растения! Вы можете продолжить присылать фото растений, или посмотреть список",
         reply_markup=reply_markup
     )
+
 
 async def recognize_plant_automatically(update: Update, context: CallbackContext):
     img_url = context.user_data.get('img_url')
@@ -4256,7 +4800,7 @@ async def recognize_plant_automatically(update: Update, context: CallbackContext
                 prediction = await response.json()
                 return prediction.get('results', [])
             else:
-                return []     
+                return []    
 
 
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
@@ -4325,6 +4869,7 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         
         # Отправляем сообщение с кнопками после медиа
         keyboard = [
+            [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='scientific_gpt')],
             [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],         
             [InlineKeyboardButton("Подробнее об этом растении", callback_data='gpt_plants_more')],         
             [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],        
@@ -4333,7 +4878,7 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.message.reply_text(
-            "Для занесения этого растения в список ваших растений или получения более подробной информации, либо об уходе за ним, воспользуйтесь кнопками ниже. Либо отправьте следующее изображение",
+            "Для занесения этого растения в список ваших растений, добавления на карту, либо для получения более подробной информации об этом растении и уходе за ним, воспользуйтесь кнопками ниже. Либо отправьте следующее изображение",
             reply_markup=reply_markup  # Добавляем кнопку к этому сообщению
         )
     else:
@@ -4382,6 +4927,7 @@ async def gpt_plants_more_handler(update, context):
             await message.edit_text(part, parse_mode='MarkdownV2')
 
 
+
 async def gpt_plants_help_handler(update, context):
     """Асинхронный обработчик для запроса ухода за растением по научному названию."""
     user_id = update.callback_query.from_user.id
@@ -4413,7 +4959,6 @@ async def gpt_plants_help_handler(update, context):
             await message.edit_text(part, reply_markup=reply_markup, parse_mode='MarkdownV2')
         else:
             await message.edit_text(part, parse_mode='MarkdownV2')
-
 
 def extract_rus_name(response_text):
     match = re.search(r"0\)Русские названия:(.*?)1\)Общая информация", response_text, re.DOTALL)
@@ -4462,7 +5007,7 @@ async def gptplant_response(update, context):
     }
     
     save_to_user_plants(user_id, scientific_name, plant_data)
-    
+    rus_name = extract_rus_name(response_text)    
     keyboard = [
         [InlineKeyboardButton("🪴 Мои растения 🪴", callback_data='myplants')],
         [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],   
@@ -4472,7 +5017,7 @@ async def gptplant_response(update, context):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     # Отправка подтверждения пользователю
-    await update.callback_query.message.edit_text(f"✅ Растение '{scientific_name}' успешно добавлено в ваши растения! Вы можете продолжить присылать фото растений, или посмотреть список",
+    await update.callback_query.message.edit_text(f"✅ Растение '{rus_name}' успешно добавлено в ваши растения! Вы можете продолжить присылать фото растений, или посмотреть список",
         reply_markup=reply_markup
     )
 
@@ -4488,7 +5033,8 @@ async def handle_myplants_callback(update: Update, context: ContextTypes.DEFAULT
     """Обрабатывает нажатие кнопки 'Мои растения'."""
     query = update.callback_query
     user_id = query.from_user.id
-    
+    query = update.callback_query
+    await query.answer()    
     message_text, keyboard = await generate_plants_buttons(user_id)
     
     if keyboard:
@@ -4564,10 +5110,12 @@ from math import ceil
 
 async def generate_plants_buttons(user_id: int, sort_by: str = None, reverse: bool = False, page: int = 0):
     """Генерирует кнопки с информацией о растениях пользователя с возможностью сортировки и пагинации."""
+
     plants = load_user_plants(user_id)
     if not plants:
         return "У вас нет сохранённых растений.", None
     season = get_season()
+  
     header = f"{'Название':<14} |{'Вода'} |{'t°С':^4} |{'t°Min'}|{'Свет'}"
     rows = []
     buttons = []
@@ -4659,9 +5207,9 @@ async def generate_plants_buttons(user_id: int, sort_by: str = None, reverse: bo
     watering_info = format_watering_info(user_id)   
     # Формируем текст сообщения
     newplant = [InlineKeyboardButton("🌱 Добавить новое растение 🌱", callback_data='start_ocr')] 
-
+    backtomenu = [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
     message_text = f"<pre>Вода - поливать раз в Х дней\nt°С - Средняя комфортная температура\nt°Min - минимальная температура\nСвет - теневыносливость, где 10 это самые светолюбивые растения 1 это самые теневыносливые\n\nВаши текущие растения:\n{header}\n" + "\n".join(rows) + f"</pre>\n\n{watering_info}"
-    keyboard = InlineKeyboardMarkup([waterkeyboard] + [pre_buttons] + [sort_buttons] + buttons + [navigation_buttons] + [newplant])
+    keyboard = InlineKeyboardMarkup([waterkeyboard] + [pre_buttons] + [sort_buttons] + buttons + [navigation_buttons] + [newplant] + [backtomenu])
     
     return message_text, keyboard
 
@@ -7235,24 +7783,24 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
 
 
-
 def create_publish_button(user_id, message_id):
     keyboard = [
         [
             InlineKeyboardButton("🗂 Сохранить пост себе в папку 🗂", callback_data=f"snooze_with_tag_{user_id}_{message_id}")
         ],   
         [
-            InlineKeyboardButton("Опубликовать в Telegram", callback_data=f"publish_{user_id}_{message_id}")
-        ],        
-        [
+            InlineKeyboardButton("Опубликовать в Telegram", callback_data=f"publish_{user_id}_{message_id}"),
             InlineKeyboardButton("Опубликовать в ВК", callback_data=f"vkpub_{user_id}_{message_id}")
         ],
         [
-            InlineKeyboardButton("✏️ Заменить подпись ✏️", callback_data=f"caption_{user_id}_{message_id}")
-        ],        
+            InlineKeyboardButton("Опубликовать в X", callback_data=f"twitterpub_{user_id}_{message_id}")
+        ],   
         [
             InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{user_id}_{message_id}")
-        ], 
+        ],         
+        [
+            InlineKeyboardButton("✏️ Заменить подпись ✏️", callback_data=f"caption_{user_id}_{message_id}")
+        ],        
         [
             InlineKeyboardButton("🔄 Случайно перемешать изображения 🔄", callback_data=f"shuffle_{user_id}_{message_id}")
         ],
@@ -7260,13 +7808,13 @@ def create_publish_button(user_id, message_id):
             InlineKeyboardButton("🎨 Сортировать по палитре 🎨", callback_data=f"palettesort_{user_id}_{message_id}")
         ],
         [
-        InlineKeyboardButton("🔀 Поменять 2 изображения местами 🔀", callback_data=f"swapimages_{user_id}_{message_id}")
+            InlineKeyboardButton("🔀 Поменять 2 изображения местами 🔀", callback_data=f"swapimages_{user_id}_{message_id}")
         ],
         [
-        InlineKeyboardButton("❌ Удалить 1 изображение ❌", callback_data=f"filedelete_{user_id}_{message_id}")
+            InlineKeyboardButton("❌ Удалить 1 изображение ❌", callback_data=f"filedelete_{user_id}_{message_id}")
         ]                     
     ]        
-    return InlineKeyboardMarkup(keyboard)  
+    return InlineKeyboardMarkup(keyboard)
 
 def create_publish_and_snooze_buttons(user_id, message_id):
     """Создает клавиатуру с кнопками для публикации и отложенной отправки."""
@@ -7318,7 +7866,7 @@ def create_shuffle_buttons(user_id, message_id):
         InlineKeyboardButton("❌ Удалить 1 изображение ❌", callback_data=f"filedelete_{user_id}_{message_id}")
         ]    
     ]
-    return InlineKeyboardMarkup(keyboard)    
+    return InlineKeyboardMarkup(keyboard)     
 
 
 async def handle_tag_selection(update: Update, context: CallbackContext) -> None:
@@ -7335,6 +7883,7 @@ async def handle_tag_selection(update: Update, context: CallbackContext) -> None
     # Загружаем данные
 
     generation_data = context.user_data.get("generation_data")
+
     if generation_data:
         # Если данные о генерации есть, используем их
         media_group_storage = load_publications_from_firebase()
@@ -7365,7 +7914,7 @@ async def handle_tag_selection(update: Update, context: CallbackContext) -> None
             f"✅ Запись успешно добавлена в папку {tag}.\n Теперь вы можете найти её там и продолжить редактирование, либо опубликовать",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗂 Посмотреть мои папки 🗂", callback_data="scheduled_by_tag")],
-                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+                [InlineKeyboardButton("‼️ Перезапуск бота ‼️", callback_data='restart')]
             ])
         )
         return
@@ -7520,11 +8069,14 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
         for index, (key, caption, tag) in enumerate(scheduled):
             keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{key}")])
             keyboard.append([
-                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),
-                InlineKeyboardButton("Пост в ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("Пост в ВК", callback_data=f"vkpub_{key}")
+                InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),                
             ])
-        
+
+
+       
         # Добавьте кнопку "Удалить все с меткой"
         keyboard.append([
             InlineKeyboardButton("------------------------", callback_data="separator")
@@ -7532,9 +8084,22 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
         keyboard.append([
             InlineKeyboardButton("🗑 Удалить все из этой папки 🗑", callback_data=f"tagdelete_{tag}")
         ])
-        
+        # Добавляем кнопку "🌌В главное меню🌌"
+        keyboard.append([
+            InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+        ])        
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text(f"📋 Записи из папки {tag}:", reply_markup=reply_markup)
+        last_message_id = context.user_data.get('last_message_id')
+        if last_message_id:
+            await query.edit_message_text(
+                f"📋 Записи из папки {tag}:",
+                reply_markup=reply_markup
+            )
+        else:
+            await query.message.reply_text(
+                f"📋 Записи из папки {tag}:",
+                reply_markup=reply_markup
+            )
     else:
         await query.message.reply_text(f"🛑 Нет записей с меткой {tag}.")
 
@@ -7579,7 +8144,9 @@ async def delete_all_by_tag(update: Update, context: CallbackContext) -> None:
         # Сохраняем обновлённые данные обратно в файл
         save_media_group_data(media_group_storage, current_user_id)
 
-        await query.message.reply_text(f"✅ Все записи из папки '{tag}' удалены.")
+        await query.answer(f"✅ Все записи из папки '{tag}' удалены.", show_alert=True)
+        await handle_scheduled_tags(update, context)
+
     else:
         await query.message.reply_text("🚫 У вас нет записей с такой меткой.")
 
@@ -7651,9 +8218,10 @@ async def yrrase_scheduled(update: Update, context: CallbackContext) -> None:
                 for record_key, caption, tag in remaining_records:
                     keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{record_key}")])
                     keyboard.append([
-                        InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{record_key}"),
-                        InlineKeyboardButton("Пост в ТГ", callback_data=f"publish_{record_key}"),
-                        InlineKeyboardButton("Пост в ВК", callback_data=f"vkpub_{record_key}"),
+                        InlineKeyboardButton("В ТГ", callback_data=f"publish_{record_key}"),
+                        InlineKeyboardButton("В ВК", callback_data=f"vkpub_{record_key}"),
+                        InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{record_key}"),
+                        InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{krecord_keyey}"),                          
                     ])
             else:
                 keyboard.append([InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")])
@@ -7739,7 +8307,8 @@ async def handle_scheduled_tags(update: Update, context: CallbackContext) -> Non
     # Отправляем сообщение с клавиатурой
     if keyboard:
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await send_method("Выберите папку для отображения записей:", reply_markup=reply_markup)
+        message = await send_method("Выберите папку для отображения записей:", reply_markup=reply_markup)
+        context.user_data['last_message_id'] = message.message_id        
     else:
         await send_method("🛑 Нет доступных меток.")
 
@@ -7936,9 +8505,10 @@ async def handle_new_caption(update: Update, context: CallbackContext, key) -> i
         keyboard = [
             [InlineKeyboardButton("📄 Посмотреть обновлённую запись 📄", callback_data=f"view_{key}")],
             [
-                InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),                
-                InlineKeyboardButton("Удалить", callback_data=f"erase_{key}")
+                InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
             ],
             [InlineKeyboardButton("🗂 Мои папки 🗂", callback_data="scheduled_by_tag")]
         ]
@@ -8397,9 +8967,10 @@ async def select_second_image(update: Update, context: CallbackContext) -> None:
         text="✅ Изображения успешно заменены и пост обновлен.",
         reply_markup=InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),
-                InlineKeyboardButton("Удалить", callback_data=f"erase_{key}")
+                InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
             ],
             [
                 InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{key}")
@@ -8563,9 +9134,10 @@ async def fileselect_image_to_delete(update: Update, context: CallbackContext) -
         text=f"✅ Изображение успешно удалено и пост обновлен.",
         reply_markup=InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),
-                InlineKeyboardButton("Удалить", callback_data=f"erase_{key}")
+                InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
             ],
             [
                 InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{key}")
@@ -8754,9 +9326,10 @@ async def send_scheduled_post_buttons(query, key, data):
         text=f"Папка: {data.get('scheduled', 'Не указана')}\n\nКоличество медиа в посте: {len(data.get('media', []))}\n\nПри нажатии кнопки \"Редактировать пост\" вы можете отсортировать или удалить изображения, а так же поменять подпись. ",
         reply_markup=InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),
-                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}")
+                InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
             ],
             [
                 InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{key}")
@@ -8768,14 +9341,11 @@ async def send_scheduled_post_buttons(query, key, data):
                 InlineKeyboardButton("📔 Сменить папку 📔", callback_data=f"snooze_with_tag_{key}")
             ],
             [
-                InlineKeyboardButton("🌃 Опубликовать в общую папку 🌃", callback_data=f"sharefromuserpublic_{key}")
-            ],
-            [
-                InlineKeyboardButton("🏙 Общие публикации 🏙", callback_data="view_shared")
-            ],
-            [
                 InlineKeyboardButton("🗂 Посмотреть мои папки 🗂", callback_data="scheduled_by_tag")
-            ]
+            ],
+            [
+                InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+            ],            
         ])
     )
 
@@ -8833,9 +9403,10 @@ async def handle_back_to_main(update: Update, context: CallbackContext) -> None:
                 text=f"Папка: {data.get('scheduled', 'Не указана')}\n\nКоличество медиа в посте: {len(data.get('media', []))}",
                 reply_markup=InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
-                        InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),
-                        InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}")
+                        InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                        InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                        InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                        InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
                     ],
                     [
                         InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{key}")
@@ -8847,15 +9418,11 @@ async def handle_back_to_main(update: Update, context: CallbackContext) -> None:
                         InlineKeyboardButton("📔 Сменить папку 📔", callback_data=f"snooze_with_tag_{key}")
                     ],
                     [
-                        InlineKeyboardButton("🌃 Опубликовать в общем доступе 🌃", callback_data=f"sharefromuserpublic_{key}")
-                    ],
-                    [
-                        InlineKeyboardButton("🏙 Общие публикации 🏙", callback_data="view_shared")
-                    ],
-                    [
                         InlineKeyboardButton("🗂 Посмотреть мои папки 🗂", callback_data="scheduled_by_tag")
                     ],
-
+                    [
+                        InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+                    ], 
                 ])
             )
         else:
@@ -8944,9 +9511,10 @@ async def handle_shuffle_button(update: Update, context: CallbackContext) -> Non
                 text=f"🔄 Изображения перемешаны:\n\nКоличество медиа: {len(media)}",
                 reply_markup=InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
-                        InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),
-                        InlineKeyboardButton("Удалить", callback_data=f"erase_{key}")
+                        InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                        InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                        InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                        InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
                     ],
                     [
                         InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{key}")
@@ -9816,9 +10384,10 @@ async def sort_by_criteria(update, context):
                     text=f"✅ Изображения отсортированы:\n\nКритерий: {criterion}, Количество медиа: {len(sorted_media)}",
                     reply_markup=InlineKeyboardMarkup([
                         [
-                            InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
-                            InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),
-                            InlineKeyboardButton("Удалить", callback_data=f"erase_{key}")
+                            InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+                            InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+                            InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+                            InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
                         ],
                         [
                             InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{key}")
@@ -10080,7 +10649,115 @@ def upload_photo_to_vk(vk, image_url, group_id, caption):
 
 
 
+import tweepy
 
+# Обработчик кнопки публикации в Twitter
+async def handle_twitterpub_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    loading_message = await query.message.reply_text("📤 Пост переносится в Twitter, ожидайте...")
+    
+    if not query.data.startswith("twitterpub_"):
+        await loading_message.edit_text("🚫 Неверный формат callback данных.")
+        return
+
+    _, user_id_str, message_id_str = query.data.split('_', maxsplit=2)
+    user_id = int(user_id_str)
+    message_id = int(message_id_str)
+    key = f"{user_id}_{message_id}"
+
+    # Загрузка данных из Firebase
+    global media_group_storage
+    media_group_storage = load_publications_from_firebase()
+    user_publications = media_group_storage.get(str(user_id), {})
+    media_group_data = user_publications.get(key)
+
+    if not media_group_data:
+        await loading_message.edit_text("🚫 Ошибка: Данные о медиагруппе не найдены.")
+        return
+
+    media_items = media_group_data.get("media", [])
+    if not media_items or not isinstance(media_items, list):
+        await loading_message.edit_text("🚫 Ошибка: Медиагруппа пуста или имеет некорректный формат.")
+        return
+
+    # Извлекаем ссылки на изображения и caption
+    image_urls = [item.get("file_id") for item in media_items if "file_id" in item]
+    first_caption = media_items[0].get("caption", "")
+    cleaned_caption = extract_text_before_first_link(first_caption)
+
+    # Проверяем наличие API ключей Twitter
+    twitter_keys_ref = db.reference(f'users_publications/twitter_keys/{user_id}')
+    twitter_keys = twitter_keys_ref.get()
+
+    if not twitter_keys:
+        await loading_message.edit_text(
+            "У вас не настроена публикация в Twitter.\n"
+            "Отправьте API ключи с разрешениями на запись в формате:\n"
+            "<pre>api_key api_secret access_token access_token_secret</pre>"
+            "Получить их можно на сайте developer.x.com, подробнее можете спросить у любой нейросети или у разработчика бота через команду /send (мне лень писать инструкцию, всё равно пользоваться этой кнопкой никто кроме меня не будет.). Для перезапуска введите /resstart",
+            parse_mode="HTML"
+        )
+        if user_id not in waiting_for_twitter:
+            waiting_for_twitter[user_id] = True
+        return
+
+    api_key = twitter_keys["api_key"]
+    api_secret = twitter_keys["api_secret"]
+    access_token = twitter_keys["access_token"]
+    access_token_secret = twitter_keys["access_token_secret"]
+    bearer_token = twitter_keys.get("bearer_token")  # Необходим для API v2 (если есть)
+
+    try:
+        # Аутентификация в Twitter API v2
+        client = tweepy.Client(
+            consumer_key=api_key,
+            consumer_secret=api_secret,
+            access_token=access_token,
+            access_token_secret=access_token_secret
+        )
+
+        # Аутентификация в API v1.1 (нужна для загрузки медиа)
+        auth = tweepy.OAuth1UserHandler(api_key, api_secret, access_token, access_token_secret)
+        api = tweepy.API(auth, wait_on_rate_limit=True)
+    except Exception as e:
+        await loading_message.edit_text(f"🚫 Ошибка авторизации в Twitter: {e}")
+        return
+
+    # Если есть изображения, загружаем их и отправляем твит с медиа
+    uploaded_media_ids = []
+    if image_urls:
+        try:
+            for url in image_urls:
+                media_id = await upload_photo_to_twitter(api, url)
+                if media_id:
+                    uploaded_media_ids.append(media_id)
+        except Exception as e:
+            await loading_message.edit_text(f"🚫 Ошибка загрузки изображений в Twitter: {e}")
+            return
+
+    try:
+        if uploaded_media_ids:
+            client.create_tweet(text=cleaned_caption, media_ids=uploaded_media_ids)
+        else:
+            client.create_tweet(text=cleaned_caption)
+
+        await loading_message.edit_text("✅ Пост успешно опубликован в Twitter")
+    except Exception as e:
+        await loading_message.edit_text(f"🚫 Ошибка публикации в Twitter: {e}")
+
+async def upload_photo_to_twitter(api, image_url):
+    """Загружает изображение в Twitter и возвращает media_id."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as response:
+            if response.status != 200:
+                raise Exception(f"Ошибка загрузки изображения: HTTP {response.status}")
+            image_data = await response.read()
+
+    # Загрузка изображения в Twitter (API v1.1, так как API v2 не поддерживает)
+    media = api.media_upload(filename="image.jpg", file=BytesIO(image_data))
+    return media.media_id
 
 
 
@@ -10313,6 +10990,7 @@ def main() -> None:
     
     application.add_handler(CallbackQueryHandler(text_rec_with_gpt, pattern='text_rec_with_gpt$'))
     application.add_handler(CallbackQueryHandler(text_plant_help_with_gpt, pattern='text_plant_help_with_gpt$'))    
+    application.add_handler(CallbackQueryHandler(mushrooms_gpt, pattern='mushrooms_gpt$'))    
     application.add_handler(CallbackQueryHandler(regenerate_image, pattern=r"^regenerate_"))
     application.add_handler(CallbackQueryHandler(examples_table_handler, pattern='^examples_table$'))
     application.add_handler(CallbackQueryHandler(handle_view_shared, pattern="^view_shared$"))
@@ -10333,16 +11011,27 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_followup_question, pattern='^ask_followup'))    
     application.add_handler(CallbackQueryHandler(handle_short_gpt_help, pattern='^short_help_gpt$'))                 
     application.add_handler(CallbackQueryHandler(handle_vkpub_button, pattern=r'^vkpub_'))
+    application.add_handler(CallbackQueryHandler(handle_twitterpub_button, pattern=r'^twitterpub_'))    
     application.add_handler(CallbackQueryHandler(filedelete_image, pattern=r'^filedelete_'))
     application.add_handler(CallbackQueryHandler(fileselect_image_to_delete, pattern=r'^fileselect_'))
     application.add_handler(CallbackQueryHandler(handle_role_select, pattern='^role_select$'))
     application.add_handler(CallbackQueryHandler(handle_role_selected, pattern='^(newroleselect_|defaultrole_)'))
     application.add_handler(CallbackQueryHandler(handle_delete_role, pattern=r"^clear_role_"))  
     application.add_handler(CallbackQueryHandler(mainhelp_callback, pattern="osnhelp"))
-    application.add_handler(CallbackQueryHandler(handle_share_button, pattern='^share_'))
-    application.add_handler(CallbackQueryHandler(mushrooms_gpt, pattern='mushrooms_gpt$'))    
+    application.add_handler(CallbackQueryHandler(handle_share_button, pattern='^share_'))   
 
     application.add_handler(CallbackQueryHandler(yrrase_scheduled, pattern="yrrasetag_"))
+      
+    application.add_handler(CallbackQueryHandler(plantmap_gpt, pattern='^plantmap_gpt$'))
+    application.add_handler(CallbackQueryHandler(scientific_gpt, pattern='^scientific_gpt$'))    
+    application.add_handler(CallbackQueryHandler(show_map, pattern="^show_map$"))
+    application.add_handler(CallbackQueryHandler(gpt_running, pattern="^(showgpt_menu|hidegpt_menu)$"))
+    application.add_handler(CallbackQueryHandler(barcode_with_gpt, pattern='barcode_with_gpt$'))
+    application.add_handler(CallbackQueryHandler(plants_and_mushrooms_menu, pattern='plants_and_mushrooms_menu$'))
+    application.add_handler(CallbackQueryHandler(plants_and_mushrooms_backmenu, pattern='plants_and_mushrooms_backmenu$'))
+    application.add_handler(CallbackQueryHandler(add_new_plant, pattern='addnewplant$'))
+    application.add_handler(CommandHandler("map", show_map))
+
       
     # Начало процесса замены
     application.add_handler(CallbackQueryHandler(swap_images, pattern=r'^swapimages_'))
@@ -10365,17 +11054,13 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(delete_plant_callback, pattern=r"^plantdelete_"))    
     application.add_handler(CallbackQueryHandler(plant_close_callback, pattern="^plantclose$"))
 
-    application.add_handler(CallbackQueryHandler(plantmap_gpt, pattern='^plantmap_gpt$'))
-    application.add_handler(CallbackQueryHandler(show_map, pattern="^show_map$"))
-    application.add_handler(CallbackQueryHandler(gpt_running, pattern="^(showgpt_menu|hidegpt_menu)$"))
-
 
     
     
     application.add_handler(CallbackQueryHandler(handle_snooze_with_tag_button, pattern=r"^snooze_with_tag_\d+_\d+$"))  
     application.add_handler(CallbackQueryHandler(handle_tag_selection, pattern=r"^tag_"))
-    application.add_handler(CallbackQueryHandler(handle_replace_caption, pattern=r"caption_"))
     application.add_handler(CallbackQueryHandler(handle_save_button, pattern=r"^save_\d+_\d+$"))
+    application.add_handler(CallbackQueryHandler(handle_replace_caption, pattern=r"caption_"))
 
     application.add_handler(CallbackQueryHandler(select_style, pattern="choose_style"))
     application.add_handler(CallbackQueryHandler(category_handler, pattern="^category_"))
@@ -10392,7 +11077,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_palettesort, pattern=r"^palettesort_\d+_\d+$"))
     application.add_handler(CallbackQueryHandler(sort_by_criteria, pattern=r"^sort_\w+_\w+$"))
 
-    application.add_handler(CommandHandler("map", view_map))
     # Обработчик для просмотра конкретной отложенной записи
     application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$'))    
     application.add_handler(CommandHandler("sendall", sendall))    
