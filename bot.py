@@ -4578,10 +4578,10 @@ async def convert_to_geojson(data: dict) -> dict:
     :return: GeoJSON объект.
     """
     type_mappings = {
-        "Дерево": {"iconUrl": "https://files.catbox.moe/ututdd.png", "color": "DarkSlateGray", "iconClass": "Default"},
-        "Ягода": {"iconUrl": "https://files.catbox.moe/71su67.png", "color": "#a4a8fa", "iconClass": "Default"},
-        "Гриб": {"iconUrl": "https://files.catbox.moe/qvxtuy.png", "color": "#6f6350", "iconClass": "Drop"},
-        "Растение": {"iconUrl": "https://files.catbox.moe/faakdn.png", "color": "LightGoldenRodYellow", "iconClass": "Drop"},
+        "Дерево": {"iconUrl": "https://i.ibb.co/qY5T5XDC/ututdd.png", "color": "DarkSlateGray", "iconClass": "Default"},
+        "Ягода": {"iconUrl": "https://i.ibb.co/7xvZZfj0/71su67.png", "color": "#a4a8fa", "iconClass": "Default"},
+        "Гриб": {"iconUrl": "https://i.ibb.co/9XrNZ7Z/qvxtuy.png", "color": "#6f6350", "iconClass": "Drop"},
+        "Растение": {"iconUrl": "https://i.ibb.co/WpvMDw8v/faakdn.png", "color": "LightGoldenRodYellow", "iconClass": "Drop"},
     }
 
     features = []
