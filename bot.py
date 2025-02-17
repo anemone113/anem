@@ -4578,10 +4578,10 @@ async def convert_to_geojson(data: dict) -> dict:
     :return: GeoJSON объект.
     """
     type_mappings = {
-        "Дерево": {"iconUrl": "/uploads/pictogram/park.svg", "color": "DarkOliveGreen", "iconClass": "Default"},
-        "Ягода": {"iconUrl": "/uploads/pictogram/greengrocer.svg", "color": "OrangeRed", "iconClass": "Default"},
-        "Гриб": {"iconUrl": "/uploads/pictogram/convenience.svg", "color": "SaddleBrown", "iconClass": "Drop"},
-        "Растение": {"iconUrl": "/uploads/pictogram/garden.svg", "color": "ForestGreen", "iconClass": "Drop"},
+        "Дерево": {"iconUrl": "https://files.catbox.moe/ututdd.png", "color": "DarkSlateGray", "iconClass": "Default"},
+        "Ягода": {"iconUrl": "https://files.catbox.moe/71su67.png", "color": "#a4a8fa", "iconClass": "Default"},
+        "Гриб": {"iconUrl": "https://files.catbox.moe/qvxtuy.png", "color": "#6f6350", "iconClass": "Drop"},
+        "Растение": {"iconUrl": "https://files.catbox.moe/faakdn.png", "color": "LightGoldenRodYellow", "iconClass": "Drop"},
     }
 
     features = []
@@ -4601,8 +4601,8 @@ async def convert_to_geojson(data: dict) -> dict:
                         # Подставляем общие данные
                         full_text = record_data.get("Full_text", "")
                         user_full_text = record_data.get("user_full_text", "")                        
-                        plant_type = record_data.get("Type", "Растение")
-                        mapping = type_mappings.get(plant_type, type_mappings["Растение"])
+                        plant_type = record_data.get("Type", "Растение").strip().lower()
+                        mapping = type_mappings.get(plant_type.capitalize(), type_mappings["Растение"])
 
                         img_url = record_data.get("img_url", "")
                         logging.info(f"img_url: {img_url}")                        
