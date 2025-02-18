@@ -89,6 +89,7 @@ import time
 import itertools
 import os
 from dotenv import load_dotenv
+import html
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
@@ -8602,6 +8603,8 @@ import mimetypes
 
 
 
+from html import escape
+
 async def handle_replace_caption(update: Update, context: CallbackContext) -> int:
     """Обрабатывает нажатие на кнопку 'заменить текст'."""
     query = update.callback_query
@@ -8636,7 +8639,7 @@ async def handle_replace_caption(update: Update, context: CallbackContext) -> in
 
     # Извлекаем подпись первого изображения
     first_caption = media[0].get('caption', '🚫 Подпись отсутствует.')
-
+    formatted_caption = escape(first_caption)  # Экранируем HTML
     # Сохраняем информацию о текущей публикации для этого пользователя
     waiting_for_caption[user_id] = key
     if user_id not in waiting_for_caption:
@@ -8646,10 +8649,10 @@ async def handle_replace_caption(update: Update, context: CallbackContext) -> in
     keyboard = InlineKeyboardMarkup(
         [[InlineKeyboardButton("Отмена", callback_data='restart')]]
     )
-
+    logger.info(f"Полученный user_id: {first_caption}") 
     # Отправляем текущую подпись и входим в режим ожидания новой
     await query.message.reply_text(
-        text=f"Текущая подпись:\n\n{first_caption}\n\nВведите новую подпись. Всё форматирование, например жирный текст, спойлеры, гиперссылки будет сохранено.",
+        text=f"Текущая подпись:\n\n{first_caption}\n\nВ формате HTML: <pre>{formatted_caption}</pre>\n\nВведите новую подпись. Вы можете использовать как форматирование встроенное в телеграм так и HTML Разметку. Всё форматирование, например жирный текст, спойлеры, гиперссылки будет сохранено.",
         parse_mode='HTML',
         disable_web_page_preview=True,
         reply_markup=keyboard  # Добавляем кнопки
@@ -8701,6 +8704,7 @@ async def handle_new_caption(update: Update, context: CallbackContext, key) -> i
 
     # Форматируем подпись с учётом Telegram-разметки
     formatted_caption = format_text_to_html(update.message)
+    formatted_caption = html.unescape(format_text_to_html(update.message))
     media[0]['caption'] = formatted_caption
 
     # Сохраняем обновленные данные в Firebase
@@ -8712,10 +8716,9 @@ async def handle_new_caption(update: Update, context: CallbackContext, key) -> i
         keyboard = [
             [InlineKeyboardButton("📄 Посмотреть обновлённую запись 📄", callback_data=f"view_{key}")],
             [
-                InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
-                InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
-                InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
-                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
+                InlineKeyboardButton("Пост ТГ", callback_data=f"publish_{key}"),
+                InlineKeyboardButton("Пост ВК", callback_data=f"vkpub_{key}"),                
+                InlineKeyboardButton("Удалить", callback_data=f"erase_{key}")
             ],
             [InlineKeyboardButton("🗂 Мои папки 🗂", callback_data="scheduled_by_tag")]
         ]
