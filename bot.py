@@ -5835,28 +5835,52 @@ async def upload_image_to_freeimage(file_path: str) -> str:
                 else:
                     raise Exception(f"Ошибка загрузки на Free Image Hosting: {response.status}")
 
+from imagekitio import ImageKit
+
+imagekit = ImageKit(
+    public_key='public_yUK3D2wI8elYAhJMfsRIlS2tDR0=',
+    private_key='private_R4rPdLI6gLW/y1KyjSn/5+QrvVo=',
+    url_endpoint='https://ik.imagekit.io/hijnwtjlc'
+)
+
+async def upload_image_to_imagekit(file_path: str) -> str:
+    try:
+        upload = imagekit.upload(
+            file=open(file_path, "rb"),
+            file_name=os.path.basename(file_path),
+        )
+        return upload.url
+    except Exception as e:
+        logging.error(f"Ошибка загрузки на ImageKit: {e}")
+        raise
+
+
 # Основная функция загрузки изображения с проверкой доступности сервисов
 async def upload_image(file_path: str) -> str:
     try:
-        # Попытка загрузки на imgbb
-        return await upload_image_to_imgbb(file_path)
+        # Попытка загрузки на ImageKit
+        return await upload_image_to_imagekit(file_path)
     except Exception as e:
-        logging.error(f"Ошибка загрузки на imgbb: {e}")
+        logging.error(f"Ошибка загрузки на ImageKit: {e}")
+        
         try:
-            # Попытка загрузки на Catbox
-            return await asyncio.wait_for(upload_catbox(file_path), timeout=5)
+            # Попытка загрузки на imgbb
+            return await upload_image_to_imgbb(file_path)
         except Exception as e:
-            logging.error(f"Ошибка загрузки на Catbox: {e}")
+            logging.error(f"Ошибка загрузки на imgbb: {e}")
+
             try:
                 # Попытка загрузки на Free Image Hosting
                 return await upload_image_to_freeimage(file_path)
             except Exception as e:
                 logging.error(f"Ошибка загрузки на Free Image Hosting: {e}")
+                
                 try:
                     # Попытка загрузки на Imgur
                     return await upload_image_to_imgur(file_path)
                 except Exception as e:
                     logging.error(f"Ошибка загрузки на Imgur: {e}")
+                    
                     try:
                         # Попытка загрузки на Cloudinary
                         return await upload_image_to_cloudinary(file_path)
