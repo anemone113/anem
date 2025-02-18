@@ -7314,6 +7314,7 @@ async def process_image(photo_url):
         # Загрузка изображения из URL
         async with aiohttp.ClientSession() as session:
             async with session.get(photo_url) as response:
+                logger.info(f"HTTP status code for {photo_url}: {response.status}")
                 if response.status == 200:
                     img_data = await response.read()
                 else:
@@ -7370,11 +7371,8 @@ async def process_image(photo_url):
 
 
 
-
-
 async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_markup=None, max_retries=3, delay=2):
     retries = 0
-
     if update.message:
         message_to_reply = update.message
     elif update.callback_query:
@@ -7384,14 +7382,19 @@ async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_
 
     while retries < max_retries:
         try:
-            # Пропускаем обработку изображения и используем исходный URL
-            is_gif = False  # Флаг для GIF не нужен, если мы не обрабатываем изображение
+            # Обработка изображения
+            processed_image, is_gif = await process_image(photo_url)
+            if not processed_image:
+                raise Exception("Failed to process media")
             
+            # Если это GIF, сообщаем пользователю о процессе обработки
+            if is_gif:
+                await message_to_reply.reply_text("Gif обрабатывается, ожидайте...\n\nВ боте GIF будет отображаться в сжатом виде. Не переживайте, так и должно быть для ускорения работы бота. Однако если вы воспользуетесь кнопкой публикации то на ваш канал отправится именно полный вариант")
+
             # Выбор метода отправки
-            if photo_url.endswith(('.gif', '.GIF')):  # Проверяем, является ли файл GIF
-                is_gif = True
+            if is_gif:
                 message = await message_to_reply.reply_animation(
-                    animation=photo_url,
+                    animation=processed_image,
                     filename="animation.gif",
                     caption=caption,
                     parse_mode=parse_mode,
@@ -7399,7 +7402,7 @@ async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_
                 )
             else:
                 message = await message_to_reply.reply_photo(
-                    photo=photo_url,
+                    photo=processed_image,
                     caption=caption,
                     parse_mode=parse_mode,
                     reply_markup=reply_markup
@@ -7411,7 +7414,7 @@ async def send_photo_with_retries(update, photo_url, caption, parse_mode, reply_
             if retries < max_retries:
                 logger.info(f"Retrying in {delay} seconds... (Attempt {retries}/{max_retries})")
                 await asyncio.sleep(delay)
-    return None   
+    return None
 
 
 
