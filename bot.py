@@ -3508,7 +3508,14 @@ async def restart(update: Update, context: CallbackContext) -> int:
     if user_id in waiting_for_coordinates:
         del waiting_for_coordinates[user_id]                 
     logger.info(f"User {user_id} restarted the process.") 
-
+    # Очищаем папку twitter_media
+    twitter_media_path = os.path.join(os.getcwd(), "twitter_media")
+    if os.path.exists(twitter_media_path):
+        try:
+            shutil.rmtree(twitter_media_path)
+            logger.info("Директория twitter_media успешно очищена.")
+        except Exception as e:
+            logger.error(f"Ошибка при удалении twitter_media: {e}")
     # Отправляем сообщение с кнопками
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
@@ -3575,7 +3582,14 @@ async def rerestart(update: Update, context: CallbackContext) -> int:
     if user_id in waiting_for_coordinates:
         del waiting_for_coordinates[user_id]                
     logger.info(f"User {user_id} restarted the process.") 
-
+    # Очищаем папку twitter_media
+    twitter_media_path = os.path.join(os.getcwd(), "twitter_media")
+    if os.path.exists(twitter_media_path):
+        try:
+            shutil.rmtree(twitter_media_path)
+            logger.info("Директория twitter_media успешно очищена.")
+        except Exception as e:
+            logger.error(f"Ошибка при удалении twitter_media: {e}")
     # Отправляем сообщение с кнопками
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
