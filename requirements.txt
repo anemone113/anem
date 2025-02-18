@@ -37,3 +37,4 @@ wikipedia-api==0.7.1
 yt-dlp==2025.1.12
 huggingface-hub==0.27.1
 gallery_dl==1.28.5
+imagekitio==4.1.0
