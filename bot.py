@@ -717,7 +717,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             # Получаем текст сообщения
             if update.message.text:
                 text = format_text_to_html(update.message)  
-                 twitter_image_regex = re.compile(r"^https://x\.com/\w+/status/\d+/?(\?.*)?$")
+                twitter_image_regex = re.compile(r"^https://x\.com/\w+/status/\d+/?(\?.*)?$")
                 lofter_image_regex = re.compile(r"^https://\w+\.lofter\.com/post/\w+$")
                 weibo_image_regex = re.compile(r"^https://www\.weibo\.com/\d+/\w+(\?.*)?$")
                 tumblr_image_regex = re.compile(r"^https://\w+\.tumblr\.com/post/\d+(/\S*)?$")
@@ -729,7 +729,7 @@ async def start(update: Update, context: CallbackContext) -> int:
                     or tumblr_image_regex.fullmatch(text)
                 ):
                     await post_by_twitter_link(text, update, context)  # Переименовал для универсальности
-                    return 'awaiting_image'     
+                    return 'awaiting_image'    
 
                 # Проверка на наличие HTML-ссылок
                 html_link_pattern = r'<a\s+href="(https?://[^\s]+)"[^>]*>.*?</a>'
