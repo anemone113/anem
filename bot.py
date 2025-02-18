@@ -715,8 +715,13 @@ async def start(update: Update, context: CallbackContext) -> int:
               
             # Получаем текст сообщения
             if update.message.text:
-
                 text = format_text_to_html(update.message)  
+                twitter_image_regex = re.compile(r"^https://x\.com/\w+/status/\d+/?(\?.*)?$")
+                lofter_image_regex = re.compile(r"^https://\w+\.lofter\.com/post/\w+$")
+
+                if twitter_image_regex.fullmatch(text) or lofter_image_regex.fullmatch(text):
+                    await post_by_twitter_link(text, update, context)  # Возможно, стоит переименовать в post_by_link
+                    return 'awaiting_image'  
 
                 # Проверка на наличие HTML-ссылок
                 html_link_pattern = r'<a\s+href="(https?://[^\s]+)"[^>]*>.*?</a>'
@@ -968,6 +973,84 @@ async def start(update: Update, context: CallbackContext) -> int:
         await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
 
         return ConversationHandler.END
+
+
+import os
+import re
+import gallery_dl
+from telegram import Update
+from telegram.ext import CallbackContext
+
+async def post_by_twitter_link(link: str, update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    logger.info(f"link: {link}")
+    
+    # Отправляем уведомление пользователю
+    await update.message.reply_text("⏳ Пост создаётся, ожидайте...")
+    
+    author_name = None
+    artist_link = None
+    title = None
+    
+    # Проверяем, является ли ссылка Twitter или Lofter
+    twitter_match = re.search(r"https://x.com/([^/]+)/status/(\d+)", link)
+    lofter_match = re.search(r"https://([^.]+).lofter.com/post/(\w+)", link)
+    
+    if twitter_match:
+        author_name = twitter_match.group(1)
+        artist_link = f"https://x.com/{author_name}"
+        title = author_name  # Используем никнейм как заголовок
+    elif lofter_match:
+        author_name = lofter_match.group(1)
+        artist_link = f"https://{author_name}.lofter.com"
+        title = author_name
+    else:
+        await update.message.reply_text("❌ Ошибка: Некорректная ссылка на пост.")
+        return
+    
+    # Директория для сохранения файлов в папке с ботом
+    base_dir = os.path.join(os.getcwd(), "twitter_media")
+    save_dir = os.path.join(base_dir, str(user_id))
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Устанавливаем путь для сохранения файлов
+    gallery_dl.config.set((), "base-directory", save_dir)
+    gallery_dl.config.set((), "directory", "")  # Отключаем подкаталоги
+    gallery_dl.config.set(("extractor", "twitter"), "videos", False)  # Отключаем загрузку видео
+    gallery_dl.config.set(("extractor", "twitter"), "retweets", False)  # Отключаем ретвиты
+    
+    try:
+        # Запускаем загрузку
+        job = gallery_dl.job.DownloadJob(link)
+        job.run()
+        logger.info(f"job: {job}")        
+        
+        # Список загруженных файлов
+        media_files = [os.path.join(save_dir, f) for f in os.listdir(save_dir) if f.endswith(('.jpg', '.png'))]
+        logger.info(f"media_files: {media_files}")            
+        if not media_files:
+            await update.message.reply_text("❌ Ошибка: Не удалось скачать изображения.")
+            return
+        
+        # Заполняем user_data
+        user_data[user_id] = {
+            'status': 'twitter_image',
+            'artist_link': artist_link,
+            'extra_links': [artist_link],
+            'author_name': f'Автор: {author_name}',
+            'title': title,
+            'media': media_files,
+            'image_counter': len(media_files),
+        }
+        logging.info(f"user_data: {user_data}")        
+        # Передаём изображения в handle_image
+        await handle_image(update, context)
+        logging.info(f"user_data2: {user_data}")        
+        return await publish(update, context)
+    except Exception as e:
+        logging.error(f"Ошибка в post_by_twitter_link: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
 
 
 # Обработчик для нового меню "Грибы и растения"
@@ -6405,7 +6488,41 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     caption = update.message.caption
     message_id = update.message.message_id
+    if user_id in user_data and user_data[user_id]['status'] == 'twitter_image':
+        logging.info(f"Автоматически загружаем изображения из twitter_data для {user_id}")
 
+        media_files = user_data[user_id].get('media', [])
+        uploaded_media = []
+
+        for file_path in media_files:
+            if not file_path or not isinstance(file_path, str):
+                logging.warning(f"Некорректный путь к файлу: {file_path}")
+                continue
+
+            if not os.path.exists(file_path):
+                logging.warning(f"Файл {file_path} не найден!")
+                continue
+
+            try:
+                image_url = await upload_image(file_path)
+                uploaded_media.append({'type': 'image', 'url': image_url, 'caption': caption or ""})
+                os.remove(file_path)  # Удаляем локальный файл после загрузки
+            except Exception as e:
+                logging.error(f"Ошибка загрузки {file_path}: {str(e)}")
+
+        # Очищаем директорию после загрузки
+        if media_files:
+            media_folder = os.path.dirname(media_files[0])
+            shutil.rmtree(media_folder, ignore_errors=True)
+
+        # Обновляем user_data: только media и image_counter, остальное сохраняем
+        user_data[user_id]['media'] = uploaded_media
+        user_data[user_id]['image_counter'] = len(uploaded_media)
+        user_data[user_id]['status'] = 'awaiting_image'
+
+        logging.info(f"Обновленный user_data: {user_data}")
+
+        return ASKING_FOR_IMAGE
     # Проверяем, редактирует ли пользователь что-либо
     if 'editing_index' in context.user_data:
         index = context.user_data['editing_index']
@@ -7554,9 +7671,6 @@ async def publish(update: Update, context: CallbackContext) -> None:
             extra_phrase = user_data[user_id].get('extra_phrase', "")
             author_name_final = user_data[user_id].get('author_name', '')           
             # Проверяем значение author_name_final в зависимости от user_id
-            if user_id == 6217936347:
-                if author_name_final:
-                    author_name_final = f"Автор: {author_name_final}"
 
             # Формируем строку с фразой перед "Автор", если она есть
             if extra_phrase:
