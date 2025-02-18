@@ -716,12 +716,19 @@ async def start(update: Update, context: CallbackContext) -> int:
             # Получаем текст сообщения
             if update.message.text:
                 text = format_text_to_html(update.message)  
-                twitter_image_regex = re.compile(r"^https://x\.com/\w+/status/\d+/?(\?.*)?$")
+                 twitter_image_regex = re.compile(r"^https://x\.com/\w+/status/\d+/?(\?.*)?$")
                 lofter_image_regex = re.compile(r"^https://\w+\.lofter\.com/post/\w+$")
+                weibo_image_regex = re.compile(r"^https://www\.weibo\.com/\d+/\w+(\?.*)?$")
+                tumblr_image_regex = re.compile(r"^https://\w+\.tumblr\.com/post/\d+(/\S*)?$")
 
-                if twitter_image_regex.fullmatch(text) or lofter_image_regex.fullmatch(text):
-                    await post_by_twitter_link(text, update, context)  # Возможно, стоит переименовать в post_by_link
-                    return 'awaiting_image'  
+                if (
+                    twitter_image_regex.fullmatch(text)
+                    or lofter_image_regex.fullmatch(text)
+                    or weibo_image_regex.fullmatch(text)
+                    or tumblr_image_regex.fullmatch(text)
+                ):
+                    await post_by_twitter_link(text, update, context)  # Переименовал для универсальности
+                    return 'awaiting_image'     
 
                 # Проверка на наличие HTML-ссылок
                 html_link_pattern = r'<a\s+href="(https?://[^\s]+)"[^>]*>.*?</a>'
@@ -992,9 +999,11 @@ async def post_by_twitter_link(link: str, update: Update, context: CallbackConte
     artist_link = None
     title = None
     
-    # Проверяем, является ли ссылка Twitter или Lofter
+    # Проверяем, является ли ссылка Twitter, Lofter, Weibo или Tumblr
     twitter_match = re.search(r"https://x.com/([^/]+)/status/(\d+)", link)
     lofter_match = re.search(r"https://([^.]+).lofter.com/post/(\w+)", link)
+    weibo_match = re.search(r"https://www.weibo.com/\d+/(\w+)", link)
+    tumblr_match = re.search(r"https://([^.]+).tumblr.com", link)
     
     if twitter_match:
         author_name = twitter_match.group(1)
@@ -1003,6 +1012,14 @@ async def post_by_twitter_link(link: str, update: Update, context: CallbackConte
     elif lofter_match:
         author_name = lofter_match.group(1)
         artist_link = f"https://{author_name}.lofter.com"
+        title = author_name
+    elif weibo_match:
+        author_name = "weibo"
+        artist_link = link  # Оставляем исходную ссылку
+        title = "Weibo"
+    elif tumblr_match:
+        author_name = tumblr_match.group(1)
+        artist_link = f"https://{author_name}.tumblr.com"
         title = author_name
     else:
         await update.message.reply_text("❌ Ошибка: Некорректная ссылка на пост.")
