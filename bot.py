@@ -7841,9 +7841,8 @@ async def publish(update: Update, context: CallbackContext) -> None:
                         }
                         
                         # Отправляем изображение
-                        message = await send_photo_with_retries(
-                            update=update,
-                            photo_url=single_image['url'],
+                        message = await update.message.reply_photo(
+                            photo=single_image['url'],
                             caption=caption,
                             parse_mode='HTML'
                         )
