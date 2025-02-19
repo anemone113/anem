@@ -497,7 +497,29 @@ def set_user_model(user_id: int, model: str):
     except Exception as e:
         logging.error(f"Ошибка при сохранении модели в Firebase: {e}")
         
+def get_user_preset(user_id: int) -> str:
+    """Возвращает выбранный пресет пользователя из Firebase или значение по умолчанию."""
+    try:
+        ref_preset = db.reference(f'user_presets/{user_id}')
+        user_preset = ref_preset.get()
+        if user_preset:
+            logging.info(f"Пресет для пользователя {user_id}: {user_preset}")
+            return user_preset
+        else:
+            logging.warning(f"Пресет для пользователя {user_id} не найден. Используется значение по умолчанию.")
+            return "Нет"
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке пресета для пользователя {user_id}: {e}")
+        return "Нет"
 
+def set_user_preset(user_id: int, preset: str):
+    """Устанавливает пользовательский пресет и сохраняет его в Firebase."""
+    try:
+        ref_preset = db.reference(f'user_presets/{user_id}')
+        ref_preset.set(preset)
+        logging.info(f"Пресет пользователя {user_id} обновлен на: {preset}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении пресета в Firebase: {e}")
 
 import uuid
 
