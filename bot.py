@@ -8711,6 +8711,9 @@ async def handle_scheduled_tags(update: Update, context: CallbackContext) -> Non
     if no_folder_count > 0:
         keyboard.append([InlineKeyboardButton(f"Записи без папки ({no_folder_count})", callback_data="filter_tag_nofolder")])
 
+    # Добавляем кнопку "🌌В главное меню🌌" в отдельную строку
+    keyboard.append([InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')])
+
     total_count = sum(tag_counts.values()) + other_count + no_folder_count
     # Отправляем сообщение с клавиатурой
     if keyboard:
@@ -9402,7 +9405,10 @@ async def select_second_image(update: Update, context: CallbackContext) -> None:
             ],
             [
                 InlineKeyboardButton("🗂 Посмотреть папки 🗂", callback_data="scheduled_by_tag")
-            ],                                 
+            ],
+            [
+                InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+            ],            
         ])
     )
 
@@ -9569,7 +9575,10 @@ async def fileselect_image_to_delete(update: Update, context: CallbackContext) -
             ],
             [
                 InlineKeyboardButton("🗂 Посмотреть папки 🗂", callback_data="scheduled_by_tag")
-            ],      
+            ],
+            [
+                InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+            ],            
         ]),
         parse_mode='HTML'
     )
@@ -9946,7 +9955,10 @@ async def handle_shuffle_button(update: Update, context: CallbackContext) -> Non
                     ],
                     [
                         InlineKeyboardButton("🗂 Посмотреть папки 🗂", callback_data="scheduled_by_tag")
-                    ],                                                
+                    ],
+                    [
+                        InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+                    ],                    
                 ])
             )
         else:
@@ -10819,7 +10831,10 @@ async def sort_by_criteria(update, context):
                         ],
                         [
                             InlineKeyboardButton("🗂 Посмотреть папки 🗂", callback_data="scheduled_by_tag")
-                        ],                            
+                        ],
+                        [
+                            InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+                        ],                        
                     ])
                 )
             else:
