@@ -8155,11 +8155,11 @@ def create_publish_button(user_id, message_id):
             InlineKeyboardButton("🗂 Сохранить пост себе в папку 🗂", callback_data=f"snooze_with_tag_{user_id}_{message_id}")
         ],   
         [
-            InlineKeyboardButton("Опубликовать в Telegram", callback_data=f"publish_{user_id}_{message_id}"),
-            InlineKeyboardButton("Опубликовать в ВК", callback_data=f"vkpub_{user_id}_{message_id}")
+            InlineKeyboardButton("Пост в Telegram", callback_data=f"publish_{user_id}_{message_id}"),
+            InlineKeyboardButton("Пост в ВК", callback_data=f"vkpub_{user_id}_{message_id}")
         ],
         [
-            InlineKeyboardButton("Опубликовать в X.com", callback_data=f"twitterpub_{user_id}_{message_id}")
+            InlineKeyboardButton("Пост в X.com", callback_data=f"twitterpub_{user_id}_{message_id}")
         ],   
         [
             InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{user_id}_{message_id}")
