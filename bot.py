@@ -8211,7 +8211,8 @@ async def handle_snooze_with_tag_button(update: Update, context: CallbackContext
 async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
-
+    # Логируем конкретно query.data для удобства отладки
+    logger.info(f"Callback data: {query.data}")
     # Получаем выбранную метку из callback_data
     _, _, tag = query.data.split('_')
 
@@ -8270,51 +8271,141 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
 
 
     if scheduled:
+        page = int(context.user_data.get('folderpage', 0))
+        items_per_page = 8
+        total_pages = (len(scheduled) + items_per_page - 1) // items_per_page
+        
+        # Ограничиваем показ только нужными записями
+        start = page * items_per_page
+        end = start + items_per_page
+        scheduled_page = scheduled[start:end]
+        
         keyboard = [
             [InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")],
             [InlineKeyboardButton("------------------------", callback_data="separator")]
         ]
-        for index, (key, caption, tag) in enumerate(scheduled):
+        
+        # Добавляем только записи текущей страницы
+        for index, (key, caption, tag) in enumerate(scheduled_page):
             keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{key}")])
             keyboard.append([
                 InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
                 InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
                 InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
-                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),                
+                InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),
             ])
+        
+        # Кнопки навигации (отображаются только если страниц больше 1)
+        if total_pages > 1:
+            prev_button = InlineKeyboardButton("◀ Назад", callback_data=f"folderpage_{page - 1}_{tag}") if page > 0 else InlineKeyboardButton("◀", callback_data="noop")
+            next_button = InlineKeyboardButton("▶ Вперёд", callback_data=f"folderpage_{page + 1}_{tag}") if page < total_pages - 1 else InlineKeyboardButton("▶", callback_data="noop")
 
-
-       
-        # Добавьте кнопку "Удалить все с меткой"
+            keyboard.append([
+                prev_button,
+                InlineKeyboardButton(f"📄 {page + 1}/{total_pages}", callback_data="separator"),
+                next_button
+            ])
+        
+        # Дополнительные кнопки
         keyboard.append([
             InlineKeyboardButton("------------------------", callback_data="separator")
         ])
         keyboard.append([
             InlineKeyboardButton("🗑 Удалить все из этой папки 🗑", callback_data=f"tagdelete_{tag}")
         ])
-        # Добавляем кнопку "🌌В главное меню🌌"
         keyboard.append([
-            InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+            InlineKeyboardButton("🌌В главное меню 🌌", callback_data='restart')
         ])        
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
-        last_message_id = context.user_data.get('last_message_id')
-        if last_message_id:
-            await query.edit_message_text(
-                f"📋 Записи из папки {tag}:",
-                reply_markup=reply_markup
-            )
-        else:
-            await query.message.reply_text(
-                f"📋 Записи из папки {tag}:",
-                reply_markup=reply_markup
-            )
+        
+        await query.edit_message_text(
+            f"📋 Записи из папки {tag}:",
+            reply_markup=reply_markup
+        )
     else:
         await query.message.reply_text(f"🛑 Нет записей с меткой {tag}.")
 
 
-async def delete_all_by_tag(update: Update, context: CallbackContext) -> None:
+async def generate_scheduled_keyboard(update: Update, context: CallbackContext, tag: str, page: int = 0) -> InlineKeyboardMarkup:
+    """Генерирует клавиатуру для показа запланированных записей по тегу."""
+    global media_group_storage
+    media_group_storage = load_publications_from_firebase()
+    current_user_id = str(update.effective_user.id)
+    scheduled = []
+
+    if current_user_id in media_group_storage:
+        user_publications = media_group_storage[current_user_id]
+        for message_id, data in user_publications.items():
+            if isinstance(data, dict):
+                record_tag = data.get('scheduled', '')
+                if record_tag == tag:
+                    if 'media' in data and isinstance(data['media'], list):
+                        media_list = data['media']
+                        if media_list:
+                            raw_caption = media_list[0].get('caption', '')
+                            soup = BeautifulSoup(raw_caption, 'html.parser')
+                            for a in soup.find_all('a'):
+                                a.replace_with(a.get_text())
+                            cleaned_caption = soup.get_text()
+                            caption = (
+                                re.search(r'автор:\s*([^•<\n]+)', cleaned_caption, re.IGNORECASE).group(1).strip()
+                                if "автор: " in cleaned_caption.lower()
+                                else ' '.join(cleaned_caption.split()[:3])
+                            )
+                            scheduled.append((message_id, caption, tag))
+
+    items_per_page = 8
+    total_pages = (len(scheduled) + items_per_page - 1) // items_per_page
+
+    start = page * items_per_page
+    end = start + items_per_page
+    scheduled_page = scheduled[start:end]
+
+    keyboard = [
+        [InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")],
+        [InlineKeyboardButton("------------------------", callback_data="separator")]
+    ]
+
+    for index, (key, caption, tag) in enumerate(scheduled_page):
+        keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{key}")])
+        keyboard.append([
+            InlineKeyboardButton("В ТГ", callback_data=f"publish_{key}"),
+            InlineKeyboardButton("В ВК", callback_data=f"vkpub_{key}"),
+            InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
+            InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),
+        ])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("◀ Назад", callback_data=f"folderpage_{page - 1}_{tag}"))
+    nav_buttons.append(InlineKeyboardButton(f"📄 {page + 1}/{total_pages}", callback_data="separator"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("▶ Вперёд", callback_data=f"folderpage_{page + 1}_{tag}"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    keyboard.append([InlineKeyboardButton("------------------------", callback_data="separator")])
+    keyboard.append([InlineKeyboardButton("🗑 Удалить все из этой папки 🗑", callback_data=f"tagdelete_{tag}")])
+    keyboard.append([InlineKeyboardButton("🌌В главное меню 🌌", callback_data='restart')])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def change_page(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
+    
+    action, page, tag = query.data.split('_')
+    context.user_data['folderpage'] = int(page)
+    
+    # Передаем тег обратно в функцию отображения
+    await show_scheduled_by_tag(update, context)
+
+
+
+async def delete_all_by_tag(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
 
     # Получаем выбранную метку из callback_data
     _, tag = query.data.split('_')
@@ -8361,88 +8452,36 @@ async def delete_all_by_tag(update: Update, context: CallbackContext) -> None:
 
 async def yrrase_scheduled(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
-    await query.answer()
 
-    # Проверяем формат callback_data
-    if query.data and '_' in query.data:
-        _, key = query.data.split('_', maxsplit=1)
-    else:
-        await query.message.reply_text("🛑 Неверный формат callback_data.")
-        return
+    # Извлекаем ключ и метку из callback_data
+    _, key = query.data.split('yrrasetag_', maxsplit=1)
+    tag = context.user_data.get('current_tag', 'Отсутствует')
 
     global media_group_storage
-    # Загружаем данные из файла
     media_group_storage = load_publications_from_firebase()
-
-    # ID текущего пользователя
     current_user_id = str(update.effective_user.id)
 
-    # Проверяем, что данные есть для текущего пользователя
     if current_user_id in media_group_storage:
         user_publications = media_group_storage[current_user_id]
-
-        # Проверяем, существует ли запись с указанным ключом
         if key in user_publications:
-            scheduled_tag = user_publications[key].get('scheduled', None)
-
-            # Интерпретируем None как метку "отсутствует"
-            if scheduled_tag is None:
-                scheduled_tag = "отсутствует"
-
-            # Удаляем запись из базы данных и локального хранилища
+            scheduled_tag = user_publications[key].get('scheduled', "Отсутствует")
             delete_from_firebase([key], current_user_id)
             user_publications.pop(key, None)
-
-            # Если у пользователя больше нет записей, удаляем его из общего хранилища
             if not user_publications:
                 media_group_storage.pop(current_user_id, None)
-
-            # Сохраняем обновлённые данные обратно в файл
             save_media_group_data(media_group_storage, current_user_id)
 
-            # Собираем оставшиеся записи с той же меткой
-            remaining_records = []
-            for record_key, data in user_publications.items():
-                record_tag = data.get('scheduled', None)
-                if record_tag is None:
-                    record_tag = "отсутствует"
+            # Обновляем клавиатуру
+            page = context.user_data.get('folderpage', 0)
+            reply_markup = await generate_scheduled_keyboard(update, context, scheduled_tag, page)
 
-                # Сравниваем с текущей меткой
-                if record_tag == scheduled_tag:
-                    caption = data['media'][0].get('caption', '')
-                    # Извлекаем текст до гиперссылок
-                    cleaned_caption = re.split(r'<a href="[^"]+">[^<]+</a>', caption, maxsplit=1)[0].strip()
-                    # Если текста нет, использовать "Запись без подписи"
-                    if not cleaned_caption:
-                        cleaned_caption = "Запись без подписи"
-                    remaining_records.append((record_key, cleaned_caption, record_tag))
-
-            # Формируем обновлённую клавиатуру
-            keyboard = []
-            if remaining_records:
-                keyboard.append([InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")])
-                keyboard.append([InlineKeyboardButton("------------------------", callback_data="separator")])
-
-                for record_key, caption, tag in remaining_records:
-                    keyboard.append([InlineKeyboardButton(f"📗 {caption} ({tag})", callback_data=f"view_{record_key}")])
-                    keyboard.append([
-                        InlineKeyboardButton("В ТГ", callback_data=f"publish_{record_key}"),
-                        InlineKeyboardButton("В ВК", callback_data=f"vkpub_{record_key}"),
-                        InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{record_key}"),
-                        InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{krecord_keyey}"),                          
-                    ])
-            else:
-                keyboard.append([InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")])
-
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.edit_text(
-                f"✅ Запись удалена. \nОстальные записи в папке '{scheduled_tag}':",
+            await query.edit_message_text(
+                f"📋 Записи из папки {scheduled_tag}:",
                 reply_markup=reply_markup
             )
-        else:
-            await query.message.reply_text("🚫 Указанная запись не найдена.")
-    else:
-        await query.message.reply_text("🚫 У вас нет записей для удаления.")
+            return
+
+    await query.message.reply_text("🚫 Указанная запись не найдена.")
 
 
 # Функция для обработки команды /scheduledmark
