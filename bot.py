@@ -11491,7 +11491,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_save_button, pattern=r"^save_\d+_\d+$"))
     application.add_handler(CallbackQueryHandler(handle_replace_caption, pattern=r"caption_"))
 
-    application.add_handler(CallbackQueryHandler(select_style, pattern="choose_style"))
+    application.add_handler(CallbackQueryHandler(select_style, pattern="choose_modele"))
+    application.add_handler(CallbackQueryHandler(choose_preset, pattern="choose_preset"))    
     application.add_handler(CallbackQueryHandler(category_handler, pattern="^category_"))
     application.add_handler(CallbackQueryHandler(model_handler, pattern="^model_"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancelmodel"))
