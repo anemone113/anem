@@ -11291,7 +11291,7 @@ def main() -> None:
     # Выбор второго изображения
     application.add_handler(CallbackQueryHandler(select_second_image, pattern=r'^swap_second_'))
     # Обработчик для кнопки "Отложить"
-
+    application.add_handler(CallbackQueryHandler(change_page, pattern=r"^folderpage_\d+_.*$"))
 
     application.add_handler(CallbackQueryHandler(gptplant_response, pattern='^gptplant_response$'))      
     application.add_handler(CallbackQueryHandler(handle_myplants_callback, pattern='^myplants'))
