@@ -1140,7 +1140,7 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
         [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
+        [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')],
         [InlineKeyboardButton("🔽 Скрыть меню", callback_data='hidestartgpt_menu')]
     ])
 
