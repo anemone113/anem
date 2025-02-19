@@ -61,7 +61,9 @@ from gpt_helper import (
     generate_barcode_response,
     generate_barcode_analysis,
     generate_barcode_otzyvy,
-    update_to_user_mapplants
+    update_to_user_mapplants,
+    get_user_preset,
+    set_user_preset
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -1127,34 +1129,67 @@ async def plants_and_mushrooms_backmenu(update: Update, context: CallbackContext
 
 
 async def run_gpt(update: Update, context: CallbackContext) -> int:
+
+    # Полное меню
+    full_menu = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏙 Посмотреть чужие генерации", callback_data="view_shared")],        
+        [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+        [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],  
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],
+        [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],        
+        [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
+        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
+        [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
+        [InlineKeyboardButton("🔽 Скрыть меню", callback_data='hidestartgpt_menu')]
+    ])
+
+    # Скрытое меню (только кнопка для показа)
+    collapsed_menu = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📒 Меню 📒", callback_data='showstartgpt_menu')]
+    ])
+
     if update.message:
         user_id = update.message.from_user.id  # Когда вызвано командой /search
         message_to_reply = update.message
     elif update.callback_query:
-        user_id = update.callback_query.from_user.id  # Когда нажата кнопка "Начать поиск"
+        user_id = update.callback_query.from_user.id  # Когда нажата кнопка
         message_to_reply = update.callback_query.message
         
         # Убираем индикатор загрузки на кнопке
         await update.callback_query.answer()
 
+        if update.callback_query.data == "showstartgpt_menu":
+            await message_to_reply.edit_reply_markup(reply_markup=full_menu)
+            await message_to_reply.edit_text(
+                "Бот может искать и анализировать информацию в интеренете, анализировать содержимое ссылки веб-страницы, распознавать фото, видео, аудио и музыку и тд. \n\nА так же генерировать изображения через SD3 или Flux если начать сообщение со слова \"Нарисуй\". Для подробностей воспользуйтесь кнопкой \"помощь\"\n\n",
+                reply_markup=full_menu,
+                parse_mode="Markdown"
+            )
+            return RUNNING_GPT_MODE
+
+        elif update.callback_query.data == "hidestartgpt_menu":
+            await message_to_reply.edit_reply_markup(reply_markup=collapsed_menu)
+            await message_to_reply.edit_text(
+                "🦊 Режим общения с GPT активирован. Отправьте сообщение чтобы начать диалог. Либо воспользуйтесь кнопкой меню для дополнительных настроек",
+                reply_markup=collapsed_menu,
+                parse_mode="Markdown"
+            )
+            return RUNNING_GPT_MODE
+
     # Устанавливаем флаг режима GPT и сбрасываем другие режимы
     is_gpt_mode[user_id] = True
     is_search_mode[user_id] = False
     is_ocr_mode[user_id] = False
-    keyboard = [
-        [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],
-        [InlineKeyboardButton("🏙 Посмотреть чужие генерации", callback_data="view_shared")],        
-        [InlineKeyboardButton("🎨 Сменить модель(стиль)", callback_data='choose_style')],        
-        [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
-        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
-        [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]              
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    # Отправляем сообщение о начале режима общения с GPT
-    await message_to_reply.reply_text("Режим общения с GPT активирован. Отправьте сообщение чтобы начать диалог с ботом или воспользуйтесь одной из команд. Кроме того бот может искать и анализировать информацию в интеренете, анализировать содержимое ссылки веб-страницы, распознавать фото, видео, аудио и музыку и тд. \n\nА так же генерировать изображения через SD3 или Flux если начать сообщение со слова \"Нарисуй\". Для подробностей воспользуйтесь кнопкой \"помощь\"",  
-            reply_markup=reply_markup  # Добавляем кнопки
-        )
+
+
+
+    # Отправляем сообщение с коллапсированным меню по умолчанию
+    await message_to_reply.reply_text(
+        "🦊 Режим общения с GPT активирован. Отправьте сообщение чтобы начать диалог. Либо воспользуйтесь кнопкой меню для дополнительных настроек",
+        reply_markup=collapsed_menu,
+        parse_mode="Markdown"
+    )
     
     return RUNNING_GPT_MODE
 
@@ -1207,7 +1242,8 @@ async def handle_short_gpt_help(update: Update, context: CallbackContext) -> Non
         [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
         [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
-        [InlineKeyboardButton("🎨 Сменить модель(стиль)", callback_data='choose_style')],
+        [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+        [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')], 
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1658,13 +1694,16 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
     user_image = None
     logger.info(f"user_message {user_message}")
     # Основная клавиатура с тремя кнопками
-    full_menu = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✂️Сбросить диалог✂️", callback_data='reset_dialog')],
-        [InlineKeyboardButton("📜Выбрать роль", callback_data='role_select')],
-        [InlineKeyboardButton("🎨 Сменить модель(стиль)", callback_data='choose_style')],        
-        [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],        
+    full_menu = InlineKeyboardMarkup([     
+        [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+        [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],  
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],
+        [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],        
+        [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
+        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
+        [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
-        [InlineKeyboardButton("🔽 Скрыть меню", callback_data='hidegpt_menu')]
+        [InlineKeyboardButton("🔽 Скрыть меню", callback_data='hidestartgpt_menu')]
     ])
 
     # Клавиатура с одной кнопкой "Меню"
@@ -2239,6 +2278,50 @@ async def process_queue():
                 del user_positions[user_id]     
 
 
+PRESET_PROMPTS = {
+    "Нет": "",    
+
+    "Аниме": "anime style, vibrant and dynamic, highly detailed, expressive characters, cinematic lighting, vivid color palette",
+
+    "Ghibli": "Ghibli style, anime style, soft and painterly, warm and nostalgic atmosphere, magical realism, expressive characters, rich natural environments",
+
+    "Манга": "manga style, black and white, detailed linework, expressive characters, dramatic panel composition",
+
+    "Импрессионизм": "impressionism, loose brushstrokes, dreamlike quality, soft focus, atmospheric perspective, emotional composition",
+
+    "Цифровой арт": "digital painting, ultra-detailed, smooth gradients, vibrant and expressive colors, professional concept art style",
+
+    "Масляная живопись": "oil painting, rich texture, visible brush strokes, deep colors, classical artistic composition, museum-quality artwork",
+
+    "Акварельный рисунок": "watercolor painting, soft and fluid brush strokes, delicate color blending, translucent layers, dreamy and atmospheric style",
+
+    "Фэнтези": "fantasy art, epic composition, mystical atmosphere, intricate details, magical creatures, enchanted landscapes, cinematic lighting",
+
+    "Тёмное фэнтези": "dark fantasy, gothic aesthetic, eerie atmosphere, dramatic lighting, ancient ruins, sinister creatures, detailed and moody color palette",
+
+    "Минимализм": "minimalism, clean and simple, harmonious composition, delicate ink lines, limited color palette, serene and elegant aesthetic",
+
+    "Набросок": "sketch drawing, raw and expressive, loose lines, monochrome or minimal color, detailed anatomy and structure, hand-drawn feel",
+
+    "Пиксель-арт": "pixel art, retro 8-bit or 16-bit style, vibrant color palette, detailed shading, nostalgic video game aesthetic, crisp pixel details",
+
+    "3D модель": "3D render, high-poly model, ultra-realistic textures, cinematic lighting, professional CG rendering, physically accurate materials",
+
+    "Корейский стиль": "Korean contemporary painting, minimalisit clean colors, limited color palette, emotional depth, traditional meets modern aesthetics",
+
+    "Киберпанк": "cyberpunk style, neon-drenched cityscapes, high-tech low-life, futuristic atmosphere, rain-soaked streets, glowing holograms, high contrast lighting",
+
+    "Реализм": "realistic painting, ultra-detailed, masterful brushwork, natural lighting, expressive realism, high-resolution textures",
+
+    "Генерация фотографии": "photo-realistic generation, ultra-high resolution, natural colors, perfect depth of field, cinematic lighting, hyper-detailed textures",
+
+    "Художественное фото": "artistic photography, dramatic composition, rich color grading, play of light and shadow, cinematic feel, emotionally captivating",
+
+    "Старинные фото": "vintage photography, sepia or black and white, grainy texture, historical aesthetic, aged film look, authentic old-time feel"
+}
+
+
+
 async def generate_image(update, context, user_id, prompt, query_message=None):
     """Генерация изображения с учетом выбранной модели"""
     # Получаем модель из контекста или Firebase
@@ -2318,7 +2401,13 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
             clean_prompt = prompt.strip()
 
             # Формирование full_prompt на основе очищенного промта и add_prompt
-            mix_prompt = f"{add_prompt} {clean_prompt}"
+            # Получаем пресет из Firebase
+            preset_name = get_user_preset(user_id)
+            preset_prompt = PRESET_PROMPTS.get(preset_name, "")
+
+            # Формируем mix_prompt с учетом пресета
+            mix_prompt = f"{add_prompt} {clean_prompt} {preset_prompt}"
+
             full_prompt = await translate_promt_with_gemini(user_id, query=mix_prompt)
             logger.info(f"full_prompt: {full_prompt}")
 
@@ -2390,7 +2479,8 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                     [InlineKeyboardButton("🗂 Мои сохранённые генерации", callback_data="scheduled_by_tag")],
                     [InlineKeyboardButton("🌃 Опубликовать в общую папку", callback_data=f"neuralpublic_{user_id}_{message.message_id}")],    
                     [InlineKeyboardButton("🏙 Посмотреть чужие публикации", callback_data="view_shared")],                                        
-                    [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_style')],
+                    [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+                    [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')], 
                     [InlineKeyboardButton("🔄 Повторить генерацию", callback_data=f"regenerate_{user_id}_{message.message_id}")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -2439,6 +2529,56 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                 await asyncio.sleep(10)  # Подождать 10 секунд перед повтором
             else:
                 await message.reply_text(f"Произошла ошибка при генерации изображения. Попробуйте: \n\n1)Подождать 30 секунд и повторить. \n 2)Если пункт 1 не помог, то сменить модель(стиль), возможно что-то сломалось в данной модели. \n 3)Если смена стиля не помогла то подождите несколько часов и повторите попытку, возможно что-то с серверами. \n\n Если ничего из этого не помогло то пожалуйтса сообщите о проблеме через команду /send, веротяно что-то сломалось в боте ")
+
+async def choose_preset(update, context):
+    """Отправляет кнопки с пресетами пользователю."""
+    # Создаем список кнопок пресетов
+    buttons = [
+        InlineKeyboardButton(preset, callback_data=f"preset_{preset}")
+        for preset in PRESET_PROMPTS.keys()
+    ]
+    
+    # Создаем кнопку закрыть
+    close_button = [InlineKeyboardButton("❌Закрыть это меню❌", callback_data="presetclose")]
+
+    # Группируем кнопки пресетов по две в ряд и добавляем кнопку закрыть внизу
+    keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    keyboard.append(close_button)  # Добавляем кнопку закрыть последней строкой
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.message:  # Вызов через команду
+        await update.message.reply_text(
+            "Выберите стиль. Стиль представляет из себя заранее заготовленный промпт, который автоматически будет добавляться к вашим запросам:",
+            reply_markup=reply_markup
+        )
+    elif update.callback_query:  # Вызов через кнопку
+        await update.callback_query.message.reply_text(
+            "Выберите стиль. Стиль представляет из себя заранее заготовленный промпт, который автоматически будет добавляться к вашим запросам:",
+            reply_markup=reply_markup
+        )
+        await update.callback_query.answer()  # Закрываем запрос
+
+# Обработчик для кнопки закрыть
+async def handle_presetclose_button(update, context):
+    query = update.callback_query
+    await query.message.delete()  # Удаляем сообщение
+    await query.answer()  # Подтверждаем обработку callback
+
+async def preset_callback(update, context):
+    """Обрабатывает выбор пресета."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    preset_name = query.data.replace("preset_", "")
+
+    if preset_name in PRESET_PROMPTS:
+        set_user_preset(user_id, preset_name)
+        await query.answer(f"Выбран пресет: {preset_name}")
+        await query.edit_message_text(f"Вы выбрали пресет: {preset_name}")
+    else:
+        await query.answer("Ошибка: выбранный пресет не найден.")    
+
+
 
 async def handle_neuralpublic_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -2932,6 +3072,23 @@ async def upload_image_to_catbox_in_background(image_bytes: bytes):
         if os.path.exists(file_path):
             os.remove(file_path)
 
+async def upload_image_to_catbox_in_background(image_bytes: bytes):
+    """Фоновая задача для загрузки изображения на Catbox."""
+    file_path = "temp_image.png"  # Локальный путь для временного хранения изображения
+    try:
+        # Сохраняем изображение во временный файл
+        with open(file_path, 'wb') as f:
+            f.write(image_bytes)
+        # Загружаем изображение на Catbox
+        catbox_url = await second_upload_image(file_path)
+        logging.info(f"Изображение успешно загружено на Catbox: {catbox_url}")
+    except Exception as e:
+        logging.error(f"Не удалось загрузить изображение на Catbox: {e}")
+    finally:
+        # Удаляем временный файл
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
 async def examples_table_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -3000,7 +3157,8 @@ async def examples_table_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Добавляем кнопку "Помощь" под последним сообщением медиагруппы
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
-        [InlineKeyboardButton("🎨 Сменить модель(стиль)", callback_data='choose_style')],
+        [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+        [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')], 
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')] 
     ])
     await context.bot.send_message(
@@ -4165,7 +4323,7 @@ async def barcode_with_gpt(update, context):
             logging.info(f"response: {response}")              
             # Вычленение названия товара между "0)Название товара:" и "1)Общее краткое впечатление:"
             product_name_match = re.search(
-                r'0\)\s*Название товара\s*[:：]\s*"?(.+?)"?\s*\n1\)',
+                r'Название товара.*?[:：]\s*(.*?)\s*\n\s*1\)', 
                 response,
                 re.IGNORECASE
             )
@@ -8001,19 +8159,22 @@ def create_publish_button(user_id, message_id):
             InlineKeyboardButton("Опубликовать в ВК", callback_data=f"vkpub_{user_id}_{message_id}")
         ],
         [
-            InlineKeyboardButton("Опубликовать в X", callback_data=f"twitterpub_{user_id}_{message_id}")
+            InlineKeyboardButton("Опубликовать в X.com", callback_data=f"twitterpub_{user_id}_{message_id}")
         ],   
         [
             InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{user_id}_{message_id}")
+        ],
+        [   
+            InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')
         ],         
         [
             InlineKeyboardButton("✏️ Заменить подпись ✏️", callback_data=f"caption_{user_id}_{message_id}")
-        ],        
-        [
-            InlineKeyboardButton("🔄 Случайно перемешать изображения 🔄", callback_data=f"shuffle_{user_id}_{message_id}")
-        ],
+        ],      
         [
             InlineKeyboardButton("🎨 Сортировать по палитре 🎨", callback_data=f"palettesort_{user_id}_{message_id}")
+        ],          
+        [
+            InlineKeyboardButton("🔄 Случайно перемешать изображения 🔄", callback_data=f"shuffle_{user_id}_{message_id}")
         ],
         [
             InlineKeyboardButton("🔀 Поменять 2 изображения местами 🔀", callback_data=f"swapimages_{user_id}_{message_id}")
@@ -8022,7 +8183,7 @@ def create_publish_button(user_id, message_id):
             InlineKeyboardButton("❌ Удалить 1 изображение ❌", callback_data=f"filedelete_{user_id}_{message_id}")
         ]                     
     ]        
-    return InlineKeyboardMarkup(keyboard)
+    return InlineKeyboardMarkup(keyboard) 
 
 def create_publish_and_snooze_buttons(user_id, message_id):
     """Создает клавиатуру с кнопками для публикации и отложенной отправки."""
@@ -8282,7 +8443,7 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
         
         keyboard = [
             [InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")],
-            [InlineKeyboardButton("------------------------", callback_data="separator")]
+            [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="separator")]
         ]
         
         # Добавляем только записи текущей страницы
@@ -8308,7 +8469,7 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
         
         # Дополнительные кнопки
         keyboard.append([
-            InlineKeyboardButton("------------------------", callback_data="separator")
+            InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="separator")
         ])
         keyboard.append([
             InlineKeyboardButton("🗑 Удалить все из этой папки 🗑", callback_data=f"tagdelete_{tag}")
@@ -8364,7 +8525,7 @@ async def generate_scheduled_keyboard(update: Update, context: CallbackContext, 
 
     keyboard = [
         [InlineKeyboardButton("🗂 Другие папки 🗂", callback_data="scheduled_by_tag")],
-        [InlineKeyboardButton("------------------------", callback_data="separator")]
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="separator")]
     ]
 
     for index, (key, caption, tag) in enumerate(scheduled_page):
@@ -8385,7 +8546,7 @@ async def generate_scheduled_keyboard(update: Update, context: CallbackContext, 
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    keyboard.append([InlineKeyboardButton("------------------------", callback_data="separator")])
+    keyboard.append([InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="separator")])
     keyboard.append([InlineKeyboardButton("🗑 Удалить все из этой папки 🗑", callback_data=f"tagdelete_{tag}")])
     keyboard.append([InlineKeyboardButton("🌌В главное меню 🌌", callback_data='restart')])
 
@@ -11275,6 +11436,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(scientific_gpt, pattern='^scientific_gpt$'))    
     application.add_handler(CallbackQueryHandler(show_map, pattern="^show_map$"))
     application.add_handler(CallbackQueryHandler(gpt_running, pattern="^(showgpt_menu|hidegpt_menu)$"))
+    application.add_handler(CallbackQueryHandler(run_gpt, pattern="^(showstartgpt_menu|hidestartgpt_menu)$"))    
     application.add_handler(CallbackQueryHandler(barcode_with_gpt, pattern='barcode_with_gpt$'))
     application.add_handler(CallbackQueryHandler(plants_and_mushrooms_menu, pattern='plants_and_mushrooms_menu$'))
     application.add_handler(CallbackQueryHandler(plants_and_mushrooms_backmenu, pattern='plants_and_mushrooms_backmenu$'))
@@ -11292,6 +11454,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(select_second_image, pattern=r'^swap_second_'))
     # Обработчик для кнопки "Отложить"
     application.add_handler(CallbackQueryHandler(change_page, pattern=r"^folderpage_\d+_.*$"))
+    application.add_handler(CommandHandler("choose_preset", choose_preset))
+    application.add_handler(CallbackQueryHandler(preset_callback, pattern=r"^preset_"))
+    application.add_handler(CallbackQueryHandler(handle_presetclose_button, pattern='^presetclose$'))    
 
     application.add_handler(CallbackQueryHandler(gptplant_response, pattern='^gptplant_response$'))      
     application.add_handler(CallbackQueryHandler(handle_myplants_callback, pattern='^myplants'))
