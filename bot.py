@@ -1032,7 +1032,18 @@ async def post_by_twitter_link(link: str, update: Update, context: CallbackConte
     base_dir = os.path.join(os.getcwd(), "twitter_media")
     save_dir = os.path.join(base_dir, str(user_id))
     os.makedirs(save_dir, exist_ok=True)
-    
+
+
+    # Установка логина и пароля для Twitter
+    # Настройка аутентификации через cookies (auth_token и ct0)
+    gallery_dl.config.set(
+        ("extractor", "twitter"),
+        "cookies",
+        {
+            "auth_token": "fd1e23136ae4e314ee6ceb66417372789a8fe765",
+            "ct0": "e31a62a41efa01133e55e909e88aa633d90b6a545c23d56de445aa66e6d90e3fef298fee1541f02d71800ddd9dee89760cdfee155ea4f994ab601d34aac361a87cced5b56ee54bc59b7615e823e11bef"
+        }
+    )
     # Устанавливаем путь для сохранения файлов
     gallery_dl.config.set((), "base-directory", save_dir)
     gallery_dl.config.set((), "directory", "")  # Отключаем подкаталоги
