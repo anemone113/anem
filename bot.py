@@ -2360,8 +2360,6 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
 
     logger.info(f"Попробуем токены в порядке: {token_order}")
 
-    client_image = AsyncInferenceClient(api_key=HF_API_KEY, timeout=300)
-
     # Определяем, куда отправить сообщение
     response_target = update.message if update.message else query_message
 
