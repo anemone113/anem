@@ -1483,14 +1483,25 @@ async def handle_role_selected(update: Update, context: CallbackContext):
 
             save_context_to_firebase(user_id)
 
-            # Формируем новое сообщение и обновленную клавиатуру
-            message_text = f"Вы выбрали роль: {selected_role}\n Бот ждёт сообщений"
-            keyboard = await create_updated_keyboard(user_id)
+            # Формируем новое сообщение
+            message_text = f"Вы выбрали роль: {selected_role}\nБот ждёт сообщений"
 
-            # Обновляем клавиатуру и отправляем сообщение
-            await update.callback_query.answer()
-            await update.callback_query.edit_message_reply_markup(reply_markup=keyboard)
-            await update.callback_query.message.reply_text(message_text)
+            # Создаём инлайн-кнопку для удаления роли
+            delete_button = InlineKeyboardButton(
+                "Удалить эту роль",
+                callback_data=f"clear_role_{role_id}"
+            )
+            new_keyboard = InlineKeyboardMarkup([[delete_button]])
+
+            # Обновляем старую клавиатуру
+            updated_keyboard = await create_updated_keyboard(user_id)
+            await update.callback_query.edit_message_reply_markup(reply_markup=updated_keyboard)
+
+            # Отправляем новое сообщение с кнопкой удаления
+            await update.callback_query.message.reply_text(
+                message_text,
+                reply_markup=new_keyboard
+            )
 
         else:
             await update.callback_query.answer("Ошибка выбора роли.")
