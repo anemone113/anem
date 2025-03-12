@@ -1149,7 +1149,8 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],
         [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],        
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
-        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
+        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],        
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
         [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')],
         [InlineKeyboardButton("🔽 Скрыть меню", callback_data='hidestartgpt_menu')]
@@ -1323,7 +1324,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
 
     # Получаем роли пользователя, если есть
     roles = user_roles.get(user_id, {})
-    
+    logger.info(f"roles {roles}")    
     # Если ролей нет, отображаем только дефолтные роли
     if not roles:
         # Исключаем default_role из отображаемых ролей
@@ -1331,7 +1332,10 @@ async def handle_role_select(update: Update, context: CallbackContext):
         
         # Создаём кнопки для дефолтных ролей
         default_buttons = [
-            InlineKeyboardButton(role_data["short_name"], callback_data=f"defaultrole_{role_id}")
+            InlineKeyboardButton(
+                f"✅ {role_data['short_name']}" if role_id == roles.get("selected_role") or role_id == roles.get("default_role") else role_data["short_name"],
+                callback_data=f"defaultrole_{role_id}"
+            )
             for role_id, role_data in DEFAULT_ROLES.items()
             if role_id not in excluded_roles
         ]
@@ -1339,7 +1343,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
         # Группируем кнопки
         grouped_default_buttons = chunk_buttons(default_buttons, 3)
         new_role_button = [InlineKeyboardButton("✏️ Добавить новую роль", callback_data='set_role_button')]
-        cancel_button = [InlineKeyboardButton("⬅️Отмена⬅️", callback_data='run_gpt')]  # Кнопка отмены        
+        cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]  # Кнопка отмены        
         # Формируем клавиатуру и текст сообщения
         keyboard = InlineKeyboardMarkup(grouped_default_buttons + [new_role_button] + [cancel_button])
         message_text = "У вас пока нет своих ролей. Выберите одну из доступных ролей по умолчанию."
@@ -1365,7 +1369,10 @@ async def handle_role_select(update: Update, context: CallbackContext):
 
     # Создаём кнопки для ролей по умолчанию, исключая default_role
     default_buttons = [
-        InlineKeyboardButton(role_data["short_name"], callback_data=f"defaultrole_{role_id}")
+        InlineKeyboardButton(
+            f"✅ {role_data['short_name']}" if role_id == roles.get("selected_role") or role_id == roles.get("default_role") else role_data["short_name"],
+            callback_data=f"defaultrole_{role_id}"
+        )
         for role_id, role_data in DEFAULT_ROLES.items()
         if role_id not in excluded_roles
     ]
@@ -1375,7 +1382,8 @@ async def handle_role_select(update: Update, context: CallbackContext):
     if "short_names" in roles:
         custom_buttons = [
             InlineKeyboardButton(
-                roles["short_names"].get(role_id, " ".join(str(role_text).split()[:5])),
+                f"✅ {roles['short_names'].get(role_id, ' '.join(str(role_text).split()[:5]))}"
+                if role_text == roles.get("selected_role") else roles["short_names"].get(role_id, ' '.join(str(role_text).split()[:5])),
                 callback_data=f"newroleselect_{role_id}"
             )
             for role_id, role_text in roles.items()
@@ -1388,7 +1396,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
 
     # Добавляем новую кнопку в конец
     new_role_button = [InlineKeyboardButton("✏️ Добавить новую роль", callback_data='set_role_button')]
-    cancel_button = [InlineKeyboardButton("⬅️Отмена⬅️", callback_data='run_gpt')]  # Кнопка отмены    
+    cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]  # Кнопка отмены    
 
     # Объединяем кнопки и формируем клавиатуру
     keyboard = InlineKeyboardMarkup(grouped_default_buttons + grouped_custom_buttons + [new_role_button] + [cancel_button])
@@ -1401,10 +1409,35 @@ async def handle_role_select(update: Update, context: CallbackContext):
     # Отправляем ответ в зависимости от типа update
     if update.callback_query:
         await update.callback_query.answer()
-        await update.effective_chat.send_message(message_text, reply_markup=keyboard, parse_mode='Markdown')
+        msg = await update.effective_chat.send_message(message_text, reply_markup=keyboard, parse_mode='Markdown')
     else:
-        await update.message.reply_text(message_text, reply_markup=keyboard, parse_mode='Markdown')
+        msg = await update.message.reply_text(message_text, reply_markup=keyboard, parse_mode='Markdown')
+
     context.user_data['role_message_id'] = msg.message_id
+
+
+from telegram.error import TelegramError  # Импортируем ошибку
+
+async def handle_cancel_role(update: Update, context: CallbackContext):
+    """Удаляет сообщение с выбором роли"""
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer()
+
+    # Получаем ID сообщения с выбором роли
+    role_message_id = context.user_data.get('role_message_id')
+
+    if role_message_id:
+        try:
+            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=role_message_id)
+        except TelegramError:
+            pass  # Игнорируем ошибку, если сообщение уже удалено
+
+    # Можно отправить другое сообщение, если нужно
+    await query.message.reply_text("Выбор отменён.", reply_markup=None)
+
 
 # Обработчик выбора роли (включая роли по умолчанию)
 async def handle_role_selected(update: Update, context: CallbackContext):
@@ -1412,6 +1445,7 @@ async def handle_role_selected(update: Update, context: CallbackContext):
     user_id = update.callback_query.from_user.id
     query_data = update.callback_query.data
 
+    # Обновляем роль пользователя
     if query_data.startswith("defaultrole_"):
         role_id = query_data.split("_")[1]
         selected_role_data = DEFAULT_ROLES.get(role_id)
@@ -1425,10 +1459,15 @@ async def handle_role_selected(update: Update, context: CallbackContext):
             user_roles[user_id].pop("selected_role", None)             
             save_context_to_firebase(user_id)  # Сохраняем изменения в Firebase
 
+            # Формируем новое сообщение и обновленную клавиатуру
+            message_text = f"Вы выбрали предустановленную роль: {selected_role_data['short_name']}\n Бот ждёт сообщений"
+            keyboard = await create_updated_keyboard(user_id)
+
+            # Обновляем клавиатуру и отправляем сообщение
             await update.callback_query.answer()
-            await update.callback_query.message.reply_text(
-                f"Вы выбрали предустановленную роль: {selected_role_data['short_name']}"
-            )
+            await update.callback_query.edit_message_reply_markup(reply_markup=keyboard)
+            await update.callback_query.message.reply_text(message_text)
+
         else:
             await update.callback_query.answer("Ошибка выбора роли.")
 
@@ -1444,20 +1483,57 @@ async def handle_role_selected(update: Update, context: CallbackContext):
 
             save_context_to_firebase(user_id)
 
-            # Создаём инлайн-кнопку для удаления роли
-            delete_button = InlineKeyboardButton(
-                "Удалить эту роль",
-                callback_data=f"clear_role_{role_id}"
-            )
-            keyboard = InlineKeyboardMarkup([[delete_button]])
+            # Формируем новое сообщение и обновленную клавиатуру
+            message_text = f"Вы выбрали роль: {selected_role}\n Бот ждёт сообщений"
+            keyboard = await create_updated_keyboard(user_id)
 
+            # Обновляем клавиатуру и отправляем сообщение
             await update.callback_query.answer()
-            await update.callback_query.message.reply_text(
-                f"Вы выбрали роль: {selected_role}",
-                reply_markup=keyboard
-            )
+            await update.callback_query.edit_message_reply_markup(reply_markup=keyboard)
+            await update.callback_query.message.reply_text(message_text)
+
         else:
             await update.callback_query.answer("Ошибка выбора роли.")
+
+async def create_updated_keyboard(user_id):
+    """Создает обновленную клавиатуру с учетом текущего состояния ролей пользователя."""
+    roles = user_roles.get(user_id, {})
+    excluded_roles = {"default_role", "selected_role"}
+
+    # Создаём кнопки для ролей по умолчанию
+    default_buttons = [
+        InlineKeyboardButton(
+            f"✅ {role_data['short_name']}" if role_id == roles.get("selected_role") or role_id == roles.get("default_role") else role_data["short_name"],
+            callback_data=f"defaultrole_{role_id}"
+        )
+        for role_id, role_data in DEFAULT_ROLES.items()
+        if role_id not in excluded_roles
+    ]
+
+    # Создаём кнопки для пользовательских ролей
+    custom_buttons = []
+    if "short_names" in roles:
+        custom_buttons = [
+            InlineKeyboardButton(
+                f"✅ {roles['short_names'].get(role_id, ' '.join(str(role_text).split()[:5]))}"
+                if role_text == roles.get("selected_role") else roles["short_names"].get(role_id, ' '.join(str(role_text).split()[:5])),
+                callback_data=f"newroleselect_{role_id}"
+            )
+            for role_id, role_text in roles.items()
+            if role_id not in excluded_roles and role_id != "short_names"
+        ]
+
+    # Группируем кнопки
+    grouped_default_buttons = chunk_buttons(default_buttons, 3)
+    grouped_custom_buttons = chunk_buttons(custom_buttons, 1)
+
+    # Добавляем кнопки "Добавить новую роль" и "Отмена"
+    new_role_button = [InlineKeyboardButton("✏️ Добавить новую роль", callback_data='set_role_button')]
+    cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]
+
+    # Формируем клавиатуру
+    keyboard = InlineKeyboardMarkup(grouped_default_buttons + grouped_custom_buttons + [new_role_button] + [cancel_button])
+    return keyboard     
 
 
 async def handle_delete_role(update: Update, context: CallbackContext):
@@ -1515,12 +1591,17 @@ async def handle_set_role_button(update: Update, context: CallbackContext):
     is_role_mode[user_id] = True
     await update.callback_query.answer()  # Отправить ответ на нажатие кнопки
 
+    # Создаём разметку с кнопкой "Отмена"
+    keyboard = [[InlineKeyboardButton("🌌Отмена🌌", callback_data='run_gpt')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     # Отправляем сообщение с HTML-разметкой
     await update.callback_query.message.reply_text(
         "Пожалуйста, введите описание новой роли. Это может быть очень короткое, либо наоборот длинное и подробное описание. "
         "В круглых скобках в начале вы можете указать слово или фразу, которая будет отображаться в кнопке. Пример: \n"
         "<pre>(Лиса) Ты мудрая старая лиса, живущая на окраине волшебного леса</pre>",
-        parse_mode='HTML'
+        parse_mode='HTML',
+        reply_markup=reply_markup  # Добавляем клавиатуру с кнопкой
     )
     
     return ASKING_FOR_ROLE
@@ -11468,6 +11549,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(mainhelp_callback, pattern="osnhelp"))
     application.add_handler(CallbackQueryHandler(handle_share_button, pattern='^share_'))   
 
+
+    application.add_handler(CallbackQueryHandler(handle_cancel_role, pattern='^cancel_role_selection$'))    
     application.add_handler(CallbackQueryHandler(yrrase_scheduled, pattern="yrrasetag_"))
       
     application.add_handler(CallbackQueryHandler(plantmap_gpt, pattern='^plantmap_gpt$'))
