@@ -2241,10 +2241,9 @@ import itertools
 # Загружаем переменные окружения из секретного файла
 load_dotenv("/etc/secrets/HF.env")
 
-# Получаем токены API
+# Получаем все переменные окружения, начинающиеся с "HF_API_KEY_"
 HF_API_KEYS_LIST = [
-    os.getenv("HF_API_KEY_1"),  # Первый токен
-    os.getenv("HF_API_KEY_2")   # Второй токен
+    value for key, value in os.environ.items() if key.startswith("HF_API_KEY_")
 ]
 LAST_SUCCESSFUL_TOKEN = None
 
