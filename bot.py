@@ -2242,10 +2242,11 @@ import itertools
 load_dotenv("/etc/secrets/HF.env")
 
 # Получаем токены API
-HF_API_KEYS = itertools.cycle([
+HF_API_KEYS_LIST = [
     os.getenv("HF_API_KEY_1"),  # Первый токен
     os.getenv("HF_API_KEY_2")   # Второй токен
-])
+]
+LAST_SUCCESSFUL_TOKEN = None
 
 image_queue = asyncio.Queue()
 user_positions = {}
@@ -2337,7 +2338,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
     """Генерация изображения с учетом выбранной модели"""
     # Получаем модель из контекста или Firebase
     selected_model = context.user_data.get('selected_model')
-
+    global LAST_SUCCESSFUL_TOKEN
     if not selected_model:
         model_name = get_user_model(user_id)
         model_params = find_model_params(model_name)
@@ -2352,9 +2353,13 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
     if model_name == "glif-loradex-trainer/araminta":
         model_name = "glif-loradex-trainer/araminta_k_flux_dev_illustration_art"
 
-    # Чередуем токены API
-    HF_API_KEY = next(HF_API_KEYS)
-    logger.info(f"Используется API-ключ: {HF_API_KEY}")
+    # Определяем порядок использования токенов
+    if LAST_SUCCESSFUL_TOKEN and LAST_SUCCESSFUL_TOKEN in HF_API_KEYS_LIST:
+        token_order = [LAST_SUCCESSFUL_TOKEN] + [key for key in HF_API_KEYS_LIST if key != LAST_SUCCESSFUL_TOKEN]
+    else:
+        token_order = HF_API_KEYS_LIST
+
+    logger.info(f"Попробуем токены в порядке: {token_order}")
 
     client_image = AsyncInferenceClient(api_key=HF_API_KEY, timeout=300)
 
@@ -2369,8 +2374,12 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
     logger.info(f"original_prompt: {original_prompt}")
     add_prompt = selected_model['params']['add_prompt']
 
-    retries = 1  # Количество попыток
-    while retries >= 0:
+    retries = len(token_order)  # Количество попыток = количеству токенов
+
+    for HF_API_KEY in token_order:
+        logger.info(f"Пробуем API-ключ: {HF_API_KEY}")
+        client_image = AsyncInferenceClient(api_key=HF_API_KEY, timeout=300)
+
         try:
             start_time = time.time()  # Фиксируем начальное время
             prompt = original_prompt  
@@ -2531,16 +2540,22 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                     )                            
             break  # Если все прошло успешно, выходим из цикла
         except Exception as e:
-            logger.info(f"error: {e}")            
+            logger.error(f"Ошибка с токеном {HF_API_KEY}: {e}")
             retries -= 1
-            message = update.message if update.message else update.callback_query.message
 
-            if retries >= 0:
-                await message.reply_text(f"⏳ Что-то немного сломалось но бот пыается исправить это. Пожалуйста подождите ещё какое-то время")
-                await asyncio.sleep(10)  # Подождать 10 секунд перед повтором
+            if retries > 0:
+                await response_target.reply_text("⏳ Что-то пошло не так. Пробуем другой токен...")
+                await asyncio.sleep(10)  # Ждём перед повтором
             else:
-                await message.reply_text(f"Произошла ошибка при генерации изображения. Попробуйте: \n\n1)Подождать 30 секунд и повторить. \n 2)Если пункт 1 не помог, то сменить модель(стиль), возможно что-то сломалось в данной модели. \n 3)Если смена стиля не помогла то подождите несколько часов и повторите попытку, возможно что-то с серверами. \n\n Если ничего из этого не помогло то пожалуйтса сообщите о проблеме через команду /send, веротяно что-то сломалось в боте ")
-
+                await response_target.reply_text(
+                    "Произошла ошибка при генерации изображения. Попробуйте:\n\n"
+                    "1) Подождать 30 секунд и повторить.\n"
+                    "2) Сменить модель (стиль), возможно, проблема в ней.\n"
+                    "3) Подождать несколько часов — может быть, проблемы с серверами.\n\n"
+                    "Если ничего не помогло, сообщите о проблеме через /send."
+                )
+                return None  # Если все токены не сработали, возвращаем None
+                
 async def choose_preset(update, context):
     """Отправляет кнопки с пресетами пользователю."""
     # Создаем список кнопок пресетов
