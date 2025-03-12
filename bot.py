@@ -1402,7 +1402,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
     keyboard = InlineKeyboardMarkup(grouped_default_buttons + grouped_custom_buttons + [new_role_button] + [cancel_button])
 
     # Формируем сообщение с учётом текущей роли
-    message_text = "Выберите роль из списка."
+    message_text = "Выберите роль из списка. Если после смена роли бот общается так будто смены не было, то сбросьте историю диалога"
     if current_role:
         message_text += f"\n\n{current_role}"
 
@@ -1804,6 +1804,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],        
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
         [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],        
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
         [InlineKeyboardButton("🔽 Скрыть меню", callback_data='hidestartgpt_menu')]
