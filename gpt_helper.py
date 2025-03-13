@@ -38,7 +38,7 @@ import asyncio
 from telegram.ext import CallbackContext, ContextTypes
 from telegram import Update
 # Google API Key и модель Gemini
-GOOGLE_API_KEY = "AIzaSyBk3nIr9DKsYMZUjGevTDzKDZs__zVLyP8"
+GOOGLE_API_KEY = "AIzaSyDJHKC-x6tY6TdOkyg5QC45V1HH8o3VgiI"
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
