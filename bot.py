@@ -1206,6 +1206,49 @@ async def run_gpt(update: Update, context: CallbackContext) -> int:
     return RUNNING_GPT_MODE
 
 
+
+async def run_gpt_menu(update: Update, context: CallbackContext) -> int:
+    # Полное меню
+    full_menu = InlineKeyboardMarkup([       
+        [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+        [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],  
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],
+        [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],        
+        [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
+        [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')], 
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],         
+        [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
+        [InlineKeyboardButton("🔽 Скрыть меню", callback_data='gptmenu_hide')]
+    ])
+
+    # Скрытое меню (только кнопка для показа)
+    collapsed_menu = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📒 Меню 📒", callback_data='gptmenu_show')]
+    ])
+
+    if update.message:
+        user_id = update.message.from_user.id  # Когда вызвано командой /search
+        message_to_reply = update.message
+    elif update.callback_query:
+        user_id = update.callback_query.from_user.id  # Когда нажата кнопка
+        message_to_reply = update.callback_query.message
+        
+        # Убираем индикатор загрузки на кнопке
+        await update.callback_query.answer()
+
+        if update.callback_query.data == "gptmenu_show":
+            await message_to_reply.edit_reply_markup(reply_markup=full_menu)  # Меняем только кнопки
+            return RUNNING_GPT_MODE
+
+        elif update.callback_query.data == "gptmenu_hide":
+            await message_to_reply.edit_reply_markup(reply_markup=collapsed_menu)  # Меняем только кнопки
+            return RUNNING_GPT_MODE
+
+    return RUNNING_GPT_MODE
+
+
+
 async def handle_short_gpt_help(update: Update, context: CallbackContext) -> None:
     """Обработчик для кнопки 'Помощь по GPT'."""
     query = update.callback_query
@@ -1402,7 +1445,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
     keyboard = InlineKeyboardMarkup(grouped_default_buttons + grouped_custom_buttons + [new_role_button] + [cancel_button])
 
     # Формируем сообщение с учётом текущей роли
-    message_text = "Выберите роль из списка. Если после смена роли бот общается так будто смены не было, то сбросьте историю диалога"
+    message_text = "Выберите роль из списка."
     if current_role:
         message_text += f"\n\n{current_role}"
 
@@ -1459,14 +1502,19 @@ async def handle_role_selected(update: Update, context: CallbackContext):
             user_roles[user_id].pop("selected_role", None)             
             save_context_to_firebase(user_id)  # Сохраняем изменения в Firebase
 
-            # Формируем новое сообщение и обновленную клавиатуру
-            message_text = f"Вы выбрали предустановленную роль: {selected_role_data['short_name']}\n Бот ждёт сообщений"
+            # Формируем обновленный текст сообщения
+            message_text = f"Выберите роль из списка.\n\nТекущая роль: *{selected_role_data['short_name']}*"
+
+            # Получаем обновленную клавиатуру
             keyboard = await create_updated_keyboard(user_id)
 
-            # Обновляем клавиатуру и отправляем сообщение
+            # Обновляем сообщение целиком (текст + клавиатура)
             await update.callback_query.answer()
-            await update.callback_query.edit_message_reply_markup(reply_markup=keyboard)
-            await update.callback_query.message.reply_text(message_text)
+            await update.callback_query.edit_message_text(
+                text=message_text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
 
         else:
             await update.callback_query.answer("Ошибка выбора роли.")
@@ -1483,8 +1531,11 @@ async def handle_role_selected(update: Update, context: CallbackContext):
 
             save_context_to_firebase(user_id)
 
-            # Формируем новое сообщение
-            message_text = f"Вы выбрали роль: {selected_role}\nБот ждёт сообщений"
+            # Формируем обновленный текст сообщения
+            message_text = f"Выберите роль из списка.\n\nТекущая роль: *{selected_role}*"
+            message_text_2 = f"Вы выбрали роль: <pre>{selected_role}</pre>"
+            # Получаем обновленную клавиатуру
+            keyboard = await create_updated_keyboard(user_id)
 
             # Создаём инлайн-кнопку для удаления роли
             delete_button = InlineKeyboardButton(
@@ -1493,16 +1544,19 @@ async def handle_role_selected(update: Update, context: CallbackContext):
             )
             new_keyboard = InlineKeyboardMarkup([[delete_button]])
 
-            # Обновляем старую клавиатуру
-            updated_keyboard = await create_updated_keyboard(user_id)
-            await update.callback_query.edit_message_reply_markup(reply_markup=updated_keyboard)
-
+            # Обновляем сообщение целиком (текст + клавиатура)
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text(
+                text=message_text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
             # Отправляем новое сообщение с кнопкой удаления
             await update.callback_query.message.reply_text(
-                message_text,
-                reply_markup=new_keyboard
+                message_text_2,
+                reply_markup=new_keyboard,
+                parse_mode='HTML'
             )
-
         else:
             await update.callback_query.answer("Ошибка выбора роли.")
 
@@ -1544,7 +1598,7 @@ async def create_updated_keyboard(user_id):
 
     # Формируем клавиатуру
     keyboard = InlineKeyboardMarkup(grouped_default_buttons + grouped_custom_buttons + [new_role_button] + [cancel_button])
-    return keyboard     
+    return keyboard      
 
 
 async def handle_delete_role(update: Update, context: CallbackContext):
@@ -1807,12 +1861,12 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],        
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
-        [InlineKeyboardButton("🔽 Скрыть меню", callback_data='hidestartgpt_menu')]
+        [InlineKeyboardButton("🔽 Скрыть меню", callback_data='gptmenu_hide')]
     ])
 
     # Клавиатура с одной кнопкой "Меню"
     collapsed_menu = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📒 Меню 📒", callback_data='showgpt_menu')]
+        [InlineKeyboardButton("📒 Меню 📒", callback_data='gptmenu_show')]
     ])
 
     # Если обновление - это callback-запрос (нажатие кнопки)
@@ -1821,11 +1875,11 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         user_id = query.from_user.id
         await query.answer()
 
-        if query.data == "showgpt_menu":
+        if query.data == "gptmenu_show":
             await query.message.edit_reply_markup(reply_markup=full_menu)
             return RUNNING_GPT_MODE
 
-        elif query.data == "hidegpt_menu":
+        elif query.data == "gptmenu_hide":
             await query.message.edit_reply_markup(reply_markup=collapsed_menu)
             return RUNNING_GPT_MODE
 
@@ -11569,7 +11623,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(scientific_gpt, pattern='^scientific_gpt$'))    
     application.add_handler(CallbackQueryHandler(show_map, pattern="^show_map$"))
     application.add_handler(CallbackQueryHandler(gpt_running, pattern="^(showgpt_menu|hidegpt_menu)$"))
-    application.add_handler(CallbackQueryHandler(run_gpt, pattern="^(showstartgpt_menu|hidestartgpt_menu)$"))    
+    application.add_handler(CallbackQueryHandler(run_gpt, pattern="^(showstartgpt_menu|hidestartgpt_menu)$"))  
+    application.add_handler(CallbackQueryHandler(run_gpt_menu, pattern="^(gptmenu_show|gptmenu_hide)$"))     
     application.add_handler(CallbackQueryHandler(barcode_with_gpt, pattern='barcode_with_gpt$'))
     application.add_handler(CallbackQueryHandler(plants_and_mushrooms_menu, pattern='plants_and_mushrooms_menu$'))
     application.add_handler(CallbackQueryHandler(plants_and_mushrooms_backmenu, pattern='plants_and_mushrooms_backmenu$'))
