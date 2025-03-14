@@ -1435,6 +1435,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
 
     # Группируем кнопки
     grouped_default_buttons = chunk_buttons(default_buttons, 3)
+    separator_button = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]    
     grouped_custom_buttons = chunk_buttons(custom_buttons, 1)
 
     # Добавляем новую кнопку в конец
@@ -1442,7 +1443,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
     cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]  # Кнопка отмены    
 
     # Объединяем кнопки и формируем клавиатуру
-    keyboard = InlineKeyboardMarkup(grouped_default_buttons + grouped_custom_buttons + [new_role_button] + [cancel_button])
+    keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_button] +  grouped_custom_buttons + [new_role_button] + [cancel_button])
 
     # Формируем сообщение с учётом текущей роли
     message_text = "Выберите роль из списка."
@@ -1591,14 +1592,14 @@ async def create_updated_keyboard(user_id):
     # Группируем кнопки
     grouped_default_buttons = chunk_buttons(default_buttons, 3)
     grouped_custom_buttons = chunk_buttons(custom_buttons, 1)
-
+    separator_button = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]
     # Добавляем кнопки "Добавить новую роль" и "Отмена"
     new_role_button = [InlineKeyboardButton("✏️ Добавить новую роль", callback_data='set_role_button')]
     cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]
 
     # Формируем клавиатуру
-    keyboard = InlineKeyboardMarkup(grouped_default_buttons + grouped_custom_buttons + [new_role_button] + [cancel_button])
-    return keyboard      
+    keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_button] + grouped_custom_buttons + [new_role_button] + [cancel_button])
+    return keyboard     
 
 
 async def handle_delete_role(update: Update, context: CallbackContext):
