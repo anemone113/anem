@@ -1836,10 +1836,23 @@ async def handle_documentgpt(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Отправляем каждую часть, но кнопки добавляем только к последней
         message = update.message
         for i, part in enumerate(text_parts):
-            if i == len(text_parts) - 1:  # Последняя часть
-                await message.reply_text(part, reply_markup=reset_button, parse_mode='MarkdownV2')
-            else:
-                await message.reply_text(part, parse_mode='MarkdownV2')
+            if i == 0:  # Первая часть заменяет "Запрос принят..."
+                await processing_message.edit_text(
+                    part,
+                    parse_mode='MarkdownV2'
+                )
+            else:  # Остальные части отправляются как новые сообщения
+                await update.callback_query.message.reply_text(
+                    part,
+                    parse_mode='MarkdownV2'
+                )
+
+        # Добавляем кнопку в последнем сообщении
+        await update.callback_query.message.reply_text(
+            text_parts[-1],
+            reply_markup=reply_markup,
+            parse_mode='MarkdownV2'
+        )
 
     finally:
         os.remove(local_file_path)
@@ -4295,9 +4308,9 @@ async def text_plant_help_with_gpt(update, context):
             image.load()  # Загружаем изображение полностью
             
             # Генерация ответа через Gemini
-            response = await generate_plant_issue_response(user_id, image=image)
+            response_text = await generate_plant_issue_response(user_id, image=image)
             
-
+            text_parts = await send_reply_with_limit(response_text)
             
             # Создаем клавиатуру
             keyboard = [
@@ -4305,13 +4318,28 @@ async def text_plant_help_with_gpt(update, context):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            # Обновляем сообщение с результатом
-            await processing_message.edit_text(
-                response_text,
+            # Отправляем все части, а кнопки прикрепляем только к последней
+            for i, part in enumerate(text_parts):
+                if i == 0:  # Первая часть заменяет "Запрос принят..."
+                    await processing_message.edit_text(
+                        part,
+                        parse_mode='MarkdownV2'
+                    )
+                else:  # Остальные части отправляются как новые сообщения
+                    await update.callback_query.message.reply_text(
+                        part,
+                        parse_mode='MarkdownV2'
+                    )
+
+            # Добавляем кнопку в последнем сообщении
+            await update.callback_query.message.reply_text(
+                text_parts[-1],
                 reply_markup=reply_markup,
                 parse_mode='MarkdownV2'
             )
+
             await update.callback_query.answer()
+
     except Exception as e:
         logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
         await processing_message.edit_text("Произошла ошибка при обработке изображения.")
@@ -4329,29 +4357,47 @@ async def mushrooms_gpt(update, context):
     try:
         # Отправляем первоначальное сообщение
         processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
-        
+
         # Открываем файл temp_image.jpg для обработки
         with open('temp_image.jpg', 'rb') as file:
             # Загружаем изображение как объект PIL.Image
             image = Image.open(file)
             image.load()  # Загружаем изображение полностью
-            
+
             # Генерация ответа через Gemini
-            response = await generate_mushrooms_response(user_id, image=image)
+            response_text = await generate_mushrooms_response(user_id, image=image)
+
+            # Прогоняем ответ через send_reply_with_limit
+            text_parts = await send_reply_with_limit(response_text)
 
             # Создаем клавиатуру
             keyboard = [
                 [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Обновляем сообщение с результатом
-            await processing_message.edit_text(
-                response_text,
+
+            # Отправляем все части, а кнопки прикрепляем только к последней
+            for i, part in enumerate(text_parts):
+                if i == 0:  # Первая часть заменяет "Запрос принят..."
+                    await processing_message.edit_text(
+                        part,
+                        parse_mode='MarkdownV2'
+                    )
+                else:  # Остальные части отправляются как новые сообщения
+                    await update.callback_query.message.reply_text(
+                        part,
+                        parse_mode='MarkdownV2'
+                    )
+
+            # Добавляем кнопку в последнем сообщении
+            await update.callback_query.message.reply_text(
+                text_parts[-1],
                 reply_markup=reply_markup,
                 parse_mode='MarkdownV2'
             )
+
             await update.callback_query.answer()
+
     except Exception as e:
         logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
         await processing_message.edit_text("Произошла ошибка при обработке изображения.")
@@ -4374,24 +4420,44 @@ async def text_rec_with_gpt(update, context):
             image = Image.open(file)
             image.load()  # Загружаем изображение полностью
             
-            # Запрос для Gemini с указанием распознавания текста            
             # Генерация ответа через Gemini
             response = await generate_text_rec_response(user_id, image=image, query=None)
             
             # Сохраняем распознанный текст в context.user_data
             context.user_data['recognized_text'] = response
 
-        # Проверяем и отправляем ответ пользователю
-        await update.callback_query.message.reply_text(response or "Ошибка при распознавании текста.")
-        await update.callback_query.answer()        
-        # Кнопка для уточнения вопроса
+        # Проверяем, что ответ получен
+        if not response:
+            response = "Ошибка при распознавании текста."
+
+        # Разделяем текст на части
+        text_parts = await send_reply_with_limit(response)
+
+        # Кнопки для уточняющего вопроса
         followup_button = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Задать уточняющий вопрос", callback_data='ask_followup')]
+            [InlineKeyboardButton("Задать уточняющий вопрос", callback_data='ask_followup')],         
+            [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+
         ])
-        
-        # Предлагаем задать уточняющий вопрос
-        await update.callback_query.message.reply_text(
-            "Хотите задать уточняющий вопрос или дать команду касательно распознанного текста?",
+
+        # Отправляем все части текста
+        message = update.callback_query.message
+        for i, part in enumerate(text_parts):
+            if i == len(text_parts) - 1:  # Последняя часть
+                # Прикрепляем кнопки только к последнему сообщению
+                await message.reply_text(
+                    part,
+                    reply_markup=followup_button,
+                    parse_mode='MarkdownV2'
+                )
+            else:
+                # Остальные части отправляем без кнопок
+                await message.reply_text(part, parse_mode='MarkdownV2')
+
+        # Дополнительное сообщение с предложением задать уточняющий вопрос
+        await message.reply_text(
+            "Хотите задать уточняющий вопрос или дать команду касательно распознанного текста? "
+            "Так же вы можете прислать другое изображение.",
             reply_markup=followup_button
         )
 
@@ -4457,7 +4523,7 @@ async def receive_followup_question(update, context):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Отправляем клавиатуру после всех сообщений
-    await update.message.reply_text("Режим распознавания активен.", reply_markup=reply_markup)  # Добавлено await
+    await update.message.reply_text("Режим распознавания активен. Вы можете продолжить присылать изображения", reply_markup=reply_markup)  # Добавлено await
 
     is_role_mode[user_id] = False
     is_ocr_mode[user_id] = True  # Включаем режим GPT обратно
@@ -4685,6 +4751,7 @@ async def plantmap_gpt(update, context):
             webapp_url2 = "https://epsg.io/map#srs=4326&x=38.371124&y=56.035226&z=9&layer=streets"            
             keyboard = [
                 [InlineKeyboardButton("Получить координаты", web_app=WebAppInfo(url=webapp_url2))],
+                [InlineKeyboardButton("🌌В главное меню(отмена)🌌", callback_data='restart')]
             ]
 
             # Создаем клавиатуру
@@ -5402,10 +5469,13 @@ async def gpt_plants_more_handler(update, context):
     # Отправляем все части, а кнопки прикрепляем только к последней
     message = update.callback_query.message
     for i, part in enumerate(text_parts):
-        if i == len(text_parts) - 1:  # Последняя часть
-            await message.edit_text(part, reply_markup=reply_markup, parse_mode='MarkdownV2')
-        else:
+        if i == 0:  # Первая часть заменяет "Запрос принят..."
             await message.edit_text(part, parse_mode='MarkdownV2')
+        else:  # Остальные части отправляются как новые сообщения
+            await message.reply_text(part, parse_mode='MarkdownV2')
+
+    # Добавляем кнопки только в последнем сообщении
+    await message.reply_text(text_parts[-1], reply_markup=reply_markup, parse_mode='MarkdownV2')
 
 
 
@@ -5436,10 +5506,13 @@ async def gpt_plants_help_handler(update, context):
     # Отправляем все части, а кнопки прикрепляем только к последней
     message = update.callback_query.message
     for i, part in enumerate(text_parts):
-        if i == len(text_parts) - 1:  # Последняя часть
-            await message.edit_text(part, reply_markup=reply_markup, parse_mode='MarkdownV2')
-        else:
+        if i == 0:  # Первая часть заменяет "Запрос принят..."
             await message.edit_text(part, parse_mode='MarkdownV2')
+        else:  # Остальные части отправляются как новые сообщения
+            await message.reply_text(part, parse_mode='MarkdownV2')
+
+    # Добавляем кнопки только в последнем сообщении
+    await message.reply_text(text_parts[-1], reply_markup=reply_markup, parse_mode='MarkdownV2')
 
 def extract_rus_name(response_text):
     match = re.search(r"0\)Русские названия:(.*?)1\)Общая информация", response_text, re.DOTALL)
