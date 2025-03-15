@@ -37,6 +37,7 @@ from PIL import Image
 import asyncio
 from telegram.ext import CallbackContext, ContextTypes
 from telegram import Update
+from tempfile import NamedTemporaryFile
 # Google API Key и модель Gemini
 GOOGLE_API_KEY = "AIzaSyDJHKC-x6tY6TdOkyg5QC45V1HH8o3VgiI"
 
@@ -1305,7 +1306,8 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     relevant_context = await get_relevant_context(user_id) if use_context else ""
     system_instruction = (
         f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться."
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"      
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
+        f"Конструкции вроде bot_response или времени в контексте диалога служат только для упорядочивания истории, ни в коем случае не используй их в своих ответах"              
     )
 
 
