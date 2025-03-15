@@ -602,18 +602,23 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
 
 
     try:
-        image_buffer = BytesIO()
-        image.save(image_buffer, format="JPEG")
-        image_data = image_buffer.getvalue()
-        image_buffer.close()        
-        # Формируем части запроса
-        image_part = Part.from_bytes(image_data, mime_type="image/jpeg")
-        text_part = Part.from_text(f"Пользователь прислал изображение: {context}\n")       
-        contents = [image_part, text_part]
+        with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+            image_path = temp_file.name
+            image.save(temp_file, format="JPEG")
 
-        # Создаём клиента и инструменты
+        logger.info(f"Сохранено временное изображение: {image_path}")
+
+        # Инициализация клиента Gemini
         client = genai.Client(api_key=GOOGLE_API_KEY)
-        google_search_tool = Tool(google_search=GoogleSearch())
+
+        # Загрузка изображения
+        try:
+            image_file = client.files.upload(file=pathlib.Path(image_path))
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке изображения: {e}")
+            return "Не удалось загрузить изображение."
+
+        logger.info(f"Изображение загружено: {image_file.uri}")
 
         # Настройки безопасности
         safety_settings = [
@@ -626,7 +631,18 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
         # Генерация ответа от модели Gemini
         response = client.models.generate_content(
             model='gemini-2.0-flash-exp',
-            contents=contents,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=image_file.uri,
+                            mime_type=image_file.mime_type
+                        ),
+                        types.Part(text=f"Пользователь прислал изображение: {context}\n"),
+                    ]
+                )
+            ],
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,                
                 temperature=1.0,
@@ -635,7 +651,6 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
                 max_output_tokens=1000,
                 presence_penalty=0.6,
                 frequency_penalty=0.6,
-                tools=[google_search_tool],
                 safety_settings=safety_settings
             )
         ) 
@@ -655,6 +670,14 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
     except Exception as e:
         logger.error("Ошибка при распознавании изображения: %s", e)
         return "Произошла ошибка при обработке изображения. Попробуйте снова."
+    finally:
+        # Удаляем временный файл
+        if 'image_path' in locals() and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+                logger.info(f"Временный файл удален: {image_path}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении временного файла: {e}")
 
 
 async def get_relevant_context(user_id):
@@ -725,14 +748,12 @@ async def generate_animation_response(video_file_path, user_id, query=None):
         relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
 
     # Формируем контекст с текущим запросом
-    context = (
+    command_text = (
         f"Ты в чате играешь роль: {selected_role}. "
         f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"        
         f"Собеседник прислал тебе гиф-анимацию, ответь на эту анимацию в контексте беседы, либо просто опиши её "             
     )
 
-    # Определяем значение переменной command_text
-    command_text = context if query else "Опиши содержание анимации."
 
     add_to_context(user_id, query, message_type="Пользователь прислал гиф-анимацию с подписью:")
 
@@ -746,7 +767,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
         video_path = pathlib.Path(video_file_path)
 
         try:
-            video_file = client.files.upload(path=video_path)
+            video_file = client.files.upload(file=video_path)
         except Exception as e:
             return "Не удалось загрузить видео. Попробуйте снова."
 
@@ -866,7 +887,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
 
 
         try:
-            video_file = client.files.upload(path=video_path)
+            video_file = client.files.upload(file=video_path)
         except Exception as e:
 
             return "Не удалось загрузить видео. Попробуйте снова."
@@ -969,7 +990,7 @@ async def generate_document_response(document_path, user_id, query=None):
 
         document_path_obj = pathlib.Path(document_path)
         try:
-            file_upload = client.files.upload(path=document_path_obj)
+            file_upload = client.files.upload(file=document_path_obj)
         except Exception as e:
             print(f"Error uploading file: {e}")
             return None
@@ -1074,7 +1095,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
         audio_path = pathlib.Path(audio_file_path)
         try:
         # Загрузка файла через Gemini API
-            file_upload = client.files.upload(path=audio_path)
+            file_upload = client.files.upload(file=audio_path)
         except Exception as e:
             print(f"Error uploading file: {e}")
             return None
