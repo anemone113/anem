@@ -548,7 +548,8 @@ def set_user_role(user_id, role_text):
         user_roles[user_id]["short_names"][role_id] = short_name
 
     user_roles[user_id]["selected_role"] = clean_role_text  # Сохраняем только текст без скобок в selected_role
-    user_roles[user_id].pop("default_role", None)  # Удаляем default_role, если он существует
+    user_roles[user_id].pop("default_role", None)
+    user_roles[user_id].pop("game_role", None)  # Удаляем default_role, если он существует
 
     save_context_to_firebase(user_id)  # Сохраняем изменения в Firebase
 
@@ -564,6 +565,11 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
     default_role_key = user_roles_data.get("default_role")
     if default_role_key and default_role_key in DEFAULT_ROLES:
         selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
+    game_role_key = user_roles_data.get("game_role")
+    if game_role_key and game_role_key in GAME_ROLES:
+        selected_role = GAME_ROLES[game_role_key]["full_description"]
 
     # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
     if "selected_role" in user_roles_data:
@@ -734,6 +740,11 @@ async def generate_animation_response(video_file_path, user_id, query=None):
     if default_role_key and default_role_key in DEFAULT_ROLES:
         selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
 
+    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
+    game_role_key = user_roles_data.get("game_role")
+    if game_role_key and game_role_key in GAME_ROLES:
+        selected_role = GAME_ROLES[game_role_key]["full_description"]
+
     # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
@@ -850,6 +861,11 @@ async def generate_video_response(video_file_path, user_id, query=None):
     if default_role_key and default_role_key in DEFAULT_ROLES:
         selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
 
+    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
+    game_role_key = user_roles_data.get("game_role")
+    if game_role_key and game_role_key in GAME_ROLES:
+        selected_role = GAME_ROLES[game_role_key]["full_description"]
+
     # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
@@ -965,7 +981,26 @@ async def generate_video_response(video_file_path, user_id, query=None):
 
 async def generate_document_response(document_path, user_id, query=None):
     user_roles_data = user_roles.get(user_id, {})
-    selected_role = user_roles_data.get("selected_role") or user_roles_data.get("default_role", "роль не выбрана")
+    selected_role = None
+
+    # Проверяем наличие роли по умолчанию
+    default_role_key = user_roles_data.get("default_role")
+    if default_role_key and default_role_key in DEFAULT_ROLES:
+        selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
+    game_role_key = user_roles_data.get("game_role")
+    if game_role_key and game_role_key in GAME_ROLES:
+        selected_role = GAME_ROLES[game_role_key]["full_description"]
+
+    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
+    if "selected_role" in user_roles_data:
+        selected_role = user_roles_data["selected_role"]
+
+
+    # Если нет ни роли по умолчанию, ни пользовательской роли
+    if not selected_role:
+        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль"
 
     relevant_context = await get_relevant_context(user_id)
     if query and relevant_context:
@@ -1027,7 +1062,6 @@ async def generate_document_response(document_path, user_id, query=None):
                 ]
             )
         )
-        logging.info(f"rense: {response}") 
         if not response.candidates or not response.candidates[0].content.parts:
             return "Извините, я не могу обработать этот документ."
 
@@ -1054,6 +1088,11 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
     default_role_key = user_roles_data.get("default_role")
     if default_role_key and default_role_key in DEFAULT_ROLES:
         selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
+
+    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
+    game_role_key = user_roles_data.get("game_role")
+    if game_role_key and game_role_key in GAME_ROLES:
+        selected_role = GAME_ROLES[game_role_key]["full_description"]
 
     # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
     if "selected_role" in user_roles_data:
@@ -1237,10 +1276,6 @@ DEFAULT_ROLES = {
     "short_name": "Переводчик",
     "full_description": "Ты - чат-бот в телеграме помогающий переводить тексты с одного языка на другой"
     },
-    "Role11": {
-        "short_name": "Электроник",
-        "full_description": "Ты специалист в области электроники. Ты помогаешь разбираться в схемах, пайке, ремонте и создании электронных устройств. Ты знаешь, как работают электрические компоненты, можешь объяснить принципы работы схем и помочь пользователю найти и устранить неисправности. Ты также даешь советы по выбору компонентов и инструментов для работы с электроникой."
-    },
     "Role12": {
         "short_name": "Ремонтник",
         "full_description": "Ты эксперт по бытовому ремонту. Ты помогаешь пользователю справляться с повседневными проблемами: починить кран, устранить течь, заменить розетку или починить дверь. Ты даешь подробные, понятные инструкции и советы, как правильно и безопасно выполнить ремонтные работы в доме. Ты также подсказываешь, какие инструменты и материалы лучше использовать."
@@ -1265,10 +1300,6 @@ DEFAULT_ROLES = {
         "short_name": "Ветеринар",
         "full_description": "Ты опытный ветеринар. Ты помогаешь пользователю разбираться в здоровье домашних животных, распознавать симптомы болезней и давать советы по уходу. Ты объясняешь, когда нужно срочно обратиться к врачу и какие профилактические меры помогут питомцу оставаться здоровым. Ты также даешь рекомендации по питанию, вакцинации и содержанию животных."
     },    
-    "Role18": {
-        "short_name": "Акинатор",
-        "full_description": "Ты ведущий игры. Пользователь загадывает известного персонажа, ты же должен минимальным количеством вопросов отгадать, кого загадал пользователь. Ты можешь задавать ровно один вопрос в каждом своём сообщении и ждать ответа пользователя на него. Отвечать на твои вопросы пользователь может только \"да\", \"нет\", \"не знаю\". В конечном счёте твоя цель - сначала задавать максимально общие вопросы, чтобы сузить круг поиска насколько это возможно, и уже потом выдавать конкретные предположения. Ты можешь только задавать вопрос, ровно один вопрос в каждом твоём сообщении. Затем, когда у тебя будет достаточно сведений, пытаться выдвигать предложения. Ничего более."
-    },
     "Role19": {
         "short_name": "Терапевт",
         "full_description": "Ты терапевт, твоя цель - задавать уточняющие вопросы касательно здоровья собеседника стараясь таким образом максимально сузить список возможных болезней. Сначала ты даёшь короткие общие предположения и задаёшь много вопросов, когда возможных вариантов остаётся мало, даёшь подробное описание возможных болезней или недугов."
@@ -1279,8 +1310,88 @@ DEFAULT_ROLES = {
     },     
 }
 
+GAME_ROLES = {
+    "Role100": {
+        "short_name": "Акинатор",
+        "full_description": "Ты ведущий игры. Участник чата загадывает известного персонажа, "
+                            "ты же должен минимальным количеством вопросов отгадать, кого загадал пользователь. "
+                            "Ты можешь задавать ровно один вопрос в каждом своём сообщении и ждать ответа пользователя на него. "
+                            "Отвечать на твои вопросы пользователь может только \"да\", \"нет\", \"не знаю\". "
+                            "В конечном счёте твоя цель - сначала задавать максимально общие вопросы, "
+                            "чтобы сузить круг поиска насколько это возможно, и уже потом выдавать конкретные предположения. "
+                            "Ты можешь только задавать вопрос, ровно один вопрос в каждом твоём сообщении. "
+                            "Затем, когда у тебя будет достаточно сведений, пытаться выдвигать предложения. Ничего более. "
+                            "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата ",
+        "alert": "Вы загадываете персонажа, существо, реального человека. а бот пытается его отгадать\n\nДля использования игровых ролей рекомендуется сбросить историю диалога чтобы бот меньше путался"                     
+    }, 
+    "Role101": {
+        "short_name": "Викторина",
+        "full_description": "Ты — ведущий викторины, игры 'Кто хочет стать миллионером'. "
+                            "Загадываешь участникам чата вопросы и предлагаешь 4 варианта ответа. "
+                            "Если участники угадали верно, то загадываешь новый вопрос сложнее прошлого и тоже даёшь 4 варианта ответа. "
+                            "Всего 20 уровней сложности, где 1 - самые простые вопросы, 20 - самые сложные. "
+                            "Если кто-то из участников чата ответил неправильно, то ты называешь верный ответ, а прогресс сбрасывается на первый уровень. "
+                            "Старайся не повторяться в тематике вопросов. "        
+                            "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата",
+        "alert": "Бот даёт вопрос и 4 варианта ответа, вы выбираете один из них. Всего 20 уровней сложности, при ошибке прогресс сбрасывается.\n\nРекомендуется сбросить историю диалога чтобы бот меньше путался."                            
+    },
+    "Role102": {
+        "short_name": "Своя игра",
+        "full_description": "Ты — ведущий игры по аналогии с Jeopardy! или 'Своя игра'. "
+                            "При первом обращении к тебе ты выдаёшь список тем вопросов в количестве 10 штук. "
+                            "Пользователи называют тему и стоимость. "
+                            "Всего есть 10 уровней сложности - 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, "
+                            "где 100 - самые простые, 1000 - самые сложные. "
+                            "Если пользователь верно отвечает на вопрос, ты начисляешь ему эти баллы, если ошибается - вычитаешь. "
+                            "Если кто-то пишет тебе слово 'заново', то счёт у всех сбрасывается, и ты присылаешь новый список тем. "
+                            "Старайся не повторять слишком похожие вопросы, например об одной и той же личности или одной и той же стране, за исключением случаев если это требует заданная тема. "        
+                            "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата ",
+        "alert": "Бот даёт 10 тем, у каждой темы 10 уровней сложности равных стоимости 100, 200, 300 итд. Вы выбираете тему и стоимость. В случае верного ответа очки начисляются, в случае ошибки вычитаются"                            
+    },
+    "Role103": {
+        "short_name": "Что? Где? Когда?",
+        "full_description": "Ты — ведущий игры 'Что? Где? Когда?'. "
+                            "Твоя цель - задавать сложные логические вопросы. "
+                            "Вопросы должны быть действительно сложными, но при этом к ответу на них должна быть возможность "
+                            "прийти путём логических размышлений. "
+                            "Участники называют ответы, ты говоришь, верный это ответ или нет. "
+                            "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата",
+        "alert": "Бот задаёт сложный вопрос к ответу на который обычно можно прийти логически\n\nДля использования игровых ролей рекомендуется сбросить историю диалога чтобы бот меньше путался"                            
+    },  
+    "Role104": {
+        "short_name": "Правда или ложь",
+        "full_description": "Ты — ведущий игры 'Правда или ложь'. "
+                            "Твоя цель - придумывать утверждения, а игроки должны отгадать, правдиво ли твоё утверждение или нет. "
+                            "Это могут быть как правдивые утверждения и факты, которые звучат неправдоподобно, "
+                            "так и наоборот - вполне реалистичные утверждения, которые являются ложью. "
+                            "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата ",
+        "alert": "Бот даёт утверждение вы отвечаете ему правда это или ложь\n\nДля использования игровых ролей рекомендуется сбросить историю диалога чтобы бот меньше путался"                            
+    },   
+    "role105": {
+        "short_name": "Бредогенератор",
+        "full_description": "Ты — ведущий игры 'Бредогенератор'. "
+                            "Твоя цель - придумать необычное, на первый взгляд нелогичное, странное, бредово звучащее предложение. "
+                            "Это может быть какое-то утверждение, описание события или что-то ещё. "
+                            "Участники чата должны логически объяснить то, что ты придумала, и сделать это наиболее правдоподобно. "
+                            "Затем ты должна выбрать из вариантов участников тот, который, на твой взгляд, справился лучше всего. "
+                            "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация, которая нужна только для истории чата.",
+        "alert": "Бот выдаёт очень странное утверждение, ваша задача придумать правдоподобное объяснение этого утверждения\n\nРекомендуется сбросить историю диалога чтобы бот меньше путался"                            
+    },    
+    "role106": {
+        "short_name": "Крокодил",
+        "full_description": "Ты — ведущий игры 'Крокодил'. "
+                            "Текущее слово: {word}. "
+                            "Участники чата отгадывают это слово, а ты отвечаешь только 'да', 'нет' или 'не совсем'. "
+                            "Если участник чата просит о подсказке, то можешь дать её, но не слишком явную. "
+                            "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата"
+                            "Чтобы слово обновилось на новое пользователь должен отправить тебе одно из слов \"Дальше\" или \"Сбросить\", сообщи ему об этом если он будет спрашивать или не понимать"                            ,
+        "alert": "Бот загадывает слово, вы должно отгадать это слово задавая боту вопросы на которые он может отвечать только Да или Нет. Для того чтобы бот загадал новое слово, отправьте ему \"Дальше\" или \"Сдаюсь\""                            
+    },                     
+}
 
 
+
+chat_words = {}
 
 async def generate_gemini_response(user_id, query=None, use_context=True):
     # Проверяем, выбрана ли роль по умолчанию или пользовательская роль
@@ -1292,7 +1403,12 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     if default_role_key and default_role_key in DEFAULT_ROLES:
         selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
 
-    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
+    game_role_key = user_roles_data.get("game_role")
+    if game_role_key and game_role_key in GAME_ROLES:
+        selected_role = GAME_ROLES[game_role_key]["full_description"]
+
+    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
 
@@ -1300,7 +1416,23 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     if not selected_role:
         selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль по нажатию кнопки меню под твоим сообщением телеграм"
 
+    # Проверяем, выбрана ли роль "Крокодил"
+    if game_role_key == "role106":
+        chat_id = user_id  # или другой идентификатор чата
+        if query and query.lower() in ["дальше", "сбросить"]:
+            generated_text = await generate_word(chat_id)
+            word = extract_random_word(generated_text)
+            chat_words[chat_id] = word  # Обновляем слово
+            response_text = "Слово изменено. Желательно(но не обязательно) сбросить при этом историю диалога чтобы бот меньше путался. Задавайте ваш вопрос касательно нового слова"
+            return response_text           
+        elif chat_id not in chat_words:
+            generated_text = await generate_word(chat_id)
+            word = extract_random_word(generated_text)
+            chat_words[chat_id] = word  # Первоначальное слово
+        else:
+            word = chat_words[chat_id]  # Используем текущее слово
 
+        selected_role = GAME_ROLES[game_role_key]["full_description"].format(word=word)
 
     # Формируем system_instruction с user_role и relevant_context
     relevant_context = await get_relevant_context(user_id) if use_context else ""
@@ -1310,7 +1442,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
         f"Конструкции вроде bot_response или времени в контексте диалога служат только для упорядочивания истории, ни в коем случае не используй их в своих ответах"              
     )
 
-
+    logging.info(f"system_instruction: {system_instruction}")
     # Исключаем дубли текущего сообщения в relevant_context
     if query and relevant_context:
         relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
@@ -1320,7 +1452,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
         f"Текущий запрос:\n{query}"     
     )
 
-
+    logger.info(f"context {context}")
 
     # Добавляем запрос пользователя в историю контекста
     if query and use_context:
@@ -2064,9 +2196,9 @@ async def translate_promt_with_gemini(user_id, query=None):
 
         # Если текст не на английском, переводим его
         context = (
-            f"Переведи запрос в качестве промта для генерации изображения на английский язык. "
-            f"В ответ пришли исключительно готовый промт на английском языке и ничего более. "
-            f"Если запрос уже сформулирован на английском языке, то в ответе просто верни его в том же виде. "
+            f"Ты бот для перевода промптов с русского на английский. Переведи запрос в качестве промпта для генерации изображения на английский язык. "
+            f"В ответ пришли исключительно готовый промт на английском языке и ничего более. Это важно для того чтобы код корректно сработал. "
+            f"Даже если запрос странный и не определённый, то переведи его и верни перевод. "
             f"Текущий запрос:\n{query}"
         )
 
@@ -2124,3 +2256,257 @@ async def translate_promt_with_gemini(user_id, query=None):
                     await asyncio.sleep(retry_delay)  # Ждём перед следующей попыткой
                 else:
                     return "Ошибка при обработке запроса. Попробуйте снова."
+
+
+
+
+async def generate_word(chat_id):
+
+    context = (
+        f"Твоя цель - сгенерировать 100 слов подходящая для игры в крокодил. Это должны быть как простые слова, так и какие-нибудь интересные слова которые достаточно сложно отгадать, но они должны быть общеизвестными. Они могут быть из любой области науки, культуры, общества, интернета и тд"
+        f"Старайся избегать глаголов и имён собственных. "     
+        f"Избегай повторов и схожих по смыслу слов. "            
+        f"Эти слова должны быть знакомы большинству людей. "           
+        f"В ответ пришли список слов в следующем формате: 1: слово1 2: слово2 3: слово3 и тд"     
+    )
+    try:
+        # Создаём клиент с правильным ключом
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=context,  # Здесь передаётся переменная context
+            config=types.GenerateContentConfig(
+                temperature=1.7,
+                top_p=0.9,
+                top_k=40,
+                max_output_tokens=2500,
+                presence_penalty=1.0,
+                frequency_penalty=0.8,
+                safety_settings=[
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_HATE_SPEECH',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_HARASSMENT',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                        threshold='BLOCK_NONE'
+                    ),
+                    types.SafetySetting(
+                        category='HARM_CATEGORY_DANGEROUS_CONTENT',
+                        threshold='BLOCK_NONE'
+                    )
+                ]
+            )
+        )     
+   
+        if response.candidates and response.candidates[0].content.parts:
+            bot_response = response.candidates[0].content.parts[0].text.strip()
+            logger.info("Ответ от Gemini: %s", bot_response)
+            return bot_response
+        else:
+            logger.warning("Gemini не вернул ответ на запрос.")
+            # Проверяем, есть ли какие-либо дополнительные данные в response
+            if hasattr(response, '__dict__'):
+                logger.info("Содержимое response: %s", response.__dict__)
+            else:
+                logger.info("response не содержит атрибута __dict__. Тип объекта: %s", type(response))
+            
+            return "Извините, я не могу ответить на этот запрос."
+    except Exception as e:
+        logger.error("Ошибка при генерации ответа от Gemini: %s", e)
+        return "Ошибка при обработке запроса. Попробуйте снова."
+
+def extract_random_word(text: str) -> str:
+    """Извлекает случайное слово из сгенерированного списка."""
+    words = re.findall(r"\d+:\s*([\w-]+)", text)  # Ищем слова после номеров
+    if not words:
+        return "Ошибка генерации"
+    return random.choice(words)
+
+
+
+
+
+async def Generate_gemini_image(prompt):
+    context = (
+        f"{prompt}" 
+    )        
+    try:
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=context,
+            config=types.GenerateContentConfig(
+                temperature=1,
+                top_p=0.95,
+                top_k=40,
+                max_output_tokens=8192,
+                response_modalities=[
+                    "image",
+                    "text",
+                ],
+                safety_settings=[
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT",
+                        threshold="BLOCK_NONE",  # Block none
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH",
+                        threshold="BLOCK_NONE",  # Block none
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        threshold="BLOCK_NONE",  # Block none
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                        threshold="BLOCK_NONE",  # Block none
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_CIVIC_INTEGRITY",
+                        threshold="BLOCK_NONE",  # Block none
+                    ),
+                ],
+                response_mime_type="text/plain",
+            ),
+        )
+
+        captions = []
+        image_urls = []
+        for part in response.candidates[0].content.parts:
+            # Текст и изображения могут быть в разных частях
+            if part.text is not None:
+                clean_caption = part.text.replace('\n', ' ').strip()[:1000]
+                captions.append(clean_caption)
+
+            if part.inline_data is not None:
+                image = Image.open(BytesIO(part.inline_data.data))
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                    image.save(temp_file.name, format="PNG")
+                    image_urls.append(temp_file.name)
+
+        # Выводим данные для парсинга
+        for i, url in enumerate(image_urls):
+            print(f"===IMAGE_START==={i}===")
+            print(url)
+            print(f"===IMAGE_END==={i}===")
+
+        for i, caption in enumerate(captions):
+            print(f"===CAPTION_START==={i}===")
+            print(caption)
+            print(f"===CAPTION_END==={i}===")
+
+        return captions, image_urls
+
+    except Exception as e:
+        logger.error(f"Ошибка при генерации изображения: {e}")
+        return None, None 
+
+
+
+async def generate_inpaint_gemini(image_file_path: str, instructions: str):
+    """
+    Загружает изображение в Google и отправляет его в Gemini для обработки.
+
+    :param image_file_path: Локальный путь к изображению.
+    :param instructions: Текстовая инструкция для обработки.
+    :return: Байтовые данные обработанного изображения и текстовый ответ (если есть).
+    """
+    try:
+        if not instructions:
+            instructions = "Придумай как сделать это изображение интереснее."
+
+        # Проверяем, существует ли файл
+        if not os.path.exists(image_file_path):
+            logger.error(f"Файл {image_file_path} не существует.")
+            return None, "Ошибка: изображение не найдено."
+
+        # Загружаем изображение в Google Gemini
+        image_path = pathlib.Path(image_file_path)
+        logger.info(f"Uploading image file: {image_path}")
+
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+
+        try:
+            image_file = client.files.upload(file=image_path)
+            logger.info(f"image_file: {image_file}")            
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке изображения: {e}")
+            return None, "Не удалось загрузить изображение."
+
+        logger.info(f"Image uploaded: {image_file.uri}")
+
+        # Отправляем изображение в Gemini
+        safety_settings = [
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+        ]
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=image_file.uri,
+                            mime_type=image_file.mime_type
+                        ),
+                        types.Part(text=instructions),
+                    ]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                temperature=1.0,
+                top_p=0.95,
+                top_k=40,
+                response_modalities=["image", "text"],
+                safety_settings=safety_settings,
+            ),
+        )
+
+
+        if not response.candidates:
+            logging.warning("Gemini вернул пустой список кандидатов.")
+            return None, "Извините, я не могу обработать это изображение."
+
+        if not response.candidates[0].content.parts:
+            logging.warning("Ответ Gemini не содержит частей контента.")
+            return None, "Извините, я не могу обработать это изображение."
+
+        captions = []
+        image_urls = []
+        for part in response.candidates[0].content.parts:
+            # Текст и изображения могут быть в разных частях
+            if part.text is not None:
+                clean_caption = part.text.replace('\n', ' ').strip()[:1000]
+                captions.append(clean_caption)
+
+            if part.inline_data is not None:
+                image = Image.open(BytesIO(part.inline_data.data))
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                    image.save(temp_file.name, format="PNG")
+                    image_urls.append(temp_file.name)
+
+        # Выводим данные для парсинга
+        for i, url in enumerate(image_urls):
+            print(f"===IMAGE_START==={i}===")
+            print(url)
+            print(f"===IMAGE_END==={i}===")
+
+        for i, caption in enumerate(captions):
+            print(f"===CAPTION_START==={i}===")
+            print(caption)
+            print(f"===CAPTION_END==={i}===")
+        logger.info(f"image_urls: {image_urls}")
+        return captions, image_urls
+
+    except Exception as e:
+        logger.error("Ошибка при обработке изображения с Gemini:", exc_info=True)
+        return None, "Ошибка при обработке изображения."
+
