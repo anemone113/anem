@@ -3798,39 +3798,6 @@ async def regenerate_image(update, context):
     await generate_image(update, context, user_id, prompt, query_message=query.message)
 
 from huggingface_hub import InferenceClient
-def inpaint_image(image: Image.Image, prompt: str):
-    """Дорисовка изображения с помощью image-to-image генерации."""
-    HF_API_KEY = next(HF_API_KEYS)
-    client = InferenceClient(api_key=HF_API_KEY, timeout=500)
-
-    # Оптимальные размеры для SDXL (множители 128)
-    width, height = image.size
-    width = max(512, min(1408, width - (width % 64)))
-    height = max(512, min(1408, height - (height % 64)))
-
-    img_bytes = io.BytesIO()
-    image.save(img_bytes, format="PNG")
-    img_bytes.seek(0)
-    logging.info(f"width: {width}")   
-    logging.info(f"height: {height}")   
-    logging.info(f"prompt: {prompt}")  
-    prompt = str(prompt)        
-    try:
-        generated_image = client.image_to_image(
-            image=img_bytes.getvalue(),
-            prompt=prompt,
-            model="stabilityai/stable-diffusion-xl-refiner-1.0",
-            denoising_start=0.9,
-            num_inference_steps=50,
-            guidance_scale=5.0,
-            width=width,  # Передаём размеры отдельно
-            height=height
-        )
-        logging.info(f"generated_image: {generated_image}")         
-        return generated_image
-    except Exception as e:
-        logging.info(f"Ошибка при генерации: {str(e)}")
-        return None
 
 async def handle_save_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
