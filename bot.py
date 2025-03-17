@@ -63,14 +63,16 @@ from gpt_helper import (
     generate_barcode_otzyvy,
     update_to_user_mapplants,
     get_user_preset,
-    set_user_preset
+    set_user_preset,
+    Generate_gemini_image,
+    generate_inpaint_gemini
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import chardet
 import json
 import os
-from gpt_helper import user_roles, DEFAULT_ROLES
+from gpt_helper import user_roles, DEFAULT_ROLES, GAME_ROLES
 import base64
 import random
 from langdetect import detect
@@ -1376,7 +1378,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
         # Создаём кнопки для дефолтных ролей
         default_buttons = [
             InlineKeyboardButton(
-                f"✅ {role_data['short_name']}" if role_id == roles.get("selected_role") or role_id == roles.get("default_role") else role_data["short_name"],
+                f"✅ {role_data['short_name']}" if role_id in {roles.get("selected_role"), roles.get("default_role"), roles.get("game_role")} else role_data["short_name"],
                 callback_data=f"defaultrole_{role_id}"
             )
             for role_id, role_data in DEFAULT_ROLES.items()
@@ -1385,10 +1387,30 @@ async def handle_role_select(update: Update, context: CallbackContext):
 
         # Группируем кнопки
         grouped_default_buttons = chunk_buttons(default_buttons, 3)
+
+        # Создаём кнопки для ролей из GAME_ROLES
+        game_buttons = [
+            InlineKeyboardButton(
+                f"✅ {role_data['short_name']}" if role_id in {roles.get("selected_role"), roles.get("default_role"), roles.get("game_role")} else role_data["short_name"],
+                callback_data=f"gamerole_{role_id}"
+            )
+            for role_id, role_data in GAME_ROLES.items()
+        ]
+
+        # Группируем кнопки
+        grouped_game_buttons = chunk_buttons(game_buttons, 2)  # Можно изменить на 3, если нужно
+
+        # Создаём разделители
+        separator_game_button = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]
+        separator_game_button_2 = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]
+
+
+
+
         new_role_button = [InlineKeyboardButton("✏️ Добавить новую роль", callback_data='set_role_button')]
         cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]  # Кнопка отмены        
         # Формируем клавиатуру и текст сообщения
-        keyboard = InlineKeyboardMarkup(grouped_default_buttons + [new_role_button] + [cancel_button])
+        keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_game_button] + grouped_game_buttons + [separator_game_button_2] +  [new_role_button] + [cancel_button])
         message_text = "У вас пока нет своих ролей. Выберите одну из доступных ролей по умолчанию."
 
         # Отправляем сообщение
@@ -1401,19 +1423,21 @@ async def handle_role_select(update: Update, context: CallbackContext):
         return
 
     # Определяем исключаемые роли
-    excluded_roles = {"default_role", "selected_role"}
+    excluded_roles = {"default_role", "selected_role", "game_role"}
 
     # Определяем текущую выбранную роль
     current_role = None
     if "selected_role" in roles:
         current_role = f"Текущая роль: *{roles['selected_role']}*"
+    if "game_role" in roles and roles["game_role"] in GAME_ROLES:
+        current_role = f"Текущая роль: *{GAME_ROLES[roles['game_role']]['short_name']}*"       
     elif "default_role" in roles and roles["default_role"] in DEFAULT_ROLES:
         current_role = f"Текущая роль: *{DEFAULT_ROLES[roles['default_role']]['short_name']}*"
 
     # Создаём кнопки для ролей по умолчанию, исключая default_role
     default_buttons = [
         InlineKeyboardButton(
-            f"✅ {role_data['short_name']}" if role_id == roles.get("selected_role") or role_id == roles.get("default_role") else role_data["short_name"],
+            f"✅ {role_data['short_name']}" if role_id in {roles.get("selected_role"), roles.get("default_role"), roles.get("game_role")} else role_data["short_name"],
             callback_data=f"defaultrole_{role_id}"
         )
         for role_id, role_data in DEFAULT_ROLES.items()
@@ -1433,9 +1457,29 @@ async def handle_role_select(update: Update, context: CallbackContext):
             if role_id not in excluded_roles and role_id != "short_names"
         ]
 
+
+
+    # Создаём кнопки для ролей из GAME_ROLES
+    game_buttons = [
+        InlineKeyboardButton(
+            f"✅ {role_data['short_name']}" if role_id in {roles.get("selected_role"), roles.get("default_role"), roles.get("game_role")} else role_data["short_name"],
+            callback_data=f"gamerole_{role_id}"
+        )
+        for role_id, role_data in GAME_ROLES.items()
+        if role_id not in excluded_roles
+    ]
+
+    # Группируем кнопки
+    grouped_game_buttons = chunk_buttons(game_buttons, 2)  # Можно изменить на 3, если нужно
+
+    # Создаём разделители
+    separator_game_button_3 = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]
+
+
+
     # Группируем кнопки
     grouped_default_buttons = chunk_buttons(default_buttons, 3)
-    separator_button = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]    
+    separator_button = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]
     grouped_custom_buttons = chunk_buttons(custom_buttons, 1)
 
     # Добавляем новую кнопку в конец
@@ -1443,7 +1487,7 @@ async def handle_role_select(update: Update, context: CallbackContext):
     cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]  # Кнопка отмены    
 
     # Объединяем кнопки и формируем клавиатуру
-    keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_button] +  grouped_custom_buttons + [new_role_button] + [cancel_button])
+    keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_game_button_3] + grouped_game_buttons + [separator_button] +  grouped_custom_buttons + [new_role_button] + [cancel_button])
 
     # Формируем сообщение с учётом текущей роли
     message_text = "Выберите роль из списка."
@@ -1458,29 +1502,6 @@ async def handle_role_select(update: Update, context: CallbackContext):
         msg = await update.message.reply_text(message_text, reply_markup=keyboard, parse_mode='Markdown')
 
     context.user_data['role_message_id'] = msg.message_id
-
-
-from telegram.error import TelegramError  # Импортируем ошибку
-
-async def handle_cancel_role(update: Update, context: CallbackContext):
-    """Удаляет сообщение с выбором роли"""
-    query = update.callback_query
-    if not query:
-        return
-
-    await query.answer()
-
-    # Получаем ID сообщения с выбором роли
-    role_message_id = context.user_data.get('role_message_id')
-
-    if role_message_id:
-        try:
-            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=role_message_id)
-        except TelegramError:
-            pass  # Игнорируем ошибку, если сообщение уже удалено
-
-    # Можно отправить другое сообщение, если нужно
-    await query.message.reply_text("Выбор отменён.", reply_markup=None)
 
 
 # Обработчик выбора роли (включая роли по умолчанию)
@@ -1500,7 +1521,8 @@ async def handle_role_selected(update: Update, context: CallbackContext):
                 user_roles[user_id] = {}
 
             user_roles[user_id]["default_role"] = role_id  # Сохраняем ID роли
-            user_roles[user_id].pop("selected_role", None)             
+            user_roles[user_id].pop("selected_role", None)  
+            user_roles[user_id].pop("game_role", None)                       
             save_context_to_firebase(user_id)  # Сохраняем изменения в Firebase
 
             # Формируем обновленный текст сообщения
@@ -1529,7 +1551,7 @@ async def handle_role_selected(update: Update, context: CallbackContext):
             # Устанавливаем выбранную роль как "selected_role" и сбрасываем default_role
             user_roles[user_id]["selected_role"] = selected_role
             user_roles[user_id].pop("default_role", None)  # Удаляем default_role, если он существует
-
+            user_roles[user_id].pop("game_role", None)
             save_context_to_firebase(user_id)
 
             # Формируем обновленный текст сообщения
@@ -1560,21 +1582,68 @@ async def handle_role_selected(update: Update, context: CallbackContext):
             )
         else:
             await update.callback_query.answer("Ошибка выбора роли.")
+    elif query_data.startswith("gamerole_"):
+        role_id = query_data.split("_")[1]
+        selected_role_data = GAME_ROLES.get(role_id)
+
+        if selected_role_data:
+            if user_id not in user_roles:
+                user_roles[user_id] = {}
+
+            user_roles[user_id]["game_role"] = role_id  
+            user_roles[user_id].pop("default_role", None) 
+            user_roles[user_id].pop("selected_role", None)                        
+            save_context_to_firebase(user_id)
+
+            message_text = f"Вы выбрали игровую роль.\n\nТекущая игровая роль: *{selected_role_data['short_name']}*"
+            keyboard = await create_updated_keyboard(user_id)
+
+            # Отправка уведомления, если оно есть в словаре
+            alert_text = selected_role_data.get("alert")
+            if alert_text:
+                await update.callback_query.answer(alert_text, show_alert=True)
+            else:
+                await update.callback_query.answer()
+
+            await update.callback_query.edit_message_text(
+                text=message_text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+        else:
+            await update.callback_query.answer("Ошибка выбора игровой роли.")
 
 async def create_updated_keyboard(user_id):
     """Создает обновленную клавиатуру с учетом текущего состояния ролей пользователя."""
     roles = user_roles.get(user_id, {})
-    excluded_roles = {"default_role", "selected_role"}
+    excluded_roles = {"default_role", "selected_role", "game_role"}
 
     # Создаём кнопки для ролей по умолчанию
     default_buttons = [
         InlineKeyboardButton(
-            f"✅ {role_data['short_name']}" if role_id == roles.get("selected_role") or role_id == roles.get("default_role") else role_data["short_name"],
+            f"✅ {role_data['short_name']}" if role_id in {roles.get("selected_role"), roles.get("default_role"), roles.get("game_role")} else role_data["short_name"],
             callback_data=f"defaultrole_{role_id}"
         )
         for role_id, role_data in DEFAULT_ROLES.items()
         if role_id not in excluded_roles
     ]
+
+    # Создаём кнопки для ролей из GAME_ROLES
+
+
+    # Группируем кнопки
+  # Можно изменить на 3, если нужно
+    game_buttons = [
+        InlineKeyboardButton(
+            f"✅ {role_data['short_name']}" if role_id in {roles.get("selected_role"), roles.get("default_role"), roles.get("game_role")} else role_data["short_name"],
+            callback_data=f"gamerole_{role_id}"
+        )
+        for role_id, role_data in GAME_ROLES.items()
+        if role_id not in excluded_roles and role_id != "short_names"            
+    ]    
+    # Создаём разделители
+
+
 
     # Создаём кнопки для пользовательских ролей
     custom_buttons = []
@@ -1588,9 +1657,11 @@ async def create_updated_keyboard(user_id):
             for role_id, role_text in roles.items()
             if role_id not in excluded_roles and role_id != "short_names"
         ]
-
+    
+    separator_game_button_3 = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]
     # Группируем кнопки
     grouped_default_buttons = chunk_buttons(default_buttons, 3)
+    grouped_game_buttons = chunk_buttons(game_buttons, 2)    
     grouped_custom_buttons = chunk_buttons(custom_buttons, 1)
     separator_button = [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')]
     # Добавляем кнопки "Добавить новую роль" и "Отмена"
@@ -1598,7 +1669,7 @@ async def create_updated_keyboard(user_id):
     cancel_button = [InlineKeyboardButton("⬅️ Отмена ⬅️", callback_data='cancel_role_selection')]
 
     # Формируем клавиатуру
-    keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_button] + grouped_custom_buttons + [new_role_button] + [cancel_button])
+    keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_game_button_3] + grouped_game_buttons + [separator_button] +  grouped_custom_buttons + [new_role_button] + [cancel_button])
     return keyboard     
 
 
@@ -1834,25 +1905,24 @@ async def handle_documentgpt(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"text_parts {text_parts}")
 
         # Отправляем каждую часть, но кнопки добавляем только к последней
-        message = update.message
         for i, part in enumerate(text_parts):
-            if i == 0:  # Первая часть заменяет "Запрос принят..."
-                await processing_message.edit_text(
-                    part,
-                    parse_mode='MarkdownV2'
-                )
-            else:  # Остальные части отправляются как новые сообщения
+            is_last_part = i == len(text_parts) - 1  # Последняя ли это часть?
+
+            reply_markup = reset_button if is_last_part else None  # Кнопки только в последнем сообщении
+
+            if update.callback_query:
                 await update.callback_query.message.reply_text(
                     part,
+                    reply_markup=reply_markup,
+                    parse_mode='MarkdownV2'
+                )
+            else:
+                await update.message.reply_text(
+                    part,
+                    reply_markup=reply_markup,
                     parse_mode='MarkdownV2'
                 )
 
-        # Добавляем кнопку в последнем сообщении
-        await update.callback_query.message.reply_text(
-            text_parts[-1],
-            reply_markup=reply_markup,
-            parse_mode='MarkdownV2'
-        )
 
     finally:
         os.remove(local_file_path)
@@ -1865,14 +1935,14 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
     user_image = None
     logger.info(f"user_message {user_message}")
     # Основная клавиатура с тремя кнопками
-    full_menu = InlineKeyboardMarkup([     
+    full_menu = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏙 Посмотреть чужие генерации", callback_data="view_shared")],        
         [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
         [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],  
         [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],
         [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],        
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
         [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
-        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],        
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
         [InlineKeyboardButton("🔽 Скрыть меню", callback_data='gptmenu_hide')]
@@ -1908,7 +1978,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         
         # Проверяем MIME-тип или расширение файла
         if mime_type in ("text/plain", "application/pdf") or file_name.endswith((".txt", ".pdf")):
-            return await handle_documentgpt(update, context)       
+            return await handle_documentgpt(update, context)      
     if update.message.audio or update.message.voice:
         return await handle_audio(update, context)
     if update.message.animation:  # Проверка на GIF
@@ -1930,19 +2000,33 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             # Получаем caption изображения
             user_message = update.message.caption or "Изображение без описания"
 
-            # Проверяем, начинается ли caption с "Дорисуй: " или "дорисуй:"
-            match = re.match(r"(?i)^дорисуй:\s*(.+)", user_message)
+            # Проверяем, начинается ли caption с "Дорисуй:", "дорисуй:", "Дорисуй раскрась этот рисунок", "дорисуй раскрась этот рисунок"
+            match = re.match(r"(?i)^дорисуй:?\s*(.+)", user_message)
             if match:
                 inpaint_prompt = match.group(1).strip()
-                new_image = inpaint_image(img, inpaint_prompt)
-                if new_image:
-                    bio = io.BytesIO()
-                    new_image.save(bio, format="PNG")
-                    bio.seek(0)
-                    await update.message.reply_photo(photo=bio, caption=f"Изображение доработано по запросу: '{inpaint_prompt}'")
-                else:
-                    await update.message.reply_text("Ошибка при обработке изображения.")
-                return
+                logging.info(f"inpaint_prompt: {inpaint_prompt}")
+
+                # Загружаем изображение
+                photo_file = await update.message.photo[-1].get_file()
+                logging.info(f"photo_file: {photo_file}")
+                img_data = io.BytesIO()
+                await photo_file.download_to_memory(out=img_data)
+
+                # Определяем путь к папке temp внутри директории бота
+                base_dir = os.path.dirname(os.path.abspath(__file__))  # Путь к папке, где находится скрипт
+                temp_dir = os.path.join(base_dir, "temp")  # Путь к папке temp
+                os.makedirs(temp_dir, exist_ok=True)  # Создаём папку temp, если её нет
+
+                # Формируем путь к временному файлу
+                temp_image_path = os.path.join(temp_dir, f"inpaint_{user_id}.jpg")
+                logging.info(f"temp_image_path: {temp_image_path}")
+
+                # Сохраняем изображение во временный файл
+                with open(temp_image_path, "wb") as f:
+                    f.write(img_data.getvalue())
+
+                # Передаём в обработку
+                return await inpaint_image(update, context, temp_image_path, inpaint_prompt)
 
             # Обычная генерация описания
             add_to_context(user_id, f"[Изображение], с подписью: {user_message}", message_type="User_send_message:")
@@ -1999,6 +2083,172 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
 
         return RUNNING_GPT_MODE
+
+async def inpaint_image(update: Update, context: CallbackContext, image_path: str, prompt: str):
+    """Генерация измененного изображения через Google Imagen."""
+    user_id = update.effective_user.id
+
+    # Фоновая загрузка исходного изображения
+    asyncio.create_task(download_and_upload_image(image_path))
+
+    # Отправляем сообщение о начале обработки
+    msg = await update.message.reply_text("⏳ Ожидайте, изображение принято...")
+
+    # Переводим промпт
+    translated_prompt = await translate_promt_with_gemini(user_id, query=prompt)
+
+    # Обновляем сообщение с уточнением
+    await msg.edit_text(
+        f"⏳ Ожидайте, изображение изменяется по запросу: {translated_prompt}\n\n"
+        "Если бот неправильно автоматически перевёл ваш запрос, то напишите его изначально на английском, "
+        "в таком случае запрос просто перенесётся в конечный результат."
+    )
+
+    # Генерируем измененное изображение
+    captions, image_urls = await generate_inpaint_gemini(image_path, translated_prompt)
+
+    if not image_urls:
+        await msg.edit_text(
+            "⚠️ Не удалось изменить изображение. Попробуйте переформулировать запрос иначе.\n\n"
+            "⚠️ Либо же запрос подвергся цензуре."
+        )
+        return
+
+    # Фоновая загрузка изображений на Catbox
+    for image_url in image_urls:
+        asyncio.create_task(download_and_upload_image(image_url))
+
+    # Формируем подпись
+    caption_text = f"Модель: <b>Imagen3</b>\n\n"
+    for i, caption in enumerate(captions):
+        caption_text += f"<b>Изображение {i+1}:</b>\n<blockquote expandable>{caption}</blockquote>\n\n"
+
+    caption_text += f"Ваш запрос:\n<code>{prompt}</code>\n\n"
+    caption_text += f"Конечный запрос:\n<code>{translated_prompt}</code>"
+
+    # Ограничение на подпись в Telegram (1024 символа)
+    MAX_CAPTION_LENGTH = 1000
+    MAX_MESSAGE_LENGTH = 4000
+
+    # Разделяем текст на части, чтобы не превышать лимит
+    caption_part, message_parts = split_html_text(caption_text, MAX_CAPTION_LENGTH, MAX_MESSAGE_LENGTH)
+
+    # Проверяем количество изображений
+    if len(image_urls) == 1:
+        # Случай с одним изображением
+        image_path = image_urls[0]
+        with open(image_path, "rb") as img:
+            if len(caption_text) <= MAX_CAPTION_LENGTH:
+                # Если длина подписи не превышает лимит, отправляем фото с подписью и клавиатурой
+                sent_message = await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=img,
+                    caption=caption_part,
+                    parse_mode="HTML"
+                )
+                # Создаём клавиатуру
+                keyboard = [
+                    [InlineKeyboardButton("📒 Сохранить чтобы не потерять", callback_data=f"save_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🗂 Мои сохранённые генерации", callback_data="scheduled_by_tag")],
+                    [InlineKeyboardButton("🌃 Опубликовать в общую папку", callback_data=f"neuralpublic_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🏙 Посмотреть чужие публикации", callback_data="view_shared")],
+                    [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+                    [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],
+                    [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Прикрепляем клавиатуру к отправленному сообщению
+                await context.bot.edit_message_reply_markup(
+                    chat_id=update.effective_chat.id,
+                    message_id=sent_message.message_id,
+                    reply_markup=reply_markup
+                )
+            else:
+                # Если длина подписи превышает лимит, отправляем фото с первой частью подписи без клавиатуры
+                sent_message = await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=img,
+                    caption=caption_part,
+                    parse_mode="HTML"
+                )
+                # Отправляем оставшиеся части подписи
+                last_caption_message_id = None
+                for part in message_parts:
+                    sent_message = await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=part,
+                        parse_mode="HTML"
+                    )
+                    last_caption_message_id = sent_message.message_id
+
+                # Создаём клавиатуру
+                keyboard = [
+                    [InlineKeyboardButton("📒 Сохранить чтобы не потерять", callback_data=f"save_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🗂 Мои сохранённые генерации", callback_data="scheduled_by_tag")],
+                    [InlineKeyboardButton("🌃 Опубликовать в общую папку", callback_data=f"neuralpublic_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🏙 Посмотреть чужие публикации", callback_data="view_shared")],
+                    [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+                    [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],
+                    [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Прикрепляем клавиатуру к последнему сообщению с текстом
+                target_message_id = last_caption_message_id if last_caption_message_id else sent_message.message_id
+                await context.bot.edit_message_reply_markup(
+                    chat_id=update.effective_chat.id,
+                    message_id=target_message_id,
+                    reply_markup=reply_markup
+                )
+    else:
+        # Случай с медиагруппой (несколько изображений)
+        media_group = []
+        for image_path in image_urls:
+            with open(image_path, "rb") as img:
+                # Добавляем изображения в медиагруппу без подписи
+                media_group.append(InputMediaPhoto(img))
+
+        # Отправляем медиагруппу без подписи
+        sent_messages = await context.bot.send_media_group(
+            chat_id=update.effective_chat.id,
+            media=media_group
+        )
+
+        # Получаем ID первого сообщения медиагруппы
+        first_media_message_id = sent_messages[0].message_id
+
+        # Отправляем части подписи как отдельные сообщения
+        last_caption_message_id = None
+        for part in [caption_part] + message_parts:
+            sent_message = await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=part,
+                parse_mode="HTML"
+            )
+            last_caption_message_id = sent_message.message_id
+
+        # Создаём клавиатуру
+        keyboard = [
+            [InlineKeyboardButton("📒 Сохранить чтобы не потерять", callback_data=f"save_{user_id}_{sent_message.message_id}")],
+            [InlineKeyboardButton("🗂 Мои сохранённые генерации", callback_data="scheduled_by_tag")],
+            [InlineKeyboardButton("🌃 Опубликовать в общую папку", callback_data=f"neuralpublic_{user_id}_{sent_message.message_id}")],
+            [InlineKeyboardButton("🏙 Посмотреть чужие публикации", callback_data="view_shared")],
+            [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+            [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],
+            [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Определяем, к какому сообщению прикрепить клавиатуру
+        target_message_id = last_caption_message_id if last_caption_message_id else first_media_message_id
+
+        # Прикрепляем клавиатуру к целевому сообщению
+        await context.bot.edit_message_reply_markup(
+            chat_id=update.effective_chat.id,
+            message_id=target_message_id,
+            reply_markup=reply_markup
+        )
 
 
 
@@ -2184,7 +2434,13 @@ MODELS = {
             "add_prompt": "nsfw ",
             "negative": False
         },
-    }
+    },
+    "imagen3": { 
+        "imagen3": {
+            "add_prompt": "Generate ",
+            "negative": False
+        }    
+    }    
 }
 
 MODEL_SHORTNAMES = {
@@ -2243,7 +2499,9 @@ MODEL_SHORTNAMES = {
     "xey/sldr_flux_nsfw_v2-studio": "NSFW",
     "Shakker-Labs/FLUX.1-dev-LoRA-Logo-Design": "Flux Logo Design",
     "gokaygokay/Flux-Game-Assets-LoRA-v2": "3D Game Assets",
-    "fofr/flux-80s-cyberpunk": "Flux 80s Cyberpunk",           
+    "fofr/flux-80s-cyberpunk": "Flux 80s Cyberpunk",    
+    
+    "google_imagen3": "Google Imagen 3",             
 }
 
 
@@ -2259,29 +2517,60 @@ MODEL_SHORTNAMES = {
 async def choose_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_model = get_user_model(user_id)  # Получаем текущую модель пользователя
-    
+
+    # Проверяем, выбрана ли уже Imagen 3
+    imagen_selected = " ✅" if user_model == "imagen3" else ""
+
     keyboard = [
         [InlineKeyboardButton("🌠 Stable Diffusion", callback_data='category_🌠stable')],
         [InlineKeyboardButton("🌃 FLUX", callback_data='category_🌃flux')],
         [InlineKeyboardButton("💡 others", callback_data='category_💡others')],
-        [InlineKeyboardButton("Таблица примеров", callback_data='examples_table')]        
+        [InlineKeyboardButton(f"🎨 Google Imagen 3{imagen_selected}", callback_data='select_imagen3')],        
+        [InlineKeyboardButton("Таблица моделей и примеры", callback_data='examples_table')]        
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     message_text = (
         "Выберите категорию модели\n\n"
-        "🌠 Генерация моделей из категории Stable diffusion занимает в среднем 8-30сек.\n"
-        "🌃 Из Flux 30-300сек в зависимости от запроса и нагрузки на сервера.\n\n"
+        "🌠 Генерация моделей из категории Stable diffusion занимает в среднем 8-30 сек.\n"
+        "🌃 Из Flux 30-300 сек в зависимости от запроса и нагрузки на сервера.\n\n"
         "⏳ SD turbo - самая быстрая модель, генерация одного изображения занимает всего 3-5 секунд в среднем\n\n"
-        "В таблице примеров можно посмотреть как приблизительно выглядят генерации каждой из моделей.\n\n"
+        "🎨 Google Imagen 3 - тоже очень быстрая и интересная модель. Она работает отдельно от всех прочих и потому будет работать даже если другие модели перестали. Кроме того она умеет генерировать сопутствующий текст (например сказка + иллюстрация) и изменять ваши изображения. \n\n"        
+        "В таблице примеров можно посмотреть, как приблизительно выглядят генерации каждой из моделей. Так же она умеет генерировать по несколько изображений за раз\n\n"
         f"📌 Текущая выбранная модель: {user_model}"
     )
 
-    if update.message:
-        await update.message.reply_text(message_text, reply_markup=reply_markup)
-    elif update.callback_query:
-        await update.callback_query.message.reply_text(message_text, reply_markup=reply_markup)
+    if update.callback_query:
+        message = update.callback_query.message
+        if message and message.text:  # Проверяем, есть ли текст
+            await message.edit_text(message_text, reply_markup=reply_markup)
+        else:
+            await update.callback_query.message.reply_text(message_text, reply_markup=reply_markup)
         await update.callback_query.answer()
+    elif update.message:
+        await update.message.reply_text(message_text, reply_markup=reply_markup)
+
+# Обработчик выбора Imagen 3
+async def select_imagen3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # Устанавливаем модель Imagen 3
+    set_user_model(user_id, "imagen3")
+
+    # Обновляем интерфейс выбора модели
+    await choose_style(update, context)
+    context.user_data['selected_model'] = {
+        'name': "imagen3",
+        'params': "imagen3"
+    }
+    # Отправляем подтверждающее сообщение
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Выбрана модель: Google Imagen 3\n\nЭта модель умеет генерировать сопутствующий текст к изображениям, если дать ей такую задачу в запросе. А так же переделывать ваши изображения. Например пытаться дорисовать, раскрасить набросок, что-то добавить на фото, расширить фото в какую-то из сторон, изменить время суток на фото и что угодно ещё. \n\nДля того чтобы сгенерировать изображение начните сообщение со слово <code>Нарисуй</code> и затем ваш запрос. Чтобы переделать ваше изображение, отправьте его боту с подписью которая начинается с <code>Дорисуй</code> и затем напишите что именно вы хотите. \n\nТак же эта модельона умеет генерировать по несколько изображений за раз. Для этого явно укажите такое задание в запросе, например:\n<pre>Нарисуй покажи шаг за шагом в 4 изображения как нарисовать сову от наброска и до финальной иллюстрации</pre> ",
+        parse_mode="HTML"
+    )
+    await query.answer()
 
 # Обработчик кнопки "Выбрать стиль"
 async def select_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2298,8 +2587,12 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user_model = get_user_model(user_id)  # Получаем текущую модель пользователя    
     # Список всех категорий
-    categories = ["🌠stable", "🌃flux", "💡others"]
+    categories = ["🌠stable", "🌃flux", "💡others", "imagen3"]
     other_categories = [c for c in categories if c != category]  # Выбираем две другие категории
+
+
+
+
     logger.info(f"user_model {user_model}")   
     # Верхние кнопки с другими категориями
     buttons = [
@@ -2315,7 +2608,8 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Карта приоритетных моделей для разных категорий
     priority_models = {
         "🌠stable": ("stabilityai/stable-diffusion-3.5-large-turbo", "SD Turbo"),
-        "🌃flux": ("black-forest-labs/FLUX.1-dev", "FLUX (оригинальный)")
+        "🌃flux": ("black-forest-labs/FLUX.1-dev", "FLUX (оригинальный)"),
+        "imagen3": ("google_imagen3", "Imagen 3")
     }
 
     # Если в текущей категории есть приоритетная модель, добавляем её первой
@@ -2383,7 +2677,7 @@ async def model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.edit_message_text(
         text=f"✅ Вы выбрали модель: {MODEL_SHORTNAMES.get(model_name, model_name)}\n\n"
-             f"Теперь введите промпт(запрос) для генерации"
+             f"Теперь введите промпт(запрос) для генерации. Запрос должен начинаться со слова \"нарисуй\""
     )
 
 
@@ -2406,6 +2700,7 @@ load_dotenv("/etc/secrets/HF.env")
 HF_API_KEYS_LIST = [
     value for key, value in os.environ.items() if key.startswith("HF_API_KEY_")
 ]
+# Переменная для хранения последнего успешного токена
 LAST_SUCCESSFUL_TOKEN = None
 
 image_queue = asyncio.Queue()
@@ -2455,7 +2750,7 @@ PRESET_PROMPTS = {
 
     "Аниме": "anime style, vibrant and dynamic, highly detailed, expressive characters, cinematic lighting, vivid color palette",
 
-    "Ghibli": "Ghibli style, anime style, soft and painterly, warm and nostalgic atmosphere, magical realism, expressive characters, rich natural environments",
+    "Ghibli": "Ghibli art style, realistic anime style, soft and painterly, warm and nostalgic atmosphere, 90s anime, magical realism, expressive characters, rich natural environments, detailed rich studio ghibli style backgrounds, studio ghibli style characters",
 
     "Манга": "manga style, black and white, detailed linework, expressive characters, dramatic panel composition",
 
@@ -2498,6 +2793,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
     """Генерация изображения с учетом выбранной модели"""
     # Получаем модель из контекста или Firebase
     selected_model = context.user_data.get('selected_model')
+    logger.info(f"selected_model: {selected_model}")    
     global LAST_SUCCESSFUL_TOKEN
     if not selected_model:
         model_name = get_user_model(user_id)
@@ -2512,7 +2808,8 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
     model_params = selected_model['params']
     if model_name == "glif-loradex-trainer/araminta":
         model_name = "glif-loradex-trainer/araminta_k_flux_dev_illustration_art"
-
+    if model_name == "imagen3":
+        return await google_imagen(update, context, prompt, user_id)
     # Определяем порядок использования токенов
     if LAST_SUCCESSFUL_TOKEN and LAST_SUCCESSFUL_TOKEN in HF_API_KEYS_LIST:
         token_order = [LAST_SUCCESSFUL_TOKEN] + [key for key in HF_API_KEYS_LIST if key != LAST_SUCCESSFUL_TOKEN]
@@ -2520,6 +2817,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
         token_order = HF_API_KEYS_LIST
 
     logger.info(f"Попробуем токены в порядке: {token_order}")
+
 
     # Определяем, куда отправить сообщение
     response_target = update.message if update.message else query_message
@@ -2695,14 +2993,20 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                         caption=escape_gpt_markdown_v2(caption),
                         parse_mode="MarkdownV2",
                         reply_markup=reply_markup
-                    )                            
-            break  # Если все прошло успешно, выходим из цикла
+                    )      
+                    logger.info(f"caption1 {caption} ")                             
+            # Запоминаем успешный токен
+            LAST_SUCCESSFUL_TOKEN = HF_API_KEY
+            logger.info(f"Успешный токен: {LAST_SUCCESSFUL_TOKEN}")
+            
+            # Тут настройки полученного сообщения
+            return image  # Возвращаем изображение, если успешно
         except Exception as e:
             logger.error(f"Ошибка с токеном {HF_API_KEY}: {e}")
             retries -= 1
 
             if retries > 0:
-                await response_target.reply_text("⏳ Что-то пошло не так. Пробуем другой токен...")
+                await response_target.reply_text("⏳ Что-то пошло не так. Пробуем другой токен, подождите...")
                 await asyncio.sleep(10)  # Ждём перед повтором
             else:
                 await response_target.reply_text(
@@ -2710,38 +3014,346 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                     "1) Подождать 30 секунд и повторить.\n"
                     "2) Сменить модель (стиль), возможно, проблема в ней.\n"
                     "3) Подождать несколько часов — может быть, проблемы с серверами.\n\n"
-                    "Если ничего не помогло, сообщите о проблеме через /send."
+                    "Если ничего не помогло, сообщите о проблеме через /send. Так же выберите модель Imagen 3, она скорее всего работает."
                 )
                 return None  # Если все токены не сработали, возвращаем None
+
+
+async def google_imagen(update, context, prompt, user_id):
+    """Генерация изображения через Google Imagen."""
+    msg = await update.message.reply_text("⏳ Ожидайте, изображение генерируется...")
+
+    # Переводим промт
+    full_prompt = await translate_promt_with_gemini(update.effective_user.id, query=prompt)
+
+    # Обновляем сообщение с уточнением
+    await msg.edit_text(f"⏳ Ожидайте, изображение генерируется по запросу: {full_prompt}\n\n Если бот неправильно автоматически перевёл ваш запрос, то напишите его изначально на английском, в таком случае запрос просто перенесётся в конечный результат")
+
+    # Добавляем "Generate " в начало промта
+    full_prompt = "Generate image of " + full_prompt
+    # Получаем пресет из Firebase
+    preset_name = get_user_preset(user_id)
+    preset_prompt = PRESET_PROMPTS.get(preset_name, "")
+
+    # Формируем mix_prompt с учетом пресета
+    mix_prompt = f"{full_prompt} {preset_prompt}"
+    # Генерируем изображение
+    captions, image_urls = await Generate_gemini_image(mix_prompt)
+    if not image_urls:
+        keyboard = [
+            [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+            [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],
+            [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await msg.edit_text(
+            f"⚠️ Не удалось сгенерировать изображение по запросу {full_prompt}\n\n"
+            "⚠️ Попробуйте сформулировать запрос иначе. Гугл часто блокирует запросы всего, что может быть потенциально спорным. "
+            "Попробуйте разные варианты или проверьте работоспособность модели через максимально нейтральный запрос, например:\n<pre>Нарисуй Draw cat on apple tree</pre>\n. Если бот неправильно автоматически перевёл ваш запрос, "
+            "то напишите его изначально на английском, в таком случае запрос просто перенесётся в конечный результат.",
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        return
+
+    # Фоновая загрузка изображений на Catbox
+    for image_url in image_urls:
+        asyncio.create_task(download_and_upload_image(image_url))
+    logger.info(f"image_urls: {image_urls}") 
+
+    caption_text = f"Модель: <b>Imagen3</b>\nПресет: {preset_name}\n\n"
+    for i, caption in enumerate(captions):
+        caption_text += f"<b>Изображение {i+1}:</b>\n<blockquote expandable>{caption}</blockquote>\n\n"
+
+
+    caption_text += f"Ваш запрос:\n<code>Нарисуй {prompt}</code>\n\n"
+    caption_text += f"Конечный запрос:\n<code>{mix_prompt}</code>"
+
+    # Ограничение на подпись в Telegram (1024 символа)
+    MAX_CAPTION_LENGTH = 1000 
+    MAX_MESSAGE_LENGTH = 4000 
+
+    # Разделяем текст на части, чтобы не превышать лимит
+    caption_part, message_parts = split_html_text(caption_text, MAX_CAPTION_LENGTH, MAX_MESSAGE_LENGTH)
+    logger.info(f"caption_part {caption_part}")    
+    for idx, part in enumerate(message_parts):
+        logger.info(f"message_parts {idx}: {part}")
+
+
+
+
+    # Проверяем количество изображений
+    if len(image_urls) == 1:
+        # Случай с одним изображением
+        image_path = image_urls[0]
+        with open(image_path, "rb") as img:
+            if len(caption_text) <= MAX_CAPTION_LENGTH:
+                # Если длина подписи не превышает лимит, отправляем фото с подписью и клавиатурой
+                sent_message = await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=img,
+                    caption=caption_part,
+                    parse_mode="HTML"
+                )
+                # Создаём клавиатуру
+                keyboard = [
+                    [InlineKeyboardButton("📒 Сохранить чтобы не потерять", callback_data=f"save_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🗂 Мои сохранённые генерации", callback_data="scheduled_by_tag")],
+                    [InlineKeyboardButton("🌃 Опубликовать в общую папку", callback_data=f"neuralpublic_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🏙 Посмотреть чужие публикации", callback_data="view_shared")],
+                    [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+                    [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],
+                    [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Прикрепляем клавиатуру к отправленному сообщению
+                await context.bot.edit_message_reply_markup(
+                    chat_id=update.effective_chat.id,
+                    message_id=sent_message.message_id,
+                    reply_markup=reply_markup
+                )
+            else:
+                # Если длина подписи превышает лимит, отправляем фото с первой частью подписи без клавиатуры
+                sent_message = await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=img,
+                    caption=caption_part,
+                    parse_mode="HTML"
+                )
+                logger.info(f"message_parts2 {message_parts}")
+                # Отправляем оставшиеся части подписи
+                last_caption_message_id = None
+                for part in message_parts:
+                    sent_message = await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=part,  # Отправляем именно элемент списка, а не весь список
+                        parse_mode="HTML"
+                    )
+                    last_caption_message_id = sent_message.message_id
+
+                # Создаём клавиатуру
+                keyboard = [
+                    [InlineKeyboardButton("📒 Сохранить чтобы не потерять", callback_data=f"save_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🗂 Мои сохранённые генерации", callback_data="scheduled_by_tag")],
+                    [InlineKeyboardButton("🌃 Опубликовать в общую папку", callback_data=f"neuralpublic_{user_id}_{sent_message.message_id}")],
+                    [InlineKeyboardButton("🏙 Посмотреть чужие публикации", callback_data="view_shared")],
+                    [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+                    [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],
+                    [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Прикрепляем клавиатуру к последнему сообщению с текстом
+                target_message_id = last_caption_message_id if last_caption_message_id else sent_message.message_id
+                await context.bot.edit_message_reply_markup(
+                    chat_id=update.effective_chat.id,
+                    message_id=target_message_id,
+                    reply_markup=reply_markup
+                )
+    else:
+        # Случай с медиагруппой (несколько изображений)
+        media_group = []
+        for image_path in image_urls:
+            with open(image_path, "rb") as img:
+                # Добавляем изображения в медиагруппу без подписи
+                media_group.append(InputMediaPhoto(img))
+
+        # Отправляем медиагруппу без подписи
+        sent_messages = await context.bot.send_media_group(
+            chat_id=update.effective_chat.id,
+            media=media_group
+        )
+
+        # Получаем ID первого сообщения медиагруппы
+        first_media_message_id = sent_messages[0].message_id
+
+        # Отправляем части подписи как отдельные сообщения
+        last_caption_message_id = None
+
+        sent_message = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=caption_text,
+            parse_mode="HTML"
+        )
+        last_caption_message_id = sent_message.message_id  # Обновляем ID последнего сообщения с текстом
+
+        # Создаём клавиатуру
+        keyboard = [
+            [InlineKeyboardButton("📒 Сохранить чтобы не потерять", callback_data=f"save_{user_id}_{first_media_message_id}")],
+            [InlineKeyboardButton("🗂 Мои сохранённые генерации", callback_data="scheduled_by_tag")],
+            [InlineKeyboardButton("🌃 Опубликовать в общую папку", callback_data=f"neuralpublic_{user_id}_{first_media_message_id}")],
+            [InlineKeyboardButton("🏙 Посмотреть чужие публикации", callback_data="view_shared")],
+            [InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')],
+            [InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')],
+            [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Определяем, к какому сообщению прикрепить клавиатуру
+        if last_caption_message_id:
+            # Если есть части подписи, прикрепляем клавиатуру к последнему сообщению с текстом
+            target_message_id = last_caption_message_id
+        else:
+            # Если подписи нет, прикрепляем клавиатуру к первому сообщению медиагруппы
+            target_message_id = first_media_message_id
+
+        # Прикрепляем клавиатуру к целевому сообщению
+        await context.bot.edit_message_reply_markup(
+            chat_id=update.effective_chat.id,
+            message_id=target_message_id,
+            reply_markup=reply_markup
+        )
+
+async def download_and_upload_image(image_path):
+    """Загрузка изображения из локального файла и отправка его на Catbox."""
+    logging.info(f"image_path {image_path}.")
+    try:
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+        
+        image = Image.open(io.BytesIO(image_bytes))
+
+        with io.BytesIO() as output:
+            image.save(output, format="PNG")
+            output.seek(0)
+            await upload_image_to_catbox_in_background(output.getvalue())
+
+    except Exception as e:
+        logging.info(f"Ошибка загрузки и отправки изображения: {e}")
+
+
+
+
+from bs4 import BeautifulSoup
+
+def split_html_text(text: str, max_caption_length: int, max_message_length: int):
+    # Список поддерживаемых тегов
+    SUPPORTED_TAGS = {
+        "b": "<b>",
+        "i": "<i>",
+        "blockquote": "<blockquote expandable>",
+        "code": "<code>",
+        "pre": "<pre>"
+    }
+    
+    def fix_html_tags(html):
+        """Исправляет незакрытые или незавершенные теги."""
+        soup = BeautifulSoup(html, "html.parser")
+        return str(soup)
+    
+    def analyze_and_fix_tags(part):
+        """Анализирует часть текста на наличие незакрытых или неоткрытых тегов и исправляет их."""
+        stack = []  # Стек для отслеживания открытых тегов
+        fixed_part = ""
+        
+        i = 0
+        while i < len(part):
+            if part[i] == '<':
+                # Находим конец тега
+                end_index = part.find('>', i)
+                if end_index == -1:
+                    break  # Незавершенный тег, пропускаем
+                tag = part[i:end_index + 1]
                 
+                if tag.startswith("</"):  # Закрывающий тег
+                    tag_name = tag[2:-1].split()[0]  # Извлекаем имя тега (без атрибутов)
+                    if stack and stack[-1] == tag_name:
+                        stack.pop()  # Удаляем соответствующий открывающий тег из стека
+                    else:
+                        # Если закрывающий тег без открывающего, добавляем открывающий в начало
+                        fixed_part = SUPPORTED_TAGS[tag_name] + fixed_part
+                else:  # Открывающий тег
+                    tag_name = tag[1:-1].split()[0]  # Извлекаем имя тега (без атрибутов)
+                    if tag_name in SUPPORTED_TAGS:
+                        stack.append(tag_name)  # Добавляем тег в стек
+                fixed_part += tag
+                i = end_index + 1
+            else:
+                fixed_part += part[i]
+                i += 1
+        
+        # Добавляем недостающие закрывающие теги
+        while stack:
+            tag_name = stack.pop()
+            fixed_part += f"</{tag_name}>"
+        
+        return fixed_part
+    
+    def split_with_tag_fixing(text, max_length):
+        """Разделяет текст, сохраняя целостность HTML-тегов."""
+        if len(text) <= max_length:
+            return [analyze_and_fix_tags(text)]
+        
+        # Ищем место разреза
+        cut_index = max_length
+        while cut_index > 0 and text[cut_index] not in {' ', '\n', '>', '<'}:
+            cut_index -= 1
+        
+        # Отсекаем текст и проверяем теги
+        part, remaining = text[:cut_index], text[cut_index:]
+        fixed_part = analyze_and_fix_tags(part)
+        
+        return [fixed_part] + split_with_tag_fixing(remaining, max_length)
+    
+    # Первая часть до max_caption_length
+    caption_parts = split_with_tag_fixing(text, max_caption_length)
+    caption_part = caption_parts[0]
+    remaining_text = "".join(caption_parts[1:])
+    
+    # Оставшийся текст делим на max_message_length
+    message_parts = split_with_tag_fixing(remaining_text, max_message_length) if remaining_text else []
+    
+    return caption_part, message_parts
+
+
+
+
 async def choose_preset(update, context):
     """Отправляет кнопки с пресетами пользователю."""
-    # Создаем список кнопок пресетов
+    user_id = update.effective_user.id
+    preset_name = get_user_preset(user_id)  # Получаем текущий пресет пользователя
+
+    # Создаем список кнопок пресетов, добавляя галочку к активному пресету
     buttons = [
-        InlineKeyboardButton(preset, callback_data=f"preset_{preset}")
+        InlineKeyboardButton(
+            f"✅ {preset}" if preset == preset_name else preset, 
+            callback_data=f"preset_{preset}"
+        )
         for preset in PRESET_PROMPTS.keys()
     ]
-    
+
     # Создаем кнопку закрыть
-    close_button = [InlineKeyboardButton("❌Закрыть это меню❌", callback_data="presetclose")]
+    close_button = [InlineKeyboardButton("❌ Закрыть это меню ❌", callback_data="presetclose")]
 
     # Группируем кнопки пресетов по две в ряд и добавляем кнопку закрыть внизу
     keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     keyboard.append(close_button)  # Добавляем кнопку закрыть последней строкой
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
+    # Формируем сообщение с текущим стилем
+    current_preset_text = f"Текущий стиль: *{preset_name}*" if preset_name else "Стиль не выбран."
+    message_text = (
+        f"{current_preset_text}\n\n"
+        "Выберите стиль. Стиль представляет из себя заранее заготовленный промпт, "
+        "который автоматически будет добавляться к вашим запросам:"
+    )
+
     if update.message:  # Вызов через команду
-        await update.message.reply_text(
-            "Выберите стиль. Стиль представляет из себя заранее заготовленный промпт, который автоматически будет добавляться к вашим запросам:",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode="Markdown")
+
     elif update.callback_query:  # Вызов через кнопку
-        await update.callback_query.message.reply_text(
-            "Выберите стиль. Стиль представляет из себя заранее заготовленный промпт, который автоматически будет добавляться к вашим запросам:",
-            reply_markup=reply_markup
-        )
+        message = update.callback_query.message
+        if message and message.text:  # Проверяем, есть ли текст
+            await message.edit_text(message_text, reply_markup=reply_markup, parse_mode="Markdown")
+        else:
+            await message.reply_text(message_text, reply_markup=reply_markup, parse_mode="Markdown")
         await update.callback_query.answer()  # Закрываем запрос
+
+
+
 
 # Обработчик для кнопки закрыть
 async def handle_presetclose_button(update, context):
@@ -2760,7 +3372,7 @@ async def preset_callback(update, context):
         await query.answer(f"Выбран пресет: {preset_name}")
         await query.edit_message_text(f"Вы выбрали пресет: {preset_name}")
     else:
-        await query.answer("Ошибка: выбранный пресет не найден.")    
+        await query.answer("Ошибка: выбранный пресет не найден.") 
 
 
 
@@ -3252,26 +3864,18 @@ async def upload_image_to_catbox_in_background(image_bytes: bytes):
     except Exception as e:
         logging.error(f"Не удалось загрузить изображение на Catbox: {e}")
     finally:
-        # Удаляем временный файл
+        # Гарантированно удаляем временный файл с повторными попытками
         if os.path.exists(file_path):
-            os.remove(file_path)
-
-async def upload_image_to_catbox_in_background(image_bytes: bytes):
-    """Фоновая задача для загрузки изображения на Catbox."""
-    file_path = "temp_image.png"  # Локальный путь для временного хранения изображения
-    try:
-        # Сохраняем изображение во временный файл
-        with open(file_path, 'wb') as f:
-            f.write(image_bytes)
-        # Загружаем изображение на Catbox
-        catbox_url = await second_upload_image(file_path)
-        logging.info(f"Изображение успешно загружено на Catbox: {catbox_url}")
-    except Exception as e:
-        logging.error(f"Не удалось загрузить изображение на Catbox: {e}")
-    finally:
-        # Удаляем временный файл
-        if os.path.exists(file_path):
-            os.remove(file_path)
+            for _ in range(5):  # Пытаемся 5 раз
+                try:
+                    os.remove(file_path)
+                    logging.info(f"Временный файл {file_path} удалён.")
+                    break  # Успешно удалили, выходим из цикла
+                except Exception as e:
+                    logging.warning(f"Ошибка удаления {file_path}, повторная попытка через 1 секунду...: {e}")
+                    time.sleep(1)  # Ждём 1 секунду перед повторной попыткой
+            else:
+                logging.error(f"Не удалось удалить временный файл {file_path} после 5 попыток.")
 
 async def examples_table_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -3590,6 +4194,7 @@ async def upload_catbox(file_path: str) -> str:
                 if response.status == 200:
                     return await response.text()  # возвращает URL загруженного файла
                 else:
+                    logging.info(f"Ошибка загрузки на Catbox: {response.status}")                    
                     raise Exception(f"Ошибка загрузки на Catbox: {response.status}")
 
 
@@ -8669,7 +9274,12 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
                             else:
                                 # Если "автор: " нет, берём первые 3 слова очищенного текста
                                 caption = ' '.join(cleaned_caption.split()[:3])
-
+                            logging.info(f"cleaned_caption {cleaned_caption}")                                
+                            if cleaned_caption.startswith("Модель: Imagen3"):
+                                match = re.search(r"Ваш запрос:\s*(.+)", cleaned_caption, re.DOTALL)
+                                if match:
+                                    caption = match.group(1).strip()
+                            logging.info(f"cleaned_caption2 {cleaned_caption}")                                     
                             # Добавляем в список с подписью
                             scheduled.append((message_id, caption, tag))
 
@@ -11656,6 +12266,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_more_plants_handler, pattern='plant_\\d+'))
     application.add_handler(CallbackQueryHandler(gpt_plants_help_handler, pattern='^gpt_plants_help$'))
     application.add_handler(CallbackQueryHandler(gpt_plants_more_handler, pattern='^gpt_plants_more$'))
+
+    application.add_handler(CallbackQueryHandler(select_imagen3, pattern="^select_imagen3$"))
+
     
     application.add_handler(CallbackQueryHandler(text_rec_with_gpt, pattern='text_rec_with_gpt$'))
     application.add_handler(CallbackQueryHandler(text_plant_help_with_gpt, pattern='text_plant_help_with_gpt$'))    
@@ -11684,7 +12297,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(filedelete_image, pattern=r'^filedelete_'))
     application.add_handler(CallbackQueryHandler(fileselect_image_to_delete, pattern=r'^fileselect_'))
     application.add_handler(CallbackQueryHandler(handle_role_select, pattern='^role_select$'))
-    application.add_handler(CallbackQueryHandler(handle_role_selected, pattern='^(newroleselect_|defaultrole_)'))
+    application.add_handler(CallbackQueryHandler(handle_role_selected, pattern='^(newroleselect_|defaultrole_|gamerole_)'))
     application.add_handler(CallbackQueryHandler(handle_delete_role, pattern=r"^clear_role_"))  
     application.add_handler(CallbackQueryHandler(mainhelp_callback, pattern="osnhelp"))
     application.add_handler(CallbackQueryHandler(handle_share_button, pattern='^share_'))   
