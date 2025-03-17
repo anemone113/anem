@@ -1672,6 +1672,27 @@ async def create_updated_keyboard(user_id):
     keyboard = InlineKeyboardMarkup(grouped_default_buttons + [separator_game_button_3] + grouped_game_buttons + [separator_button] +  grouped_custom_buttons + [new_role_button] + [cancel_button])
     return keyboard     
 
+from telegram.error import TelegramError  # Импортируем ошибку
+
+async def handle_cancel_role(update: Update, context: CallbackContext):
+    """Удаляет сообщение с выбором роли"""
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer()
+
+    # Получаем ID сообщения с выбором роли
+    role_message_id = context.user_data.get('role_message_id')
+
+    if role_message_id:
+        try:
+            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=role_message_id)
+        except TelegramError:
+            pass  # Игнорируем ошибку, если сообщение уже удалено
+
+    # Можно отправить другое сообщение, если нужно
+    await query.message.reply_text("Выбор отменён.", reply_markup=None)
 
 async def handle_delete_role(update: Update, context: CallbackContext):
     """Обработчик удаления выбранной роли."""
