@@ -2473,16 +2473,16 @@ async def generate_inpaint_gemini(image_file_path: str, instructions: str):
 
         if not response.candidates:
             logging.warning("Gemini вернул пустой список кандидатов.")
-            return None, "Извините, я не могу обработать это изображение."
+            return None, None
 
         first_candidate = response.candidates[0]
         if not hasattr(first_candidate, "content") or not first_candidate.content:
             logging.warning("Ответ Gemini не содержит контента.")
-            return None, "Извините, я не могу обработать это изображение."
+            return None, None
         
         if not hasattr(first_candidate.content, "parts") or not first_candidate.content.parts:
             logging.warning("Ответ Gemini не содержит частей контента.")
-            return None, "Извините, я не могу обработать это изображение."
+            return None, None
 
         captions = []
         image_urls = []
