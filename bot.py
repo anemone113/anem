@@ -12287,7 +12287,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(filedelete_image, pattern=r'^filedelete_'))
     application.add_handler(CallbackQueryHandler(fileselect_image_to_delete, pattern=r'^fileselect_'))
     application.add_handler(CallbackQueryHandler(handle_role_select, pattern='^role_select$'))
-    application.add_handler(CallbackQueryHandler(ed, pattern='^(newroleselect_|defaultrole_|gamerole_)'))
+    application.add_handler(CallbackQueryHandler(handle_role_selected, pattern='^(newroleselect_|defaultrole_|gamerole_)'))
     application.add_handler(CallbackQueryHandler(handle_delete_role, pattern=r"^clear_role_"))  
     application.add_handler(CallbackQueryHandler(mainhelp_callback, pattern="osnhelp"))
     application.add_handler(CallbackQueryHandler(handle_share_button, pattern='^share_'))   
