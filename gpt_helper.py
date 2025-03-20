@@ -274,6 +274,67 @@ def load_water_plants(user_id: int) -> list:
         return []
 
 
+
+
+# Функция для получения всех токенов из Firebase
+def get_all_tokens() -> list:
+    try:
+        ref_tokens = db.reference('Tokens/All_tokens')
+        all_tokens = ref_tokens.get()
+        if all_tokens:
+            logging.info("Загружены API-ключи из Firebase")
+            return all_tokens
+        else:
+            logging.warning("В Firebase нет API-ключей, используем локальные")
+            return []
+    except Exception as e:
+        logging.error(f"Ошибка при получении токенов из Firebase: {e}")
+        return []
+
+# Функция для установки списка всех токенов
+def set_all_tokens(tokens: list):
+    try:
+        ref_tokens = db.reference('Tokens/All_tokens')
+        ref_tokens.set(tokens)
+        logging.info("Обновлены API-ключи в Firebase")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении токенов в Firebase: {e}")
+
+# Функция для получения последнего успешного токена
+def get_last_successful_token() -> str:
+    try:
+        ref_last_token = db.reference('Tokens/LAST_SUCCESSFUL_TOKEN')
+        last_token = ref_last_token.get()
+        if last_token:
+            logging.info(f"Последний успешный API-ключ: {last_token}")
+            return last_token
+        else:
+            logging.warning("В Firebase нет последнего успешного API-ключа")
+            return None
+    except Exception as e:
+        logging.error(f"Ошибка при получении последнего успешного API-ключа: {e}")
+        return None
+
+# Функция для установки последнего успешного токена
+def set_last_successful_token(token: str):
+    try:
+        ref_last_token = db.reference('Tokens/LAST_SUCCESSFUL_TOKEN')
+        ref_last_token.set(token)
+        logging.info(f"Сохранен последний успешный API-ключ: {token}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении последнего успешного API-ключа: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
 def load_user_plants(user_id: int) -> dict:
     """Загружает информацию о растениях пользователя из Firebase, исключая water_plants."""
     try:
