@@ -65,7 +65,11 @@ from gpt_helper import (
     get_user_preset,
     set_user_preset,
     Generate_gemini_image,
-    generate_inpaint_gemini
+    generate_inpaint_gemini,
+    get_all_tokens,
+    set_all_tokens,
+    get_last_successful_token,
+    set_last_successful_token
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -2715,16 +2719,26 @@ def find_model_params(model_name: str) -> dict:
 
 import itertools
 
-# Два токена API
-# Загружаем переменные окружения из секретного файла
-load_dotenv("/etc/secrets/HF.env")
+async def token_set(update: Update, context: CallbackContext):
+    if not context.args:
+        await update.message.reply_text("Пожалуйста, укажите токены через запятую.")
+        return
 
-# Получаем все переменные окружения, начинающиеся с "HF_API_KEY_"
-HF_API_KEYS_LIST = [
-    value for key, value in os.environ.items() if key.startswith("HF_API_KEY_")
-]
-# Переменная для хранения последнего успешного токена
-LAST_SUCCESSFUL_TOKEN = None
+    new_tokens = {token.strip() for token in ' '.join(context.args).split(',')}
+    
+    try:
+        ref_tokens = db.reference('Tokens/All_tokens')
+        existing_tokens = ref_tokens.get() or []  # Загружаем текущие токены
+        existing_tokens = set(existing_tokens)  # Преобразуем в множество для исключения дубликатов
+
+        updated_tokens = existing_tokens | new_tokens  # Добавляем новые токены
+
+        ref_tokens.set(list(updated_tokens))  # Сохраняем в Firebase
+        logging.info("Обновлены API-ключи в Firebase")
+        await update.message.reply_text("API-ключи успешно добавлены в Firebase.")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении токенов в Firebase: {e}")
+        await update.message.reply_text("Ошибка при сохранении токенов. Проверьте логи.")
 
 image_queue = asyncio.Queue()
 user_positions = {}
@@ -2833,13 +2847,20 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
         model_name = "glif-loradex-trainer/araminta_k_flux_dev_illustration_art"
     if model_name == "imagen3":
         return await google_imagen(update, context, prompt, user_id)
-    # Определяем порядок использования токенов
-    if LAST_SUCCESSFUL_TOKEN and LAST_SUCCESSFUL_TOKEN in HF_API_KEYS_LIST:
-        token_order = [LAST_SUCCESSFUL_TOKEN] + [key for key in HF_API_KEYS_LIST if key != LAST_SUCCESSFUL_TOKEN]
-    else:
-        token_order = HF_API_KEYS_LIST
+    # Загружаем токены из Firebase
+    all_tokens = get_all_tokens()
+    last_token = get_last_successful_token()
 
-    logger.info(f"Попробуем токены в порядке: {token_order}")
+    if not all_tokens:
+        logger.error("Нет доступных API-ключей для Hugging Face")
+        await update.message.reply_text("Ошибка: нет доступных API-ключей. Попробуйте позже.")
+        return None
+
+    # Определяем порядок токенов: сначала последний успешный, затем остальные
+    if last_token and last_token in all_tokens:
+        token_order = [last_token] + [key for key in all_tokens if key != last_token]
+    else:
+        token_order = all_tokens
 
 
     # Определяем, куда отправить сообщение
@@ -2854,9 +2875,10 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
     add_prompt = selected_model['params']['add_prompt']
 
     retries = len(token_order)  # Количество попыток = количеству токенов
+    retry_message = None  # Глобальная переменная для хранения сообщения
 
-    for HF_API_KEY in token_order:
-        logger.info(f"Пробуем API-ключ: {HF_API_KEY}")
+    for i, HF_API_KEY in enumerate(token_order):
+        logger.info(f"Пробуем API-ключ {i+1}/{len(token_order)}: {HF_API_KEY}")
         client_image = AsyncInferenceClient(api_key=HF_API_KEY, timeout=300)
 
         try:
@@ -3019,27 +3041,45 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                     )      
                     logger.info(f"caption1 {caption} ")                             
             # Запоминаем успешный токен
-            LAST_SUCCESSFUL_TOKEN = HF_API_KEY
-            logger.info(f"Успешный токен: {LAST_SUCCESSFUL_TOKEN}")
+            set_last_successful_token(HF_API_KEY)
+            logger.info(f"Успешный токен: {HF_API_KEY}")
             
             # Тут настройки полученного сообщения
             return image  # Возвращаем изображение, если успешно
+
+
         except Exception as e:
             logger.error(f"Ошибка с токеном {HF_API_KEY}: {e}")
             retries -= 1
 
             if retries > 0:
-                await response_target.reply_text("⏳ Что-то пошло не так. Пробуем другой токен, подождите...")
-                await asyncio.sleep(10)  # Ждём перед повтором
+                try:
+                    if retry_message is None:  # Создаём сообщение только один раз
+                        retry_message = await response_target.reply_text(
+                            f"⏳ Возникла ошибка. Пробуем другой токен ({i+2}/{len(token_order)}), подождите..."
+                        )
+                    else:  # Редактируем предыдущее сообщение
+                        await retry_message.edit_text(
+                            f"⏳ Возникла ошибка. Пробуем другой токен ({i+2}/{len(token_order)}), немного терпения..."
+                        )
+
+                except Exception as edit_error:
+                    logger.warning(f"Не удалось обновить сообщение: {edit_error}")
+                await asyncio.sleep(2)
+
             else:
-                await response_target.reply_text(
-                    "Произошла ошибка при генерации изображения. Попробуйте:\n\n"
-                    "1) Подождать 30 секунд и повторить.\n"
-                    "2) Сменить модель (стиль), возможно, проблема в ней.\n"
-                    "3) Подождать несколько часов — может быть, проблемы с серверами.\n\n"
-                    "Если ничего не помогло, сообщите о проблеме через /send. Так же выберите модель Imagen 3, она скорее всего работает."
-                )
-                return None  # Если все токены не сработали, возвращаем None
+                try:
+                    await retry_message.reply_text(
+                        "Произошла ошибка при генерации изображения. Попробуйте:\n\n"
+                        "1) Подождать 30 секунд и повторить.\n"
+                        "2) Сменить модель (стиль), возможно, проблема в ней.\n"
+                        "3) Подождать несколько часов — может быть, проблемы с серверами.\n\n"
+                        "Если ничего не помогло, сообщите о проблеме через /send, скорее всего исчерпан лимит всех токенов, при желании вы можете написать админу, получить инструкцию по генерации новых токенов и поспособствовать их добавлению в бот, это увеличит ежемесячные лимиты. \n\n"
+                        "Так же вы можете выбрать модель Imagen 3, она скорее всего работает."
+                    )
+                except Exception as edit_error:
+                    logger.warning(f"Не удалось обновить сообщение с ошибкой: {edit_error}")
+                return None
 
 
 async def google_imagen(update, context, prompt, user_id):
@@ -12359,6 +12399,7 @@ def main() -> None:
 
     # Обработчик для просмотра конкретной отложенной записи
     application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$')) 
+    application.add_handler(CommandHandler("token", token_set))       
     application.add_handler(CommandHandler('webapp', webapp_command))    
     application.add_handler(CommandHandler("sendall", sendall))    
     application.add_handler(CommandHandler("data", data_command))      
