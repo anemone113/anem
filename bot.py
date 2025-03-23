@@ -165,44 +165,44 @@ async def data_command(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text("Ваши данные пусты.")
 
+USER_IDS = [19029917, 20618514, 25377082, 35194055, 57673989, 68017381, 69314002, 92703779, 92852789, 93192260, 104865552, 130502292, 146351163, 147351371, 190945533, 205900446, 223677807, 242283851, 257112890, 262262816, 264003592, 290031541, 298066779, 300025675, 302379214, 306469709, 326611724, 381379786, 385928103, 393126119, 394159899, 396838917, 419817885, 439506900, 442646559, 459261734, 474195974, 516232486, 577681862, 586787646, 596973027, 611704867, 624317946, 626558159, 631224997, 666993239, 668328654, 676271492, 704874880, 707549030, 739162690, 745120986, 754607983, 775345852, 780334362, 781580201, 789688948, 801586478, 814924951, 815610820, 818026781, 842797437, 860705945, 866648983, 873360980, 873413482, 874134295, 915612655, 919008054, 937801646, 960294998, 972481587, 988873023, 989325372, 1046743582, 1096125853, 1107964479, 1126225257, 1149574816, 1203287768, 1214476327, 1219361456, 1220271061, 1221533002, 1222227099, 1225705380, 1240550482, 1247773844, 1293084893, 1314221656, 1351826504, 1366051623, 1440150049, 1454145687, 1465628473, 1469390426, 1471915085, 1519572343, 1521709699, 1543028708, 1609905164, 1613196589, 1659632043, 1668374416, 1676664165, 1742524654, 1774870861, 1789124483, 1809652677, 1813042277, 1824130766, 1824742804, 1841170415, 1848215295, 1915179934, 1976720451, 2016643148, 2030763957, 2047583108, 2057806777, 2100503597, 2104266399, 2469483415, 5027345967, 5106034281, 5204148826, 5234665650, 5256952624, 5325900170, 5346582203, 5629330385, 5806164256, 5972422679, 6033575010, 6217936347, 6307808189, 6333902342, 6442774124, 6519046474, 6546556436, 6702495691, 7208124838, 7372529001, 7474302646, 7815486514, 11723743486]
+
+from telegram import MessageEntity
+
 async def sendall(update: Update, context: CallbackContext) -> None:
-    """Отправляет сообщение указанным пользователям с HTML-разметкой."""
-    if not update.message or not update.message.text:
-        await update.message.reply_text("Использование: /sendall [id1, id2, ...] текст сообщения")
+    """Отправляет сообщение (текст или фото с подписью) указанным пользователям с сохранением форматирования."""
+    if not update.message or not update.message.reply_to_message:
+        await update.message.reply_text("Используйте команду /sendall в ответ на сообщение, которое нужно разослать.")
         return
 
-    # Получаем полный текст сообщения без команды
-    message_text = update.message.text[len("/sendall") :].strip()
+    reply_msg = update.message.reply_to_message
+    message_text = reply_msg.text or reply_msg.caption  # Текст из сообщения
+    photo = reply_msg.photo[-1] if reply_msg.photo else None  # Последнее фото
+    entities = reply_msg.entities or reply_msg.caption_entities  # Форматирование текста
 
-    if not message_text.startswith("["):
-        await update.message.reply_text("Некорректный формат. Используйте: /sendall [id1, id2] текст сообщения")
-        return
-
-    try:
-        # Извлекаем список user_id из квадратных скобок
-        ids_part, message_text = message_text.split("]", 1)
-        user_ids = ast.literal_eval(ids_part + "]")  # Преобразуем строку в список
-        message_text = message_text.strip()
-
-        if not isinstance(user_ids, list) or not all(isinstance(i, int) for i in user_ids):
-            raise ValueError
-    except Exception:
-        await update.message.reply_text("Ошибка в формате ID. Используйте: /sendall [id1, id2] текст сообщения")
-        return
-
-    if not message_text:
-        await update.message.reply_text("Вы не ввели текст для рассылки.")
+    if not message_text and not photo:
+        await update.message.reply_text("Сообщение, на которое вы ответили, не содержит текста или фото.")
         return
 
     success_count, fail_count = 0, 0
 
-    for user_id in user_ids:
+    for user_id in USER_IDS:
         try:
-            await context.bot.send_message(
-                chat_id=user_id, 
-                text=message_text, 
-                parse_mode="HTML"  # Используем HTML-разметку
-            )
+            if photo:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo.file_id,
+                    caption=message_text,
+                    parse_mode=None,  # Убираем HTML, так как передаем `entities`
+                    caption_entities=entities  # Восстанавливаем форматирование
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message_text,
+                    parse_mode=None,  # Отключаем `parse_mode`, так как передаем `entities`
+                    entities=entities
+                )
             success_count += 1
         except Exception as e:
             fail_count += 1
