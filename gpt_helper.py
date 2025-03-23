@@ -545,10 +545,10 @@ def get_user_model(user_id: int) -> str:
             return user_model
         else:
             logging.warning(f"Модель для пользователя {user_id} не найдена. Используется значение по умолчанию.")
-            return "stabilityai/stable-diffusion-3.5-large-turbo"
+            return "imagen3"
     except Exception as e:
         logging.error(f"Ошибка при загрузке модели для пользователя {user_id}: {e}")
-        return "stabilityai/stable-diffusion-3.5-large-turbo"
+        return "imagen3"
 
 def set_user_model(user_id: int, model: str):
     """Устанавливает пользовательскую модель и сохраняет её в Firebase."""
@@ -618,7 +618,7 @@ def set_user_role(user_id, role_text):
 
 
 
-async def generate_image_description(user_id, image, query=None, use_context=True):
+async def generate_image_description(user_id, image_path, query=None, use_context=True):
     user_roles_data = user_roles.get(user_id, {})
     selected_role = None
 
@@ -632,13 +632,13 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
     if game_role_key and game_role_key in GAME_ROLES:
         selected_role = GAME_ROLES[game_role_key]["full_description"]
 
-    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
 
     # Если нет ни роли по умолчанию, ни пользовательской роли
     if not selected_role:
-        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль"
+        selected_role = "Ты обычный вариант модели Gemini реализованный в виде телеграм бота, помогаешь пользователю выполнять различные задачи и выполняешь его поручения. В боте есть кнопка выбор роли, сообщи об этом пользователю если он поинтересуется. Так же ты умеешь рисовать и дорисовывать изображения. Для того чтобы ты что-то нарисовал, тебе нужно прислать сообщение которое начинается со слово \"Нарисуй\". Чтобы ты изменил, обработал или дорисовал изображение, тебе нужно отправить исходное сообщение с подписью начинающейся с \"Дорисуй\", так же сообщи об этом пользователю если он будет спрашивать."
 
     # Формируем system_instruction с user_role и relevant_context
     relevant_context = await get_relevant_context(user_id)
@@ -668,18 +668,8 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
     )
 
 
-
     try:
-        with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
-            image_path = temp_file.name
-            image.save(temp_file, format="JPEG")
-
-        logger.info(f"Сохранено временное изображение: {image_path}")
-
-        # Инициализация клиента Gemini
-        client = genai.Client(api_key=GOOGLE_API_KEY)
-
-        # Загрузка изображения
+        # Загрузка изображения в Gemini
         try:
             image_file = client.files.upload(file=pathlib.Path(image_path))
         except Exception as e:
@@ -726,10 +716,6 @@ async def generate_image_description(user_id, image, query=None, use_context=Tru
         if response.candidates and response.candidates[0].content.parts:
             response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
-            if use_context:
-                add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекст
-            
-            save_context_to_firebase(user_id)            
             return response_text
         else:
             logger.warning("Gemini не вернул ответ на запрос для изображения.")
@@ -806,7 +792,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
     if game_role_key and game_role_key in GAME_ROLES:
         selected_role = GAME_ROLES[game_role_key]["full_description"]
 
-    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
 
@@ -827,8 +813,6 @@ async def generate_animation_response(video_file_path, user_id, query=None):
         f"Собеседник прислал тебе гиф-анимацию, ответь на эту анимацию в контексте беседы, либо просто опиши её "             
     )
 
-
-    add_to_context(user_id, query, message_type="Пользователь прислал гиф-анимацию с подписью:")
 
     try:
 
@@ -898,8 +882,8 @@ async def generate_animation_response(video_file_path, user_id, query=None):
 
         # Извлечение текста ответа
         bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
-        add_to_context(user_id, bot_response, message_type="Ответ бота на анимацию:")  # Добавляем ответ в контекст
-        save_context_to_firebase(user_id)                     
+
+                             
         return bot_response
 
     except FileNotFoundError as fnf_error:
@@ -909,6 +893,15 @@ async def generate_animation_response(video_file_path, user_id, query=None):
     except Exception as e:
         logging.error("Ошибка при обработке видео с Gemini:", exc_info=True)
         return "Ошибка при обработке видео. Попробуйте снова."
+    finally:
+        # Удаляем временный файл
+        if 'video_file_path' in locals() and os.path.exists(video_file_path):
+            try:
+                os.remove(video_file_path)
+                logger.info(f"Временный файл удален: {video_file_path}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении временного файла: {e}")
+
 
 
 
@@ -927,9 +920,10 @@ async def generate_video_response(video_file_path, user_id, query=None):
     if game_role_key and game_role_key in GAME_ROLES:
         selected_role = GAME_ROLES[game_role_key]["full_description"]
 
-    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
+
 
     # Если нет ни роли по умолчанию, ни пользовательской роли
     if not selected_role:
@@ -952,23 +946,16 @@ async def generate_video_response(video_file_path, user_id, query=None):
     # Определяем значение переменной command_text
     command_text = context if query else "Опиши содержание видео."
 
-    add_to_context(user_id, query, message_type="Пользователь прислал видео с подписью:")
+
 
     try:
 
-        # Проверяем существование файла
-        if not os.path.exists(video_file_path):
-            return "Видео недоступно. Попробуйте снова."
-
-        # Загрузка файла через API Gemini
-        video_path = pathlib.Path(video_file_path)
-
-
         try:
-            video_file = client.files.upload(file=video_path)
+            video_file = client.files.upload(file=pathlib.Path(video_file_path))
         except Exception as e:
+            logger.error(f"Ошибка при загрузке изображения: {e}")
+            return "Не удалось загрузить изображение."
 
-            return "Не удалось загрузить видео. Попробуйте снова."
 
         # Ожидание обработки видео
         while video_file.state == "PROCESSING":
@@ -1028,8 +1015,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
 
         # Извлечение текста ответа
         bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
-        add_to_context(user_id, bot_response, message_type="Ответ бота на видео:")  # Добавляем ответ в контекст 
-        save_context_to_firebase(user_id)                    
+                  
         return bot_response
 
     except FileNotFoundError as fnf_error:
@@ -1039,6 +1025,14 @@ async def generate_video_response(video_file_path, user_id, query=None):
     except Exception as e:
         logging.error("Ошибка при обработке видео с Gemini:", exc_info=True)
         return "Ошибка при обработке видео. Попробуйте снова."
+    finally:
+        # Удаляем временный файл
+        if 'video_file_path' in locals() and os.path.exists(video_file_path):
+            try:
+                os.remove(video_file_path)
+                logger.info(f"Временный файл удален: {video_file_path}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении временного файла: {e}")
 
 async def generate_document_response(document_path, user_id, query=None):
     user_roles_data = user_roles.get(user_id, {})
@@ -1074,7 +1068,7 @@ async def generate_document_response(document_path, user_id, query=None):
 
     command_text = context 
 
-    add_to_context(user_id, query, message_type="Пользователь прислал документ с подписью:")
+
 
     try:
         if not os.path.exists(document_path):
@@ -1127,8 +1121,7 @@ async def generate_document_response(document_path, user_id, query=None):
             return "Извините, я не могу обработать этот документ."
 
         bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
-        add_to_context(user_id, bot_response, message_type="Ответ бота на документ:")
-        save_context_to_firebase(user_id)
+
         return bot_response
 
     except FileNotFoundError as fnf_error:
@@ -1138,6 +1131,14 @@ async def generate_document_response(document_path, user_id, query=None):
     except Exception as e:
         logging.info("Ошибка при обработке документа с Gemini:", exc_info=True)
         return "Ошибка при обработке документа. Попробуйте снова."
+    finally:
+        # Удаляем временный файл
+        if 'document_path' in locals() and os.path.exists(document_path):
+            try:
+                os.remove(document_path)
+                logger.info(f"Временный файл удален: {document_path}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении временного файла: {e}")
 
 
 
@@ -1155,7 +1156,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
     if game_role_key and game_role_key in GAME_ROLES:
         selected_role = GAME_ROLES[game_role_key]["full_description"]
 
-    # Если пользователь выбрал новую роль, игнорируем роль по умолчанию
+    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
 
@@ -1168,7 +1169,6 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
     # Исключаем дубли текущего сообщения в relevant_context
     if query and relevant_context:
         relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
-
     # Формируем контекст с текущим запросом
     context = (
         f"Ты в чате играешь роль: {selected_role}. "
@@ -1181,26 +1181,19 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
     command_text = context if query else "Распознай текст в аудио. Если текста нет или распознать его не удалось то опиши содержимое."
 
 
-    add_to_context(user_id, query, message_type="Пользователь прислал аудио с подписью:")
+
 
     try:
+
+        try:
+            audio_file = client.files.upload(file=pathlib.Path(audio_file_path))
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке изображения: {e}")
+            return "Не удалось загрузить изображение."
+
         if not command_text:
             command_text = "распознай текст либо опиши содержание аудио, если текста нет."
 
-        # Проверяем существование файла
-        if not os.path.exists(audio_file_path):
-            logging.error(f"Файл {audio_file_path} не существует.")
-            return "Аудиофайл недоступен. Попробуйте снова."
-
-        # Подготовка пути файла
-        audio_path = pathlib.Path(audio_file_path)
-        try:
-        # Загрузка файла через Gemini API
-            file_upload = client.files.upload(file=audio_path)
-        except Exception as e:
-            print(f"Error uploading file: {e}")
-            return None
-        # Проверяем успешность загрузки файла
 
 
         # Генерация ответа через Gemini
@@ -1214,8 +1207,8 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                     role="user",
                     parts=[
                         types.Part.from_uri(
-                            file_uri=file_upload.uri,
-                            mime_type=file_upload.mime_type
+                            file_uri=audio_file.uri,
+                            mime_type=audio_file.mime_type
                         )
                     ]
                 ),
@@ -1260,8 +1253,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
 
         # Извлечение текста ответа
         bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
-        add_to_context(user_id, bot_response, message_type="Ответ бота на аудио:")  # Добавляем ответ в контекст
-        save_context_to_firebase(user_id)        
+                
         return bot_response
 
     except FileNotFoundError as fnf_error:
@@ -1271,6 +1263,14 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
     except Exception as e:
         logging.info("Ошибка при обработке аудиофайла с Gemini:", exc_info=True)
         return "Ошибка при обработке аудиофайла. Попробуйте снова."
+    finally:
+        # Удаляем временный файл
+        if 'audio_file_path' in locals() and os.path.exists(audio_file_path):
+            try:
+                os.remove(audio_file_path)
+                logger.info(f"Временный файл удален: {audio_file_path}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении временного файла: {e}")
 
 
 
@@ -1430,7 +1430,7 @@ GAME_ROLES = {
                             "Не давай слишком много утверждений одного типа подряд, старайся рандомно чередовать ложные и правдивые утверждения. Не страшно если 2, 3, 4 или даже 5 раз подряд будут например ложные, однако затем всё же должно последовать правдивое. Либо же смена может быть более частой, опять же выбирай рандомно. "                                                                     
                             "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата ",
         "alert": "Бот даёт утверждение вы отвечаете ему правда это или ложь\n\nДля использования игровых ролей рекомендуется сбросить историю диалога чтобы бот меньше путался"                            
-    },    
+    },   
     "role105": {
         "short_name": "Бредогенератор",
         "full_description": "Ты — ведущий игры 'Бредогенератор'. "
@@ -1449,8 +1449,8 @@ GAME_ROLES = {
                             "Однако если собеседник сам просит о подсказке, то можешь дать её, но не слишком явную и очевидную. Если собеседник говорит что сдаётся то можешь назвать слово."
                             "Не используй конструкции вроде \"Бот ответил\" или timestamp с указанием времени, это служебная информация которая нужна только для истории чата"
                             "Чтобы слово обновилось на новое пользователь должен отправить тебе одно из слов \"Дальше\" или \"Сбросить\", сообщи ему об этом если он будет спрашивать или не понимать"                            ,
-        "alert": "Бот загадывает слово. Задавайте вопросы, на которые он ответит: Да, Нет, Не совсем. Можно попросить у бота подсказку. Для того чтобы он загадал новое слово, отправьте \"Дальше\" или \"Сбросить\"."                            
-    },                 
+        "alert": "Бот загадывает слово, вы должно отгадать это слово задавая боту вопросы на которые он может отвечать только Да или Нет. Для того чтобы бот загадал новое слово, отправьте ему \"Дальше\" или \"Сдаюсь\""                            
+    },                      
 }
 
 
@@ -1478,7 +1478,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
 
     # Если нет ни роли по умолчанию, ни пользовательской роли
     if not selected_role:
-        selected_role = "роль не выбрана, попроси пользователя придумать или выбрать роль по нажатию кнопки меню под твоим сообщением телеграм"
+        selected_role = "Ты обычный вариант модели Gemini реализованный в виде телеграм бота, помогаешь пользователю выполнять различные задачи и выполняешь его поручения. В боте есть кнопка выбор роли, сообщи об этом пользователю если он поинтересуется. Так же ты умеешь рисовать и дорисовывать изображения. Для того чтобы ты что-то нарисовал, тебе нужно прислать сообщение которое начинается со слово \"Нарисуй\". Чтобы ты изменил, обработал или дорисовал изображение, тебе нужно отправить исходное сообщение с подписью начинающейся с \"Дорисуй\", так же сообщи об этом пользователю если он будет спрашивать."
 
     # Проверяем, выбрана ли роль "Крокодил"
     if game_role_key == "role106":
@@ -1518,9 +1518,6 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
 
     logger.info(f"context {context}")
 
-    # Добавляем запрос пользователя в историю контекста
-    if query and use_context:
-        add_to_context(user_id, query, message_type="user_message")
 
     attempts = 3  # Количество попыток
     for attempt in range(attempts):
@@ -1565,10 +1562,8 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
             if response.candidates and response.candidates[0].content.parts:
                 response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
 
-                if use_context:
-                    add_to_context(user_id, response_text, message_type="bot_response")
 
-                save_context_to_firebase(user_id)
+
                 return response_text
             else:
                 logging.warning("Ответ от модели не содержит текстового компонента.")
