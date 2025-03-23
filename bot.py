@@ -1815,11 +1815,18 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Загрузка аудио в файл
     await file.download_to_drive(local_file_path)
 
+    # Определение типа аудиофайла и формирование полной подписи
+    audio_type = "[Голосовое сообщение]" if update.message.voice else "[Аудиофайл]"
+    full_caption = f"{audio_type} {caption}".strip()  # Убираем лишний пробел, если caption пустой
+
+
     try:
         # Генерация ответа с передачей user_id
         full_audio_response = await generate_audio_response(local_file_path, user_id, query=caption)
 
-
+        add_to_context(user_id, full_caption, message_type="user_send_audio")         
+        add_to_context(user_id, full_audio_response, message_type="bot_audio_response")  # Добавляем ответ в контекст
+        save_context_to_firebase(user_id) 
 
         # Отправка текста с результатом пользователю
         await update.message.reply_text(full_audio_response)
@@ -1853,10 +1860,12 @@ async def handle_gptgif(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_drive(local_file_path)
 
     try:
+       
         # Генерация ответа
-        full_animation_response = await generate_animation_response(local_file_path, user_id, query=caption)
-
-
+        full_animation_response = await generate_video_response(local_file_path, user_id, query=caption)
+        add_to_context(user_id, caption, message_type="user_send_gif")         
+        add_to_context(user_id, full_animation_response, message_type="bot_gif_response")  # Добавляем ответ в контекст
+        save_context_to_firebase(user_id)    
         # Отправка текста с результатом пользователю
         await update.message.reply_text(full_animation_response)
     finally:
@@ -1891,9 +1900,11 @@ async def handle_gptvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Генерация ответа
+        
         full_video_response = await generate_video_response(local_file_path, user_id, query=caption)
-
-
+        add_to_context(user_id, caption, message_type="user_send_video")        
+        add_to_context(user_id, full_video_response, message_type="bot_video_response")  # Добавляем ответ в контекст 
+        save_context_to_firebase(user_id)
         # Отправка текста с результатом пользователю
         await update.message.reply_text(full_video_response)
     finally:
@@ -1925,8 +1936,11 @@ async def handle_documentgpt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await file.download_to_drive(local_file_path)
 
     try:
+       
         full_text_response = await generate_document_response(local_file_path, user_id, caption)
-
+        add_to_context(user_id, caption, message_type="user_send_document")         
+        add_to_context(user_id, full_text_response, message_type="bot_document_response")
+        save_context_to_firebase(user_id)        
         # Разбиваем текст на части
         text_parts = await send_reply_with_limit(full_text_response)
 
@@ -1971,6 +1985,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("✂️ Сбросить диалог", callback_data='reset_dialog')],        
         [InlineKeyboardButton("✏️ Придумать новую роль", callback_data='set_role_button')],
         [InlineKeyboardButton("📜 Выбрать роль", callback_data='role_select')],  
+        [InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data='separator')],        
         [InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')],
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
         [InlineKeyboardButton("🔽 Скрыть меню", callback_data='gptmenu_hide')]
@@ -2000,6 +2015,267 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             save_context_to_firebase(user_id)
             await query.answer("Диалог и роль сброшены.")
             return ASKING_FOR_ROLE
+
+
+
+
+
+
+
+    if update.message.reply_to_message and update.message.text:
+        quoted_text = update.message.quote.text if update.message.quote else None
+        bot_id = context.bot.id
+        user_id = update.message.from_user.id
+        original_message = update.message.reply_to_message  # Здесь добавляем переменную
+        logger.info(f"quoted_text: {quoted_text}")  
+        user_message = update.message.text
+        draw_triggers = ["нарисуй", "нарисуй:", "Нарисуй", "Нарисуй:", "draw", "draw:", "Draw", "Draw:"]
+
+        if any(user_message.startswith(trigger) for trigger in draw_triggers):
+            extra_text = user_message.split(maxsplit=1)[1] if len(user_message.split()) > 1 else ""
+            
+            if quoted_text:
+                prompt_text = quoted_text
+            elif original_message:
+                prompt_text = original_message
+            else:
+                prompt_text = ""
+
+            if extra_text:
+                prompt_text += " " + extra_text
+
+            # Запускаем асинхронную генерацию без перевода
+            return await limited_image_generation(update, context, user_id, prompt_text)
+
+        if original_message.text:      
+
+            if original_message.from_user.id == bot_id:
+                prefix = "Пользователь процитировал одно из твоих прошлых сообщений, которое выглядит так"
+            elif original_message.from_user.id == user_id:
+                prefix = "Пользователь процитировал одно из своих прошлых сообщений, которое выглядит так"
+            else:
+                prefix = f"Пользователь процитировал сообщение от {original_message.from_user.full_name}, которое выглядит так"
+
+            query = f"{prefix}: " \
+                    f"\"{quoted_text if quoted_text else original_message.text}\" и написал: \"{user_message}\"."
+
+            logger.info(f"query_text: {query}")  
+
+            response_text = await generate_gemini_response(user_id, query=query)
+            add_to_context(user_id, f"{prefix}: \"{quoted_text if quoted_text else original_message.text}\" И написал: \"{user_message}\"", message_type="user_reply_text")
+
+            if response_text:
+                text_parts = await send_reply_with_limit(response_text)
+
+                for i, part in enumerate(text_parts):
+                    if i == len(text_parts) - 1:  # Последняя часть
+                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+
+                    else:
+                        await update.message.reply_text(part, parse_mode='MarkdownV2')
+                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
+                    save_context_to_firebase(user_id)
+            else:
+                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+        elif original_message.photo:
+
+            # Проверяем, начинается ли caption с "Дорисуй:", "дорисуй:", "Дорисуй раскрась этот рисунок", "дорисуй раскрась этот рисунок"
+            match = re.match(r"(?i)^(дорисуй|доделай|замени|добавь|отредактируй):?\s*(.+)", user_message)
+            if match:
+                inpaint_prompt = match.group(2).strip()
+                logging.info(f"inpaint_prompt: {inpaint_prompt}")
+
+                # Загружаем изображение
+                photo_file = await original_message.photo[-1].get_file()  # Изменено!
+                logging.info(f"photo_file: {photo_file}")
+                img_data = io.BytesIO()
+                await photo_file.download_to_memory(out=img_data)
+
+                # Определяем путь к папке temp внутри директории бота
+                base_dir = os.path.dirname(os.path.abspath(__file__))  # Путь к папке, где находится скрипт
+                temp_dir = os.path.join(base_dir, "temp")  # Путь к папке temp
+                os.makedirs(temp_dir, exist_ok=True)  # Создаём папку temp, если её нет
+
+                # Формируем путь к временному файлу
+                temp_image_path = os.path.join(temp_dir, f"inpaint_{user_id}.jpg")
+                logging.info(f"temp_image_path: {temp_image_path}")
+
+                # Сохраняем изображение во временный файл
+                with open(temp_image_path, "wb") as f:
+                    f.write(img_data.getvalue())
+
+                # Передаём в обработку
+                return await inpaint_image(update, context, temp_image_path, inpaint_prompt)
+
+            original_photo = update.message.reply_to_message.photo[-1]
+            file = await context.bot.get_file(original_photo.file_id)
+
+            # Сохраняем изображение локально
+            os.makedirs("downloads", exist_ok=True)
+            image_path = f"downloads/image_{original_photo.file_id}.jpg"
+            await file.download_to_drive(image_path)
+
+            # Передаём данные в recognize_image_with_gemini
+            response_text = await generate_image_description(
+                user_id, 
+                image_path=image_path,
+                query=user_message
+            )
+            add_to_context(user_id, f"{user_message}", message_type="user_reply_image")            
+            # Отправляем пользователю ответ от модели
+            if response_text:
+                text_parts = await send_reply_with_limit(response_text)
+
+                for i, part in enumerate(text_parts):
+                    if i == len(text_parts) - 1:  # Последняя часть
+                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                    else:
+                        await update.message.reply_text(part, parse_mode='MarkdownV2')
+                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
+                    save_context_to_firebase(user_id)                        
+            else:
+                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+            т   
+        elif original_message.video:
+            original_video = update.message.reply_to_message.video
+            file = await context.bot.get_file(original_video.file_id)
+
+            # Сохраняем видео локально
+            os.makedirs("downloads", exist_ok=True)
+            video_file_path = f"downloads/video_{original_video.file_id}.mp4"
+            await file.download_to_drive(video_file_path)
+            # Передаём данные в recognize_video_with_gemini
+            response_text = await generate_video_response(
+                video_file_path=video_file_path,
+                user_id=user_id,                 
+                query=user_message
+            )
+            add_to_context(user_id, f"{user_message}", message_type="user_reply_video")            
+            # Отправляем пользователю ответ от модели
+            if response_text:
+                text_parts = await send_reply_with_limit(response_text)
+
+                for i, part in enumerate(text_parts):
+                    if i == len(text_parts) - 1:  # Последняя часть
+                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                    else:
+                        await update.message.reply_text(part, parse_mode='MarkdownV2')
+                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
+                    save_context_to_firebase(user_id)                        
+            else:
+                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+
+        elif original_message.audio or original_message.voice:
+            original_audio = original_message.audio or original_message.voice  # Берём, что есть
+            file = await context.bot.get_file(original_audio.file_id)
+            logger.info(f"file: {file}")
+            # Сохраняем аудио локально
+            os.makedirs("downloads", exist_ok=True)
+            audio_file_path = f"downloads/audio_{original_audio.file_id}.mp3"
+            await file.download_to_drive(audio_file_path)
+
+            # Передаём данные в recognize_audio_with_gemini
+            response_text = await generate_audio_response(                
+                audio_file_path=audio_file_path,
+                user_id=user_id,                 
+                query=user_message
+            )
+            add_to_context(user_id, f"{user_message}", message_type="user_reply_audio")            
+            # Добавляем ответ бота в историю
+            # Отправляем пользователю ответ от модели
+            if response_text:
+                text_parts = await send_reply_with_limit(response_text)
+
+                for i, part in enumerate(text_parts):
+                    if i == len(text_parts) - 1:  # Последняя часть
+                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                    else:
+                        await update.message.reply_text(part, parse_mode='MarkdownV2')
+                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
+                    save_context_to_firebase(user_id)                        
+            else:
+                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+        elif original_message.animation:  # Гифки попадают в animation
+            original_animation = update.message.reply_to_message.animation
+            file = await context.bot.get_file(original_animation.file_id)
+
+            
+
+            # Сохраняем анимацию локально
+            os.makedirs("downloads", exist_ok=True)
+            animation_file_path = f"downloads/animation_{original_animation.file_id}.mp4"
+            await file.download_to_drive(animation_file_path)
+
+            # Формируем запрос для модели
+            prompt_animation = f"Пользователь процитировал анимацию и написал: \"{user_message}\". Ответь на сообщение или запрос пользователя."
+
+            # Передаём данные в обработчик видео
+            response_text = await generate_video_response(
+                video_file_path=animation_file_path,
+                user_id=user_id,
+                query=prompt_animation,
+            )
+            add_to_context(user_id, f"{user_message}", message_type="user_reply_GIF")
+            # Отправляем ответ пользователю
+            if response_text:
+                text_parts = await send_reply_with_limit(response_text)
+
+                for i, part in enumerate(text_parts):
+                    if i == len(text_parts) - 1:  # Последняя часть
+                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                    else:
+                        await update.message.reply_text(part, parse_mode='MarkdownV2')
+                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
+                    save_context_to_firebase(user_id)                        
+            else:
+                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+        elif original_message.document:  # Проверяем, если сообщение содержит документ
+            original_document = update.message.reply_to_message.document
+            file = await context.bot.get_file(original_document.file_id)
+
+            # Сохраняем документ локально
+            os.makedirs("downloads", exist_ok=True)
+            document_extension = original_document.file_name.split(".")[-1].lower()
+            document_file_path = f"downloads/document_{original_document.file_id}.{document_extension}"
+            await file.download_to_drive(document_file_path)
+
+            
+
+            # Проверяем, поддерживается ли формат
+            if document_extension in ["txt", "pdf"]:
+                # Формируем запрос для обработки документа
+                prompt_document = f"Пользователь обратился к документу и написал: \"{user_message}\". Ответь на сообщение или запрос пользователя."
+
+                # Передаём данные в обработчик текста
+                response_text = await generate_document_response(
+                    document_path=document_file_path,
+                    user_id=user_id,
+                    query=prompt_document
+                )
+                add_to_context(user_id, f"{user_message}", message_type="user_reply_document")
+                # Отправляем ответ пользователю
+                if response_text:
+                    text_parts = await send_reply_with_limit(response_text)
+
+                    for i, part in enumerate(text_parts):
+                        if i == len(text_parts) - 1:  # Последняя часть
+                            await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                        else:
+                            await update.message.reply_text(part, parse_mode='MarkdownV2')
+                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
+                    save_context_to_firebase(user_id)                            
+                else:
+                    await update.message.reply_text("Произошла ошибка при обработке документа. Попробуйте снова. /restart")
+            else:
+                await update.message.reply_text("Этот формат документа не поддерживается в режиме разговора с ботом. Отправьте .txt или .pdf.")
+        return
+
+
+
+
+
+
+
     if update.message.document:
         mime_type = update.message.document.mime_type
         file_name = update.message.document.file_name.lower() if update.message.document.file_name else ""
@@ -2018,20 +2294,20 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
         user_id = update.message.from_user.id
         user_message = update.message.text        
         try:
-            # Загружаем изображение
-            photo_file = await update.message.photo[-1].get_file()
-            img_data = io.BytesIO()
-            await photo_file.download_to_memory(out=img_data)
-            img = Image.open(img_data)
-            width, height = img.size
+            # Сохраняем изображение локально
+            original_photo = await update.message.photo[-1].get_file()
+            file = await context.bot.get_file(original_photo.file_id)
+            os.makedirs("downloads", exist_ok=True)
+            image_path = f"downloads/image_{original_photo.file_id}.jpg"
+            await file.download_to_drive(image_path)
 
             # Получаем caption изображения
-            user_message = update.message.caption or "Изображение без описания"
+            user_message = update.message.caption or "Распознай что на изображении"
 
             # Проверяем, начинается ли caption с "Дорисуй:", "дорисуй:", "Дорисуй раскрась этот рисунок", "дорисуй раскрась этот рисунок"
-            match = re.match(r"(?i)^дорисуй:?\s*(.+)", user_message)
+            match = re.match(r"(?i)^(дорисуй|доделай|замени|добавь|отредактируй):?\s*(.+)", user_message)
             if match:
-                inpaint_prompt = match.group(1).strip()
+                inpaint_prompt = match.group(2).strip()
                 logging.info(f"inpaint_prompt: {inpaint_prompt}")
 
                 # Загружаем изображение
@@ -2057,9 +2333,9 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 return await inpaint_image(update, context, temp_image_path, inpaint_prompt)
 
             # Обычная генерация описания
-            add_to_context(user_id, f"[Изображение], с подписью: {user_message}", message_type="User_send_message:")
-            response_text = await generate_image_description(user_id, query=user_message, image=img)
-
+            
+            response_text = await generate_image_description(user_id, image_path=image_path, query=user_message)
+            add_to_context(user_id, f"[Изображение], с подписью: {user_message}", message_type="user_send_image")    
             logging.info(f"Ответ с изображением, который пытается отправить бот: {response_text}")
 
             if response_text:
@@ -2072,6 +2348,8 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                         await update.message.reply_text(part, parse_mode='MarkdownV2')
             else:
                 await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
+            add_to_context(user_id, response_text, message_type="bot_image_response")  # Добавляем ответ в контекст  
+            save_context_to_firebase(user_id)              
             return
         except Exception as e:
             logging.error(f"Ошибка при загрузке изображения: {e}")
@@ -2093,19 +2371,22 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 return RUNNING_GPT_MODE
 
             # Запускаем асинхронную генерацию без перевода
-            asyncio.create_task(limited_image_generation(update, context, user_id, prompt_text))
+            return await limited_image_generation(update, context, user_id, prompt_text)
 
         else:
             response_text = await generate_gemini_response(user_id, query=user_message)
-
+            add_to_context(user_id, user_message, message_type="user_send_text")            
             if response_text:
                 text_parts = await send_reply_with_limit(response_text)
 
                 for i, part in enumerate(text_parts):
                     if i == len(text_parts) - 1:  # Последняя часть
                         await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                        
                     else:
                         await update.message.reply_text(part, parse_mode='MarkdownV2')
+                    add_to_context(user_id, response_text, message_type="bot_text_response")    
+                    save_context_to_firebase(user_id)    
             else:
                 await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
 
@@ -2694,18 +2975,28 @@ async def model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, category, model_name = query.data.split('_', 2)
     user_id = update.effective_user.id
     
-    # Сохраняем модель в Firebase
+    # Получаем предыдущую модель пользователя
+    previous_model = get_user_model(user_id)
+
+    # Сохраняем новую модель в базе данных
     set_user_model(user_id, model_name)
-    
+
+    # Обновляем данные в user_data
     context.user_data['selected_model'] = {
         'name': model_name,
         'params': MODELS[category][model_name]
     }
-    
-    await query.edit_message_text(
-        text=f"✅ Вы выбрали модель: {MODEL_SHORTNAMES.get(model_name, model_name)}\n\n"
-             f"Теперь введите промпт(запрос) для генерации. Запрос должен начинаться со слова \"нарисуй\""
-    )
+
+    # Формируем текст сообщения
+    message_text = (f"✅ Вы выбрали модель: {MODEL_SHORTNAMES.get(model_name, model_name)}\n\n"
+                    f"Теперь введите промпт(запрос) для генерации. Запрос должен начинаться со слова \"нарисуй\" чтобы затриггерить генерацию")
+
+    # Отправляем новое сообщение (без попыток редактирования старого)
+    sent_message = await query.message.reply_text(message_text)
+    context.user_data['model_message_id'] = sent_message.message_id
+
+    # Обновляем клавиатуру с новой галочкой
+    await category_handler(update, context)
 
 
 
@@ -3433,9 +3724,9 @@ async def preset_callback(update, context):
     if preset_name in PRESET_PROMPTS:
         set_user_preset(user_id, preset_name)
         await query.answer(f"Выбран пресет: {preset_name}")
-        await query.edit_message_text(f"Вы выбрали пресет: {preset_name}")
+        await choose_preset(update, context)
     else:
-        await query.answer("Ошибка: выбранный пресет не найден.") 
+        await query.answer("Ошибка: выбранный пресет не найден.")  
 
 
 
@@ -3998,19 +4289,9 @@ async def reset_dialog(update: Update, context: CallbackContext) -> None:
     # Сброс контекста в Firebase
     reset_firebase_dialog(user_id)
     
-    await query.answer("Диалог сброшен.")
 
-    # Обновляем клавиатуру
-    keyboard = [
-        [InlineKeyboardButton("📗\nПомощь", callback_data='short_help_gpt')],
-        [InlineKeyboardButton("📜\nВыбрать роль", callback_data='role_select')],
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],        
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        text="Диалог сброшен. Вы можете начать новый разговор.",
-        reply_markup=reply_markup
-    )
+    await query.answer("Диалог сброшен. Вы можете начать новый разговор.", show_alert=True)
+
 
 
 
@@ -8029,6 +8310,7 @@ async def handle_text(update: Update, context: CallbackContext) -> int:
         # Отправляем сообщение с кнопкой завершения публикации
         keyboard = [
             [InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')],
+            [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
