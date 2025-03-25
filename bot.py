@@ -2,7 +2,6 @@ from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDoc
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler, CallbackQueryHandler, ContextTypes
 from PIL import Image
 from telegram.constants import ParseMode
-from tenacity import retry, wait_fixed, stop_after_attempt
 from background import keep_alive
 import asyncio
 import requests
@@ -11,7 +10,6 @@ import os
 import shutil
 import io
 import aiohttp
-from tenacity import retry, wait_fixed, stop_after_attempt, RetryError
 import tempfile
 import re
 from requests.exceptions import Timeout
@@ -73,28 +71,22 @@ from gpt_helper import (
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
-import chardet
 import json
 import os
 from gpt_helper import user_roles, DEFAULT_ROLES, GAME_ROLES
 import base64
 import random
-from langdetect import detect
 import firebase_admin
 from firebase_admin import credentials, db
 import re
 import logging
-import re
-from bs4 import BeautifulSoup
 import aiohttp
 import wikipediaapi  # Импортируем библиотеку
 import wikipedia
-import ast
 from telegram.error import Forbidden
 from telegram.helpers import escape, mention_html
 from huggingface_hub import AsyncInferenceClient
 import time
-import itertools
 import os
 from dotenv import load_dotenv
 import html
@@ -3008,7 +3000,6 @@ def find_model_params(model_name: str) -> dict:
     # Возвращаем параметры по умолчанию, если модель не найдена
     return MODELS['🌠stable']["stabilityai/stable-diffusion-3.5-large-turbo"]
 
-import itertools
 
 async def token_set(update: Update, context: CallbackContext):
     if not context.args:
