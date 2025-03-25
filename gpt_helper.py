@@ -9,7 +9,6 @@ import os
 import firebase_admin
 from firebase_admin import credentials, db
 import random
-from langdetect import detect
 from google import genai
 from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
 from google.genai import types
@@ -21,8 +20,7 @@ from google.genai.types import (
     Part,
     Retrieval,
     SafetySetting,
-    Tool,
-    VertexAISearch,
+    Tool
 )
 
 from google.genai.types import CreateCachedContentConfig, GenerateContentConfig, Part
