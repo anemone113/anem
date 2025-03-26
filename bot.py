@@ -8500,22 +8500,6 @@ async def handle_new_text_from_image(update: Update, context: CallbackContext, i
     return ASKING_FOR_IMAGE
         
 
-
-@retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
-def make_request(url, data):
-    response = requests.post(url, json=data, timeout=30)
-    response.raise_for_status()
-    return response.json()
-
-# Функция для отправки медиа-сообщений с повторными попытками
-@retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
-async def send_media_with_retries(update, media_group, caption):
-    try:
-        await update.message.reply_text(caption, parse_mode='HTML')
-        await update.message.reply_media_group(media=media_group)
-    except Exception as e:
-        raise  # Перекидываем исключение для повторных попыток
-
 async def send_media_group(update, media_group, caption):
     if not media_group:
         return
