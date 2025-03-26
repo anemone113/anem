@@ -1,16 +1,8 @@
-av==13.1.0
+aiohttp==3.9.3
 firebase-admin==6.5.0
 flask==3.0.3
 google-genai==1.5.0
 google-generativeai==0.8.4
-grpcio-status==1.67.1
-imageio==2.36.0
-imageio-ffmpeg==0.5.1
-importlib-metadata==8.0.0
-importlib-resources==6.4.0
-langdetect==1.0.9
-lottie==0.7.1
-opencv-python==4.10.0.84
 python-telegram-bot==21.10
 pytz==2024.2
 tweepy==4.15.0
