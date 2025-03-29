@@ -415,6 +415,7 @@ def add_to_favorites(user_id: int, owner_id: int, post_id: str, context: Callbac
 
 
 
+
 def delete_from_firebase(keys, user_id):
     """Удаляет данные из Firebase, предварительно обновляя базу."""
     try:
@@ -427,15 +428,22 @@ def delete_from_firebase(keys, user_id):
                 if key in current_data[user_id]:
                     del current_data[user_id][key]
             
-            # Если у пользователя больше нет публикаций, удаляем его из базы
+            # Если у пользователя больше нет публикаций, удаляем его из базы полностью
             if not current_data[user_id]:
                 del current_data[user_id]
-            
-            # Сохраняем обновленные данные обратно
-            ref = db.reference('users_publications')
-            ref.update(current_data)
+
+                # Явное удаление узла пользователя в Firebase
+                ref = db.reference(f'users_publications/{user_id}')
+                ref.delete()  # Полностью удаляет данные пользователя
+
+            else:
+                # Обновляем базу только если у пользователя остались записи
+                ref = db.reference('users_publications')
+                ref.update(current_data)
+                
         else:
             logging.warning(f"Пользователь {user_id} не найден в Firebase.")
+    
     except Exception as e:
         logging.error(f"Ошибка при удалении данных {keys} пользователя {user_id} из Firebase: {e}")
 
