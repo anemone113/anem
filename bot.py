@@ -167,6 +167,17 @@ async def sendall(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Используйте команду /sendall в ответ на сообщение, которое нужно разослать.")
         return
 
+    # Получаем аргументы после команды
+    args = context.args
+    user_ids = USER_IDS  # Используем ID по умолчанию
+    
+    if args:
+        try:
+            user_ids = [int(uid.strip()) for uid in args[0].split(',')]
+        except ValueError:
+            await update.message.reply_text("Некорректный формат ID. Используйте запятую без пробелов: /sendall 12345,67890")
+            return
+    
     reply_msg = update.message.reply_to_message
     message_text = reply_msg.text or reply_msg.caption  # Текст из сообщения
     photo = reply_msg.photo[-1] if reply_msg.photo else None  # Последнее фото
@@ -178,7 +189,7 @@ async def sendall(update: Update, context: CallbackContext) -> None:
 
     success_count, fail_count = 0, 0
 
-    for user_id in USER_IDS:
+    for user_id in user_ids:
         try:
             if photo:
                 await context.bot.send_photo(
@@ -186,14 +197,16 @@ async def sendall(update: Update, context: CallbackContext) -> None:
                     photo=photo.file_id,
                     caption=message_text,
                     parse_mode=None,  # Убираем HTML, так как передаем `entities`
-                    caption_entities=entities  # Восстанавливаем форматирование
+                    caption_entities=entities,  # Восстанавливаем форматирование
+                    disable_web_page_preview=True  # Отключаем превью ссылок в подписи
                 )
             else:
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=message_text,
                     parse_mode=None,  # Отключаем `parse_mode`, так как передаем `entities`
-                    entities=entities
+                    entities=entities,
+                    disable_web_page_preview=True  # Отключаем превью ссылок в тексте
                 )
             success_count += 1
         except Exception as e:
