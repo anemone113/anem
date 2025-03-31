@@ -113,7 +113,7 @@ user_models = {}
 waiting_for_forward = {}
 waiting_for_vk = {}
 waiting_for_caption = {}
-waiting_for_r = {}
+waiting_for_twitter = {}
 waiting_for_coordinates = {} 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
