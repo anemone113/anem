@@ -113,7 +113,7 @@ user_models = {}
 waiting_for_forward = {}
 waiting_for_vk = {}
 waiting_for_caption = {}
-waiting_for_twitter = {}
+waiting_for_r = {}
 waiting_for_coordinates = {} 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -1051,8 +1051,8 @@ async def post_by_twitter_link(link: str, update: Update, context: CallbackConte
         ("extractor", "twitter"),
         "cookies",
         {
-            "auth_token": "fd1e23136ae4e314ee6ceb66417372789a8fe765",
-            "ct0": "e31a62a41efa01133e55e909e88aa633d90b6a545c23d56de445aa66e6d90e3fef298fee1541f02d71800ddd9dee89760cdfee155ea4f994ab601d34aac361a87cced5b56ee54bc59b7615e823e11bef"
+            "auth_token": "14dc2005e2c4ce2071f8e31f418f2d185de0648f",
+            "ct0": "e3df52bb9fd9f1dff00dce33bfd6d464c3740965add3138be81820e2a294dbf644097d2d43c9fb202f84f3419ceb0d3b44fe727e7353edc2fcb716bf4e8a60bf7a69d9898a62649c429b10ddadf4699c"
         }
     )
     # Устанавливаем путь для сохранения файлов
