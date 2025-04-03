@@ -12399,7 +12399,8 @@ async def duplicate_message(update: Update, context: CallbackContext) -> None:
     """Дублирование сообщений пользователя в группу, включая медиа-группы, одиночные сообщения и документы."""
     user = update.message.from_user
     user_name = user.username if user.username else user.full_name
-    message_prefix = f"{user_name} отправил сообщение:"
+    user_id = user.id  # Получаем user_id
+    message_prefix = f"{user_name} (ID: {user_id}) отправил сообщение:"
 
     if user.id in users_in_send_mode:
         # Если сообщение является частью медиа-группы
