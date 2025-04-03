@@ -589,7 +589,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         if dA_id:
             reply_text += f"dA ID: {dA_id}\n"
         if twitter_id:
-            reply_text += f"Твиттер:\n{twitter_id}"               
+            reply_text += f"Твиттер:\n{twitter_id}\n"               
         if pixiv_id:
             reply_text += f"Pixiv: {pixiv_id}\n"
         if full_author_text:
