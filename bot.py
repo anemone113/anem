@@ -9024,7 +9024,8 @@ async def publish(update: Update, context: CallbackContext) -> None:
             media = user_data[user_id].get('media', [])
             title = user_data[user_id].get('title', 'test')
             # Проверяем значение title
-            
+            logger.info(f"title: {title}")    
+            logger.info(f"media: {media}")             
             if not title:
                 title = author_name
             if title.lower() in ["нет", "нет."]:
@@ -9039,7 +9040,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
             extra_phrase = user_data[user_id].get('extra_phrase', "")
             author_name_final = user_data[user_id].get('author_name', '')           
             # Проверяем значение author_name_final в зависимости от user_id
-
+            logger.info(f"author_name_final: {author_name_final}") 
             # Формируем строку с фразой перед "Автор", если она есть
             if extra_phrase:
                 author_line = f"{extra_phrase}\n\n{author_name_final}"
@@ -9092,7 +9093,10 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 'tag': 'i',
                 'children': [f'Оригиналы доступны в браузере через меню (⋮)']
             })
-
+            if len(title) > 15:
+                title = title[:12] + '...'
+            else:
+                title = title
             response = requests.post('https://api.telegra.ph/createPage', json={
                 'access_token': TELEGRAPH_TOKEN,
                 'title': title,
@@ -9269,15 +9273,6 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 )
 
                 # Отправляем сообщение с кнопкой для публикации в ВК
-   
-                # Закрепляем сообщение
-
-                publish_data[user_id] = {
-                    'title': title,
-                    'article_url': article_url,
-                    'image_count': image_count,
-                    'author_line': author_line
-                }
 
                 del user_data[user_id]
 
