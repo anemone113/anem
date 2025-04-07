@@ -67,7 +67,7 @@ def load_context_from_firebase():
         json_context = ref_context.get()
         if json_context:
             for user_id, context_list in json_context.items():
-                user_contexts[int(user_id)] = deque(context_list, maxlen=500)
+                user_contexts[int(user_id)] = deque(context_list, maxlen=150)
 
         # Загружаем роли с вложенной структурой
         json_roles = ref_roles.get()
@@ -742,7 +742,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
 
 async def get_relevant_context(user_id):
     """Получает контекст для пользователя."""
-    context = user_contexts.get(user_id, deque(maxlen=500))
+    context = user_contexts.get(user_id, deque(maxlen=150))
     unique_context = list(dict.fromkeys(context)) 
     
     # Используем роль пользователя, если она есть, иначе стандартную роль
@@ -773,7 +773,7 @@ from datetime import datetime, timedelta
 def add_to_context(user_id, message, message_type):
     """Добавляет сообщение с меткой времени в контекст пользователя, избегая повторов."""
     if user_id not in user_contexts:
-        user_contexts[user_id] = deque(maxlen=500)  # Максимум 700 сообщений
+        user_contexts[user_id] = deque(maxlen=150)  # Максимум 150 сообщений
     
     # Добавляем 3 часа к текущему времени
     timestamp = (datetime.now() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
@@ -1509,7 +1509,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     system_instruction = (
         f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться. "
         f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}. "
-        f"Конструкции вроде bot_response или времени в контексте диалога служат только для упорядочивания истории, ни в коем случае не используй их в своих ответах"              
+        f"Конструкции вроде bot_response или user_send_text служат только для структурирования истории диалога, ни в коем случае не используй их в своих ответах"              
     )
 
     logging.info(f"system_instruction: {system_instruction}")
