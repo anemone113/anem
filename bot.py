@@ -8607,11 +8607,16 @@ async def convert_image_repost(photo_url: str):
                 
                 # Определяем MIME-тип файла из заголовков ответа
                 content_type = response.headers.get('Content-Type', '')
-                
+                logging.info(f"content_type: {content_type}")                
                 # Если файл - GIF, возвращаем его без изменений
                 if content_type == 'image/gif':
                     gif_data = await response.read()
                     return io.BytesIO(gif_data)  # Возвращаем как файл в памяти
+
+                if content_type.startswith("video/"):
+                    gif_data = await response.read()
+                    return io.BytesIO(gif_data)  # Возвращаем как файл в памяти
+
 
                 # Если это не GIF, продолжаем обработку
                 img_data = await response.read()
@@ -10883,16 +10888,26 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                                 else:
                                     caption_to_send = caption
                                 
-                                # Отправляем файл как документ (если это GIF) или фото
-                                if file_id.endswith('.gif') or media_type == "url" and file_id.lower().endswith('.gif'):
-                                    media_group.append(
-                                        InputMediaDocument(
-                                            media=file_id,
-                                            caption=caption_to_send,
+                                file_id_lower = file_id.lower()
+                                if file_id_lower.endswith('.gif') or file_id_lower.endswith('.mp4'):
+                                    # Обработка gif/mp4 через process_image и отправка как animation
+                                    try:
+                                        processed_image, is_gif = await process_image(file_id)
+                                        if not processed_image:
+                                            raise Exception("Failed to process gif/mp4")
+
+                                        if is_gif:
+                                            await query.message.reply_text("Gif обрабатывается, ожидайте...\n\nВ боте GIF будет отображаться в сжатом виде...")
+
+                                        message = await query.message.reply_animation(
+                                            animation=processed_image,
+                                            filename="animation.gif",
+                                            caption=caption,
                                             parse_mode=parse_mode
                                         )
-                                    )
-                                else:
+                                    except Exception as e:
+                                        logger.error(f"Ошибка при отправке gif/mp4: {e}")
+                                elif file_id_lower.endswith('.jpg') or file_id_lower.endswith('.jpeg') or file_id_lower.endswith('.png') or media_type == 'file_id':
                                     media_group.append(
                                         InputMediaPhoto(
                                             media=file_id,
@@ -10900,9 +10915,15 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                                             parse_mode=parse_mode
                                         )
                                     )
-                            else:
-                                if 'caption' in media_data:
-                                    captions_only.append(media_data['caption'])
+                                else:
+                                    # fallback — если ничего не подошло, можно попробовать отправить как документ
+                                    media_group.append(
+                                        InputMediaDocument(
+                                            media=file_id,
+                                            caption=caption_to_send,
+                                            parse_mode=parse_mode
+                                        )
+                                    )
 
                     elif isinstance(media, dict):
                         for _, media_data in media.items():
@@ -10923,15 +10944,26 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                                 else:
                                     caption_to_send = caption
                                 
-                                if file_id.endswith('.gif') or media_type == "url" and file_id.lower().endswith('.gif'):
-                                    media_group.append(
-                                        InputMediaDocument(
-                                            media=file_id,
-                                            caption=caption_to_send,
+                                file_id_lower = file_id.lower()
+                                if file_id_lower.endswith('.gif') or file_id_lower.endswith('.mp4'):
+                                    # Обработка gif/mp4 через process_image и отправка как animation
+                                    try:
+                                        processed_image, is_gif = await process_image(file_id)
+                                        if not processed_image:
+                                            raise Exception("Failed to process gif/mp4")
+
+                                        if is_gif:
+                                            await query.message.reply_text("Gif обрабатывается, ожидайте...\n\nВ боте GIF будет отображаться в сжатом виде...")
+
+                                        message = await query.message.reply_animation(
+                                            animation=processed_image,
+                                            filename="animation.gif",
+                                            caption=caption,
                                             parse_mode=parse_mode
                                         )
-                                    )
-                                else:
+                                    except Exception as e:
+                                        logger.error(f"Ошибка при отправке gif/mp4: {e}")
+                                elif file_id_lower.endswith('.jpg') or file_id_lower.endswith('.jpeg') or file_id_lower.endswith('.png') or media_type == 'file_id':
                                     media_group.append(
                                         InputMediaPhoto(
                                             media=file_id,
@@ -10939,9 +10971,15 @@ async def handle_view_scheduled(update: Update, context: CallbackContext) -> Non
                                             parse_mode=parse_mode
                                         )
                                     )
-                            else:
-                                if 'caption' in media_data:
-                                    captions_only.append(media_data['caption'])
+                                else:
+                                    # fallback — если ничего не подошло, можно попробовать отправить как документ
+                                    media_group.append(
+                                        InputMediaDocument(
+                                            media=file_id,
+                                            caption=caption_to_send,
+                                            parse_mode=parse_mode
+                                        )
+                                    )
                     
                     # Отправка медиа-группы
                     if media_group:
