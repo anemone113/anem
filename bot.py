@@ -8663,6 +8663,7 @@ async def process_image(photo_url):
     проверяет разрешение и размер, применяет необходимые преобразования.
     GIF-файлы остаются без изменений.
     """
+    logger.info("photo_url: {photo_url}")    
     try:
         # Загрузка изображения из URL
         async with aiohttp.ClientSession() as session:
@@ -8675,7 +8676,6 @@ async def process_image(photo_url):
 
         # Открываем изображение
         img = Image.open(io.BytesIO(img_data))
-        logger.info("img: {img}")
         # Если формат GIF, возвращаем исходные данные
         if img.format == "GIF":
             logger.info("Image is a GIF, returning original data")
