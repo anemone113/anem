@@ -8675,7 +8675,7 @@ async def process_image(photo_url):
 
         # Открываем изображение
         img = Image.open(io.BytesIO(img_data))
-
+        logger.info("img: {img}")
         # Если формат GIF, возвращаем исходные данные
         if img.format == "GIF":
             logger.info("Image is a GIF, returning original data")
