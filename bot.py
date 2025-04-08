@@ -8657,69 +8657,155 @@ async def convert_image_repost(photo_url: str):
         return None
 
 
+# --- Настройка логирования (замените на ваш реальный логгер) ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+# --- ---
+
 async def process_image(photo_url):
     """
-    Загружает изображение, конвертирует его в формат JPG,
-    проверяет разрешение и размер, применяет необходимые преобразования.
-    GIF-файлы остаются без изменений.
+    Асинхронно загружает и обрабатывает изображение с URL.
+
+    - Проверяет, является ли изображение GIF (по Content-Type или формату).
+      Если да, возвращает исходные данные GIF.
+    - Если не GIF:
+        - Конвертирует в RGB (если необходимо).
+        - Уменьшает размер, если одна из сторон больше max_dimension.
+        - Сохраняет как JPEG.
+        - Если размер JPEG превышает max_file_size, снижает качество.
+        - Если размер все еще превышает лимит, дополнительно уменьшает
+          изображение и сохраняет с пониженным качеством.
+    - Возвращает BytesIO с данными изображения и флаг is_gif (True/False).
+    - В случае ошибки возвращает (None, False).
     """
-    logger.info("photo_url: {photo_url}")    
+    logger.info(f"Processing photo_url: {photo_url}")
+    img_data = None # Инициализируем на случай ошибки до чтения данных
+
     try:
-        # Загрузка изображения из URL
+        # 1. Загрузка изображения
         async with aiohttp.ClientSession() as session:
             async with session.get(photo_url) as response:
                 logger.info(f"HTTP status code for {photo_url}: {response.status}")
-                if response.status == 200:
-                    img_data = await response.read()
-                else:
-                    raise Exception("Failed to fetch image from URL")
-
-        # Открываем изображение
-        img = Image.open(io.BytesIO(img_data))
-        # Если формат GIF, возвращаем исходные данные
-        if img.format == "GIF":
-            logger.info("Image is a GIF, returning original data")
+                if response.status != 200:
+                    # Используем f-string для более информативного сообщения
+                    raise Exception(f"Failed to fetch image from URL {photo_url}. Status: {response.status}")
+                content_type = response.headers.get("Content-Type", "").lower()
+                img_data = await response.read()
+                logger.info(f"Downloaded {len(img_data)} bytes. Content-Type: {content_type}")
+        if content_type.startswith("video/"):
+            logger.info("Content-Type is video/* — treating as animated GIF / video")
             output = io.BytesIO(img_data)
-            output.seek(0)
             return output, True
+        # 2. Проверка на GIF по Content-Type (первый и самый быстрый способ)
+        if "gif" in content_type:
+            logger.info("Image is a GIF (based on Content-Type), returning original data")
+            output = io.BytesIO(img_data)
+            # output.seek(0) # seek(0) не обязателен для нового BytesIO
+            return output, True  # Важно: Возвращаемся СРАЗУ ЖЕ
 
-        # Конвертация в формат JPEG (если не JPEG)
-        if img.mode in ("RGBA", "P"):
+        # 3. Попытка открыть изображение с помощью Pillow
+        # Это нужно, если Content-Type неверный или отсутствует,
+        # а также для получения формата и свойств изображения.
+        try:
+            # Используем контекстный менеджер для BytesIO
+            with io.BytesIO(img_data) as img_stream:
+                 img = Image.open(img_stream)
+                 # Обязательно загружаем данные, чтобы BytesIO не закрылся раньше времени
+                 img.load()
+        except Exception as open_exc:
+            # Если Pillow не может открыть файл, значит формат не поддерживается или файл поврежден
+            # Логируем ОРИГИНАЛЬНУЮ ошибку Pillow для диагностики
+            logger.error(f"Pillow failed to open image data from {photo_url}: {open_exc}")
+            # Создаем новое, более понятное исключение, но сохраняем исходное
+            raise Exception(f"Pillow cannot identify image file from {photo_url}") from open_exc
+
+        # 4. Проверка на GIF по формату, определенному Pillow
+        # (на случай, если Content-Type был неверным)
+        if img.format == "GIF":
+            logger.info("Image is a GIF (based on Pillow format detection), returning original data")
+            output = io.BytesIO(img_data)
+            # output.seek(0) # Не обязательно
+            return output, True # Важно: Возвращаемся СРАЗУ ЖЕ
+
+        # --- Если код дошел сюда, изображение ТОЧНО не GIF ---
+
+        # 5. Обработка не-GIF изображений
+        logger.info(f"Processing non-GIF image (Format: {img.format}, Mode: {img.mode}). Original size: {img.width}x{img.height}")
+
+        # Конвертация в RGB (для совместимости с JPEG)
+        if img.mode in ("RGBA", "P"): # 'P' - палитра (часто в PNG, GIF)
+            logger.info(f"Converting image mode from {img.mode} to RGB")
             img = img.convert("RGB")
 
-        # Уменьшение разрешения, если большая сторона > 2300px
+        # Изменение размера, если изображение слишком большое
         max_dimension = 2500
         if max(img.width, img.height) > max_dimension:
             scale = max_dimension / max(img.width, img.height)
             new_size = (int(img.width * scale), int(img.height * scale))
+            logger.info(f"Resizing image from {img.size} to {new_size}")
+            # Используем LANCZOS (или ANTIALIAS в старых версиях Pillow) для лучшего качества
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
-        # Сохраняем изображение в буфер памяти и проверяем размер
+        # 6. Сохранение в JPEG с контролем размера файла
         output = io.BytesIO()
-        img.save(output, format="JPEG", quality=100)
+        jpeg_quality = 100 # Начинаем с максимального качества
+        img.save(output, format="JPEG", quality=jpeg_quality)
+        logger.info(f"Saved as JPEG (Q={jpeg_quality}). Size: {len(output.getvalue()) / 1024:.2f} KB")
+
+        max_file_size = 2 * 1024 * 1024 # 2 MB
+
+        # Попытка №2: Снижение качества, если размер превышен
+        if output.tell() > max_file_size: # Используем output.tell() т.к. seek(0) не делали
+            jpeg_quality = 85
+            logger.info(f"JPEG size exceeds limit ({max_file_size / 1024 / 1024 :.1f} MB). Trying lower quality (Q={jpeg_quality}).")
+            output = io.BytesIO() # Создаем новый объект BytesIO
+            img.save(output, format="JPEG", quality=jpeg_quality)
+            logger.info(f"Saved as JPEG (Q={jpeg_quality}). Size: {len(output.getvalue()) / 1024:.2f} KB")
+
+            # Попытка №3: Дополнительное уменьшение размера, если все еще слишком большой
+            if output.tell() > max_file_size:
+                logger.info(f"JPEG size still exceeds limit. Resizing further.")
+                # Рассчитываем масштаб на основе текущего размера файла (с Q=85)
+                # Это приблизительный расчет, так как сжатие JPEG нелинейно
+                current_size_bytes = output.tell()
+                scale = (max_file_size / current_size_bytes) ** 0.5 # Корень для 2D масштабирования
+
+                # Уменьшаем текущие размеры изображения (которые могли быть уже уменьшены ранее)
+                new_width = max(1, int(img.width * scale)) # Не допускаем нулевого размера
+                new_height = max(1, int(img.height * scale))
+                new_size = (new_width, new_height)
+
+                logger.info(f"Further resizing image from {img.size} to {new_size}")
+                img_resized_further = img.resize(new_size, Image.Resampling.LANCZOS)
+
+                output = io.BytesIO() # Снова новый объект
+                img_resized_further.save(output, format="JPEG", quality=jpeg_quality) # Используем то же качество 85
+                logger.info(f"Resized and saved as JPEG (Q={jpeg_quality}). Final size: {len(output.getvalue()) / 1024:.2f} KB")
+
+                # Финальная проверка (опционально: можно выдать ошибку, если все равно не влезло)
+                if output.tell() > max_file_size:
+                     logger.error(f"Image size STILL exceeds limit ({output.tell()} bytes) after resizing and quality reduction. URL: {photo_url}")
+                     # Можно либо вернуть этот файл (как сейчас), либо вернуть None/вызвать Exception
+                     # raise Exception("Failed to reduce image size below the limit after all attempts.")
+
+        # Устанавливаем позицию в начало перед возвратом
         output.seek(0)
-        
-        # Проверка размера файла (если > 2MB, сжимаем)
-        max_file_size = 2 * 1024 * 1024  # 2MB
-        if len(output.getvalue()) > max_file_size:
-            # Попробуем снизить качество
-            output = io.BytesIO()
-            img.save(output, format="JPEG", quality=85)
-            output.seek(0)
+        return output, False # Возвращаем обработанный JPEG
 
-            # Если файл всё ещё больше 2MB, уменьшаем разрешение
-            if len(output.getvalue()) > max_file_size:
-                scale = (max_file_size / len(output.getvalue())) ** 0.5
-                new_size = (int(img.width * scale), int(img.height * scale))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-                output = io.BytesIO()
-                img.save(output, format="JPEG", quality=85)
-                output.seek(0)
-
-        return output, False  # Возвращаем обработанное изображение и флаг is_gif=False
+    # Блок except должен быть снаружи основного блока try/except для загрузки,
+    # чтобы ловить и ошибки загрузки, и ошибки обработки Pillow.
+    except aiohttp.ClientError as e:
+         # Ошибка сети или HTTP
+         logger.error(f"Network or HTTP error fetching image {photo_url}: {e}")
+         return None, False
     except Exception as e:
-        logger.error(f"Error processing image: {e}")
-        return None, False
+        # Ловим все остальные ошибки (включая ошибки Pillow, ошибки конвертации и т.д.)
+        # Используем exc_info=True для полного трейсбека в логах
+        logger.error(f"Error processing image {photo_url}: {e}", exc_info=True)
+        return None, False # Сигнализируем об ошибке
 
 
 
