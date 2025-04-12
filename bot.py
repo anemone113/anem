@@ -2839,7 +2839,8 @@ async def choose_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌃 FLUX", callback_data='category_🌃flux')],
         [InlineKeyboardButton("💡 others", callback_data='category_💡others')],
         [InlineKeyboardButton(f"🎨 Google Imagen 3{imagen_selected}", callback_data='select_imagen3')],        
-        [InlineKeyboardButton("Таблица моделей и примеры", callback_data='examples_table')]        
+        [InlineKeyboardButton("Таблица моделей и примеры", callback_data='examples_table')],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancelmodel")]               
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -2916,7 +2917,7 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     # Разделитель
-    buttons.append([InlineKeyboardButton("———————————", callback_data="none")])
+    buttons.append([InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="none")])
 
     # Карта приоритетных моделей для разных категорий
     priority_models = {
@@ -2955,8 +2956,9 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append(row)
     
     # Нижний разделитель
-    buttons.append([InlineKeyboardButton("———————————", callback_data="none")])
-    
+    buttons.append([InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="none")])
+
+    buttons.append([InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')])    
     # Кнопка "Отмена"
     buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancelmodel")])
 
@@ -2970,6 +2972,9 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.delete()
+    
+    # Вызов run_gpt после удаления сообщения
+    await run_gpt(update, context)
 
 
 # Обработчик выбора модели
@@ -3671,7 +3676,6 @@ def split_html_text(text: str, max_caption_length: int, max_message_length: int)
 
 
 
-
 async def choose_preset(update, context):
     """Отправляет кнопки с пресетами пользователю."""
     user_id = update.effective_user.id
@@ -3691,6 +3695,7 @@ async def choose_preset(update, context):
 
     # Группируем кнопки пресетов по две в ряд и добавляем кнопку закрыть внизу
     keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    keyboard.append([InlineKeyboardButton("🖼 Сменить модель", callback_data='choose_modele')])    
     keyboard.append(close_button)  # Добавляем кнопку закрыть последней строкой
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -3716,12 +3721,12 @@ async def choose_preset(update, context):
 
 
 
-
 # Обработчик для кнопки закрыть
 async def handle_presetclose_button(update, context):
     query = update.callback_query
     await query.message.delete()  # Удаляем сообщение
     await query.answer()  # Подтверждаем обработку callback
+    await run_gpt(update, context)
 
 async def preset_callback(update, context):
     """Обрабатывает выбор пресета."""
