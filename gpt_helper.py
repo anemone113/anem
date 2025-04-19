@@ -657,8 +657,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
     relevant_context = await get_relevant_context(user_id) if use_context else ""
        
     system_instruction = (
-        f"Ты в чате играешь роль: {selected_role}. "
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
+        f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться. "
     )
 
     # Исключаем дубли текущего сообщения в relevant_context
@@ -667,6 +666,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
 
     # Формируем контекст с текущим запросом
     context = (
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"        
         f"Собеседник прислал тебе изображение "     
         f" С подписью:\n{query}"
         if query else
@@ -1508,7 +1508,6 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     relevant_context = await get_relevant_context(user_id) if use_context else ""
     system_instruction = (
         f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться. "
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}. "
         f"Конструкции вроде bot_response или user_send_text служат только для структурирования истории диалога, ни в коем случае не используй их в своих ответах"              
     )
 
@@ -1519,6 +1518,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
 
     # Формируем контекст с текущим запросом
     context = (
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}. "        
         f"Текущий запрос:\n{query}"     
     )
 
