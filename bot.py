@@ -83,7 +83,7 @@ import logging
 import aiohttp
 import wikipediaapi  # Импортируем библиотеку
 import wikipedia
-from telegram.error import Forbidden
+from telegram.error import Forbidden, TelegramError, TimedOut
 from telegram.helpers import escape, mention_html
 from huggingface_hub import AsyncInferenceClient
 import time
@@ -5248,24 +5248,34 @@ async def text_plant_help_with_gpt(update, context):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             # Отправляем все части, а кнопки прикрепляем только к последней
+            # Отправляем все части, а кнопки прикрепляем только к последней
             for i, part in enumerate(text_parts):
                 if i == 0:  # Первая часть заменяет "Запрос принят..."
-                    await processing_message.edit_text(
+                    if len(text_parts) == 1:
+                        # Если это единственная часть — прикрепляем кнопку прямо сюда
+                        await processing_message.edit_text(
+                            part,
+                            reply_markup=reply_markup,
+                            parse_mode='MarkdownV2'
+                        )
+                        return
+                    else:
+                        await processing_message.edit_text(
+                            part,
+                            parse_mode='MarkdownV2'
+                        )
+                elif i == len(text_parts) - 1:
+                    # Последняя часть, добавляем кнопку
+                    await update.callback_query.message.reply_text(
                         part,
+                        reply_markup=reply_markup,
                         parse_mode='MarkdownV2'
                     )
-                else:  # Остальные части отправляются как новые сообщения
+                else:
                     await update.callback_query.message.reply_text(
                         part,
                         parse_mode='MarkdownV2'
                     )
-
-            # Добавляем кнопку в последнем сообщении
-            await update.callback_query.message.reply_text(
-                text_parts[-1],
-                reply_markup=reply_markup,
-                parse_mode='MarkdownV2'
-            )
 
             await update.callback_query.answer()
 
@@ -5308,22 +5318,31 @@ async def mushrooms_gpt(update, context):
             # Отправляем все части, а кнопки прикрепляем только к последней
             for i, part in enumerate(text_parts):
                 if i == 0:  # Первая часть заменяет "Запрос принят..."
-                    await processing_message.edit_text(
+                    if len(text_parts) == 1:
+                        # Если это единственная часть — прикрепляем кнопку прямо сюда
+                        await processing_message.edit_text(
+                            part,
+                            reply_markup=reply_markup,
+                            parse_mode='MarkdownV2'
+                        )
+                        return
+                    else:
+                        await processing_message.edit_text(
+                            part,
+                            parse_mode='MarkdownV2'
+                        )
+                elif i == len(text_parts) - 1:
+                    # Последняя часть, добавляем кнопку
+                    await update.callback_query.message.reply_text(
                         part,
+                        reply_markup=reply_markup,
                         parse_mode='MarkdownV2'
                     )
-                else:  # Остальные части отправляются как новые сообщения
+                else:
                     await update.callback_query.message.reply_text(
                         part,
                         parse_mode='MarkdownV2'
                     )
-
-            # Добавляем кнопку в последнем сообщении
-            await update.callback_query.message.reply_text(
-                text_parts[-1],
-                reply_markup=reply_markup,
-                parse_mode='MarkdownV2'
-            )
 
             await update.callback_query.answer()
 
@@ -6280,11 +6299,24 @@ async def recognize_plant_automatically(update: Update, context: CallbackContext
                 return []    
 
 
+async def send_buttons_after_media(query):
+    keyboard = [
+        [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='scientific_gpt')],
+        [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],         
+        [InlineKeyboardButton("Подробнее об этом растении", callback_data='gpt_plants_more')],         
+        [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],        
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.reply_text(
+        "Для занесения этого растения в список ваших растений, добавления на карту, либо для получения более подробной информации об этом растении и уходе за ним, воспользуйтесь кнопками ниже. Либо отправьте следующее изображение",
+        reply_markup=reply_markup
+    )
+
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
-    plant_key = query.data  # Получаем callback_data, например 'plant_0'
-    
-
+    plant_key = query.data
 
     plant_data = context.user_data.get(plant_key)
     if plant_data:
@@ -6293,74 +6325,59 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         context.user_data['scientific_name'] = scientific_name
 
         if isinstance(common_names, str):
-            common_names = [common_names]  # Преобразуем в список, если это строка
-        
+            common_names = [common_names]
+
         wikipedia_link, article_title = await get_wikipedia_link(scientific_name, common_names)
 
         description = ""
         if wikipedia_link:
             try:
-                # Получаем краткое описание статьи по найденному названию статьи
                 summary = wikipedia.summary(article_title, sentences=12)
                 description += f"{(summary)}\n\n"
             except Exception as e:
                 logger.error(f"Error fetching summary for {article_title}: {e}")
                 description += "Краткое описание недоступно\n\n"
         else:
-
             description = "\n\nИнформация по данному растению не найдена\n\n"
 
         images = plant_data.get('images', [])
-
+        media = []
 
         if images:
-            media = []  # Список для хранения объектов медиа
             for idx, img in enumerate(images):
                 img_url = img['url']['o'] if 'url' in img else None
                 if img_url:
                     if idx == 0:
-                        # Подготавливаем подпись и добавляем в лог
                         caption = (
                             f"Растение: {escape_markdown_v2(scientific_name)}\n"
                             f"Общие названия: {escape_markdown_v2(', '.join(common_names))}\n"
                             f"{truncate_text_with_link(description, 300, wikipedia_link, scientific_name)}"
                         )
-
                         media.append(InputMediaPhoto(media=img_url, caption=caption))
                     else:
                         media.append(InputMediaPhoto(media=img_url))
 
             if media:
-
-                
                 try:
-                    await query.message.reply_media_group(media)  # Отправляем медиагруппу
-
+                    await query.message.reply_media_group(media)
+                except TimedOut as e:
+                    logger.warning("⚠️ Timeout при отправке медиагруппы, но возможно она всё же дойдёт.")
                 except Exception as e:
-
+                    logger.error(f"Ошибка отправки медиагруппы: {e}")
                     await query.message.reply_text("Ошибка при отправке изображений. Проверьте форматирование текста.")
+
+                # В любом случае — ждём
+                await asyncio.sleep(3)
             else:
                 await query.message.reply_text("Изображения не найдены")
         else:
             await query.message.reply_text("Изображений нет")
-        
-        # Отправляем сообщение с кнопками после медиа
-        keyboard = [
-            [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='scientific_gpt')],
-            [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],         
-            [InlineKeyboardButton("Подробнее об этом растении", callback_data='gpt_plants_more')],         
-            [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],        
-            [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.message.reply_text(
-            "Для занесения этого растения в список ваших растений, добавления на карту, либо для получения более подробной информации об этом растении и уходе за ним, воспользуйтесь кнопками ниже. Либо отправьте следующее изображение",
-            reply_markup=reply_markup  # Добавляем кнопку к этому сообщению
-        )
+
+        # Только после медиа — отправляем кнопки
+        await send_buttons_after_media(query)
     else:
         await query.message.reply_text("Данные о растении не найдены")
-    
+
     await query.answer()
 
 
@@ -6368,7 +6385,6 @@ async def gpt_plants_more_handler(update, context):
     """Асинхронный обработчик для запроса ухода за растением по научному названию."""
     user_id = update.callback_query.from_user.id
     scientific_name = context.user_data.get("scientific_name")
-    await update.callback_query.answer()
 
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
@@ -6397,22 +6413,45 @@ async def gpt_plants_more_handler(update, context):
 
     # Отправляем все части, а кнопки прикрепляем только к последней
     message = update.callback_query.message
+    # Отправляем все части, а кнопки прикрепляем только к последней
     for i, part in enumerate(text_parts):
         if i == 0:  # Первая часть заменяет "Запрос принят..."
-            await message.edit_text(part, parse_mode='MarkdownV2')
-        else:  # Остальные части отправляются как новые сообщения
-            await message.reply_text(part, parse_mode='MarkdownV2')
+            if len(text_parts) == 1:
+                # Если это единственная часть — прикрепляем кнопку прямо сюда
+                await message.edit_text(
+                    part,
+                    reply_markup=reply_markup,
+                    parse_mode='MarkdownV2'
+                )
+                return  # <-- Не продолжаем, чтобы не дублировать
+            else:
+                await message.edit_text(
+                    part,
+                    parse_mode='MarkdownV2'
+                )
+        elif i == len(text_parts) - 1:
+            # Последняя часть, добавляем кнопку
+            await update.callback_query.message.reply_text(
+                part,
+                reply_markup=reply_markup,
+                parse_mode='MarkdownV2'
+            )
+        else:
+            await update.callback_query.message.reply_text(
+                part,
+                parse_mode='MarkdownV2'
+            )
 
     # Добавляем кнопки только в последнем сообщении
     await message.reply_text(text_parts[-1], reply_markup=reply_markup, parse_mode='MarkdownV2')
-
+    await update.callback_query.answer()
 
 
 async def gpt_plants_help_handler(update, context):
     """Асинхронный обработчик для запроса ухода за растением по научному названию."""
     user_id = update.callback_query.from_user.id
     scientific_name = context.user_data.get("scientific_name")
-    await update.callback_query.answer()
+
 
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
@@ -6434,14 +6473,38 @@ async def gpt_plants_help_handler(update, context):
 
     # Отправляем все части, а кнопки прикрепляем только к последней
     message = update.callback_query.message
+    # Отправляем все части, а кнопки прикрепляем только к последней
     for i, part in enumerate(text_parts):
         if i == 0:  # Первая часть заменяет "Запрос принят..."
-            await message.edit_text(part, parse_mode='MarkdownV2')
-        else:  # Остальные части отправляются как новые сообщения
-            await message.reply_text(part, parse_mode='MarkdownV2')
+            if len(text_parts) == 1:
+                # Если это единственная часть — прикрепляем кнопку прямо сюда
+                await message.edit_text(
+                    part,
+                    reply_markup=reply_markup,
+                    parse_mode='MarkdownV2'
+                )
+                return  # <-- Не продолжаем, чтобы не дублировать
+            else:
+                await message.edit_text(
+                    part,
+                    parse_mode='MarkdownV2'
+                )
+        elif i == len(text_parts) - 1:
+            # Последняя часть, добавляем кнопку
+            await update.callback_query.message.reply_text(
+                part,
+                reply_markup=reply_markup,
+                parse_mode='MarkdownV2'
+            )
+        else:
+            await update.callback_query.message.reply_text(
+                part,
+                parse_mode='MarkdownV2'
+            )
 
     # Добавляем кнопки только в последнем сообщении
     await message.reply_text(text_parts[-1], reply_markup=reply_markup, parse_mode='MarkdownV2')
+    await update.callback_query.answer()
 
 def extract_rus_name(response_text):
     match = re.search(r"0\)Русские названия:(.*?)1\)Общая информация", response_text, re.DOTALL)
