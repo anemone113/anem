@@ -1044,14 +1044,8 @@ async def post_by_twitter_link(link: str, update: Update, context: CallbackConte
 
     # Установка логина и пароля для Twitter
     # Настройка аутентификации через cookies (auth_token и ct0)
-    gallery_dl.config.set(
-        ("extractor", "twitter"),
-        "cookies",
-        {
-            "auth_token": "14dc2005e2c4ce2071f8e31f418f2d185de0648f",
-            "ct0": "e3df52bb9fd9f1dff00dce33bfd6d464c3740965add3138be81820e2a294dbf644097d2d43c9fb202f84f3419ceb0d3b44fe727e7353edc2fcb716bf4e8a60bf7a69d9898a62649c429b10ddadf4699c"
-        }
-    )
+    cookies_file_path = "/etc/secrets/cookies.txt"  # путь к секретному файлу на Render
+    gallery_dl.config.set(("extractor", "twitter"), "cookies-file", cookies_file_path)
     # Устанавливаем путь для сохранения файлов
     gallery_dl.config.set((), "base-directory", save_dir)
     gallery_dl.config.set((), "directory", "")  # Отключаем подкаталоги
