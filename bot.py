@@ -6506,7 +6506,7 @@ async def save_to_my_plants(update: Update, context: CallbackContext) -> None:
         "summer": extract_watering(response_text, "Полив летом"),
         "sunlight": extract_number(response_text, "Светолюбивость"),
         "temperature": extract_avg_number(response_text, "Температура"),
-        "min_temp": extract_avg_number(response_text, "Минимальная температура"),
+        "min_temp": extract_avg_number(response_text, "Минимальная кратковременная температура"),
     }
     save_to_user_plants(user_id, scientific_name, plant_data)
     rus_name = extract_rus_name(response_text)        
@@ -6819,7 +6819,7 @@ async def gptplant_response(update, context):
         "summer": extract_watering(response_text, "Полив летом"),
         "sunlight": extract_number(response_text, "Светолюбивость"),
         "temperature": extract_avg_number(response_text, "Температура"),
-        "min_temp": extract_avg_number(response_text, "Минимальная температура"),
+        "min_temp": extract_avg_number(response_text, "Минимальная кратковременная температура"),
     }
     
     save_to_user_plants(user_id, scientific_name, plant_data)
@@ -7232,18 +7232,38 @@ async def handle_sorting(update: Update, context: CallbackContext):
     # Подтверждаем обработку нажатия кнопки
     await query.answer()
 
-def extract_watering(text, label):
-    """Извлекает среднее число полива из текста."""
-    match = re.search(fr"{label}[:\s]+(\d+)\s*раз\s*в\s*(\d+)[\-/–](\d+)", text)
-    if match:
-        numbers = list(map(int, match.groups()[1:]))  # Берём второе и третье числа (диапазон дней)
-        return sum(numbers) // len(numbers) if numbers else None
+def extract_watering(text: str, label: str) -> int | None:
+    """
+    Извлекает среднее количество дней между поливами из текста между двумя метками.
+    `label` может быть 'Полив зимой' или 'Полив летом'.
+    """
+    # Определяем границы фрагмента
+    if label == "Полив зимой":
+        pattern_start = r"4\)\s*Полив зимой.*?"
+        pattern_end = r"5\)"
+    elif label == "Полив летом":
+        pattern_start = r"5\)\s*Полив летом.*?"
+        pattern_end = r"6\)"
+    else:
+        return None
 
-    match = re.search(fr"{label}[:\s]+(\d+)\s*раз\s*в\s*(\d+)", text)
-    if match:
-        return int(match.group(2))  # Берём число дней
+    # Извлекаем нужный фрагмент текста
+    match = re.search(f"({pattern_start})(.*?)(?={pattern_end})", text, re.DOTALL)
+    if not match:
+        return None
 
-    return None
+    fragment = match.group(2)  # Только содержательная часть между метками
+
+    # Ищем все числа в диапазоне
+    numbers = list(map(int, re.findall(r"\d+", fragment)))
+    if not numbers:
+        return None
+    elif len(numbers) >= 2:
+        avg = sum(numbers[:2]) // 2
+    else:
+        avg = numbers[0]
+
+    return avg
 
 def extract_number(text, label):
     """Извлекает одно число из текста."""
