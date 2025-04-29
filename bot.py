@@ -6654,6 +6654,7 @@ async def gpt_plants_more_handler(update, context):
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
         return
+    query = update.callback_query        
     await query.answer("Ищу информацию, подождите около 10-15 секунд.", show_alert=True)
     query = (
         f"Расскажи больше про {scientific_name}, например, интересные факты, "
@@ -6722,6 +6723,7 @@ async def gpt_plants_help_handler(update, context):
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
         return
+    query = update.callback_query        
     await query.answer("Ищу информацию, подождите около 10-15 секунд.", show_alert=True)
     # Формируем запрос с научным названием
     query = f"Как ухаживать за {scientific_name}? Ответ не длиннее 200 слов"
