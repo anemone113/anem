@@ -2,7 +2,6 @@ aiohttp==3.9.3
 firebase-admin==6.5.0
 flask==3.0.3
 google-genai==1.5.0
-google-generativeai==0.8.4
 python-telegram-bot==21.10
 pytz==2024.2
 tweepy==4.15.0
