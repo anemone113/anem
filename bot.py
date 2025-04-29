@@ -6480,7 +6480,7 @@ async def save_to_my_plants(update: Update, context: CallbackContext) -> None:
     best_match = max(recognized_plants, key=lambda plant: plant['score'])
     scientific_name = best_match.get('species', {}).get('scientificNameWithoutAuthor', 'Неизвестное растение')
     query = (
-        f"Дай информацию по растению с названием {scientific_name}, по следующим пунктам:\n"
+        f"Дай информацию по растению с названием {scientific_name}, твой ответ должен быть не длиннее 150 слов, по следующим пунктам:\n"
         "0) Русскоязычные названия, от самого популярного до самых редких, если есть. Этот пункт начни с фразы \"0)Русские названия:\" В ответе перечисли только название или названия без лишних пояснений\n"
         "1) Общая краткая информация и описание, как выглядит, не длиннее 30 слов. Этот пункт начни с фразы \"1)Общая информация\"\n"
         "2) Где обычно растёт, на какой территории и в какой местности, не длиннее 15 слов. Этот пункт начни с фразы \"2)Произрастает:\"\n"
@@ -6793,7 +6793,7 @@ async def gptplant_response(update, context):
 
     # Формируем запрос с научным названием
     query = (
-        f"Дай информацию по растению с названием {scientific_name}, по следующим пунктам:\n"
+        f"Дай информацию по растению с названием {scientific_name}, твой ответ должен быть не длиннее 150 слов, по следующим пунктам:\n"
         "0) Русскоязычные названия, от самого популярного до самых редких, если есть. Этот пункт начни с фразы \"0)Русские названия:\" В ответе перечисли только название или названия без лишних пояснений\n"
         "1) Общая краткая информация и описание, как выглядит, не длиннее 30 слов. Этот пункт начни с фразы \"1)Общая информация\"\n"
         "2) Где обычно растёт, на какой территории и в какой местности, не длиннее 15 слов. Этот пункт начни с фразы \"2)Произрастает:\"\n"
@@ -7081,22 +7081,56 @@ async def watering_button_handler(update: Update, context: CallbackContext) -> N
 user_plant_messages = {}
 
 async def plant_callback(update: Update, context: CallbackContext):
-    """Обработчик нажатий на кнопки растений."""
+    """Обработчик нажатий на кнопки растений с обрезкой подписи."""
     query = update.callback_query
-    logging.info(f"query: {query}")    
+    # Отвечаем на запрос сразу, чтобы убрать состояние загрузки у кнопки
+    await query.answer()
+
+    logging.info(f"Получен callback-запрос: {query.data}")
     user_id = query.from_user.id
-    plant_name = query.data.split("_", 1)[1]
-    logging.info(f"plant_name: {plant_name}")   
-    plants = load_user_plants(user_id)
+
+    try:
+        # Убедимся, что формат callback_data соответствует ожидаемому ('plant_ИмяРастения')
+        # plant_name останется на английском, если ключи в load_user_plants английские
+        plant_name = query.data.split("_", 1)[1]
+    except IndexError:
+        logging.error(f"Неверный формат callback_data для пользователя {user_id}: {query.data}")
+        # Можно отправить сообщение пользователю или просто записать в лог
+        # await context.bot.send_message(chat_id=user_id, text="Произошла внутренняя ошибка.")
+        return # Прекращаем обработку, если данные некорректны
+
+    logging.info(f"Запрошено растение: {plant_name} для пользователя: {user_id}")
+    # Загружаем данные о растениях пользователя
+    plants = load_user_plants(user_id) # Предполагается, что эта функция определена где-то еще
     plant_data = plants.get(plant_name)
 
     if not plant_data:
-        await query.answer("Информация о растении не найдена.", show_alert=True)
+        logging.warning(f"Данные для растения '{plant_name}' не найдены для пользователя {user_id}")
+        # Сообщаем пользователю (можно отправить новое сообщение или отредактировать старое, если есть)
+        await context.bot.send_message(chat_id=user_id, text=f"Информация о растении '{plant_name}' не найдена.")
         return
 
     img_url = plant_data.get("img_url")
-    caption = plant_data.get("Full_text")
-    caption = re.sub(r"^0\)Русские названия:\s*", "", plant_data.get("Full_text", ""), 1)
+    full_text = plant_data.get("Full_text", "") # Получаем текст, по умолчанию пустая строка
+
+    if not img_url:
+        logging.error(f"Отсутствует URL изображения для растения '{plant_name}' у пользователя {user_id}")
+        # Обрабатываем отсутствующий URL, можно отправить только текст или сообщение об ошибке
+        await context.bot.send_message(chat_id=user_id, text=f"Ошибка: Не удалось найти изображение для '{plant_name}'.")
+        return
+
+    # --- Подготовка и обрезка подписи ---
+    # Удаляем префикс "0)Русские названия: " из начала текста
+    caption = re.sub(r"^0\)Русские названия:\s*", "", full_text, 1)
+
+    MAX_CAPTION_LENGTH = 1024 # Лимит Telegram для подписей к фото
+
+    if len(caption) > MAX_CAPTION_LENGTH:
+        logging.info(f"Подпись для '{plant_name}' слишком длинная ({len(caption)} симв.), обрезается.")
+        # Обрезаем и добавляем многоточие, оставляя место для "..." (3 символа)
+        caption = caption[:MAX_CAPTION_LENGTH - 3] + "..."
+    # --- Конец логики обработки подписи ---
+
     # Создаём кнопки "Удалить" и "Закрыть"
     keyboard = [
         [InlineKeyboardButton("❌ Удалить", callback_data=f"plantdelete_{plant_name}")],
@@ -7104,26 +7138,38 @@ async def plant_callback(update: Update, context: CallbackContext):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Удаляем предыдущее сообщение с растением, если оно было
+    # Удаляем предыдущее сообщение с растением, если оно было сохранено
+    # Это по-прежнему зависит от доступности user_plant_messages в этой области видимости
     if user_id in user_plant_messages:
+        previous_message_id = user_plant_messages.pop(user_id) # Удаляем ID из словаря перед попыткой удаления
         try:
-            await context.bot.delete_message(chat_id=user_id, message_id=user_plant_messages[user_id])
+            logging.info(f"Попытка удалить предыдущее сообщение {previous_message_id} для пользователя {user_id}")
+            await context.bot.delete_message(chat_id=user_id, message_id=previous_message_id)
         except Exception as e:
-            print(f"Ошибка при удалении сообщения: {e}")
+            # Логируем ошибку, если удаление не удалось (сообщение уже удалено, бот удален из чата и т.д.)
+            # Продолжаем выполнение, т.к. главная цель - отправить новое сообщение.
+            logging.warning(f"Не удалось удалить предыдущее сообщение {previous_message_id} для пользователя {user_id}: {e}")
 
-    # Отправляем новое сообщение с фото, подписью и кнопками
-    sent_message = await context.bot.send_photo(
-        chat_id=user_id,
-        photo=img_url,
-        caption=caption,
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.MARKDOWN
-    )
+    # Отправляем новое сообщение с фото, подписью (возможно обрезанной) и кнопками
+    try:
+        sent_message = await context.bot.send_photo(
+            chat_id=user_id,
+            photo=img_url,
+            caption=caption, # Используем возможно обрезанную подпись
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN # Убедитесь, что ваш текст размечен под Markdown, или используйте ParseMode.HTML / None
+        )
+        # Запоминаем ID нового сообщения, чтобы его можно было удалить позже
+        user_plant_messages[user_id] = sent_message.message_id
+        logging.info(f"Отправлено фото растения '{plant_name}' (сообщение {sent_message.message_id}) пользователю {user_id}")
 
-    # Запоминаем ID нового сообщения
-    user_plant_messages[user_id] = sent_message.message_id
-
-    await query.answer()
+    except Exception as e:
+        logging.error(f"Не удалось отправить фото для растения '{plant_name}' пользователю {user_id}: {e}")
+        # Информируем пользователя о сбое, если возможно
+        try:
+            await context.bot.send_message(chat_id=user_id, text=f"Не удалось отобразить информацию для '{plant_name}'. Попробуйте еще раз.")
+        except Exception as inner_e:
+             logging.error(f"Не удалось отправить сообщение об ошибке пользователю {user_id}: {inner_e}")
 
 async def plant_close_callback(update: Update, context: CallbackContext):
     """Обработчик кнопки 'Закрыть' — просто удаляет сообщение."""
