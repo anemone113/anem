@@ -5948,6 +5948,7 @@ async def plantmap_gpt(update, context):
             webapp_url2 = "https://epsg.io/map#srs=4326&x=38.371124&y=56.035226&z=9&layer=streets"            
             keyboard = [
                 [InlineKeyboardButton("Получить координаты", web_app=WebAppInfo(url=webapp_url2))],
+                [InlineKeyboardButton("Получить координаты в браузере", url=webapp_url2)],                
                 [InlineKeyboardButton("🌌В главное меню(отмена)🌌", callback_data='restart')]
             ]
 
