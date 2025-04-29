@@ -3582,84 +3582,332 @@ async def download_and_upload_image(image_path):
 
 from bs4 import BeautifulSoup
 
+
+
+
+
+
+# Определение специальных символов Markdown V2, которые нужно экранировать
+# Источник: https://core.telegram.org/bots/api#markdownv2-style
+MARKDOWN_V2_CHARS_TO_ESCAPE = r'_*[]()~`>#+-=|{}.!'
+# Регулярное выражение для поиска неэкранированных спецсимволов
+# Используем negative lookbehind (?<!) чтобы не затронуть уже экранированные символы (\)
+MD_ESCAPE_REGEX = re.compile(r'(?<!\\)([' + re.escape(MARKDOWN_V2_CHARS_TO_ESCAPE) + r'])')
+
+# Вспомогательная функция для экранирования текста для HTML внутри <pre> или <code>
+def escape_html_tags(text):
+    return html.escape(text, quote=False) # quote=False чтобы не трогать кавычки
+
+def markdown_v2_to_html(text: str) -> str:
+    """
+    Конвертирует текст с разметкой Markdown V2 в HTML, поддерживаемый Telegram.
+
+    Args:
+        text: Исходный текст с Markdown V2.
+
+    Returns:
+        Текст с HTML-тегами.
+    """
+    if not text:
+        return ""
+
+    # 0. Обработка экранированных символов Markdown
+    # Заменим \*, \_, \~ и т.д. на временные плейсхолдеры, чтобы они не мешали
+    # основным регуляркам, а затем вернем их как обычные символы.
+    escaped_placeholders = {}
+    placeholder_idx = 0
+    def escape_md_char(match):
+        nonlocal placeholder_idx
+        char = match.group(1)
+        placeholder = f"__MD_ESCAPED_{placeholder_idx}__"
+        escaped_placeholders[placeholder] = char
+        placeholder_idx += 1
+        return placeholder
+
+    text = re.sub(r'\\([' + re.escape(MARKDOWN_V2_CHARS_TO_ESCAPE) + r'])', escape_md_char, text)
+
+    # 1. Блоки кода (```language\n code ```) -> <pre><code class="language-...">code</code></pre>
+    # Или (```\n code ```) -> <pre>code</pre>
+    def replace_pre(match):
+        lang = match.group(1)
+        code = match.group(2)
+        escaped_code = escape_html_tags(code) # Экранируем HTML внутри кода
+        if lang:
+            lang = lang.strip()
+            # Telegram ожидает class="language-...", если язык указан
+            return f'<pre><code class="language-{html.escape(lang)}">{escaped_code}</code></pre>'
+        else:
+            return f'<pre>{escaped_code}</pre>'
+    # Ищем ``` возможно с языком, затем \n, затем сам код (.*?), затем \n```
+    text = re.sub(r'```(\w*)\n(.*?)(\n)?```', replace_pre, text, flags=re.DOTALL | re.MULTILINE)
+
+    # 2. Встроенный код (`code`) -> <code>code</code>
+    def replace_inline_code(match):
+        code = match.group(1)
+        escaped_code = escape_html_tags(code) # Экранируем HTML внутри кода
+        return f'<code>{escaped_code}</code>'
+    text = re.sub(r'`(.*?)`', replace_inline_code, text)
+
+    # 3. Ссылки ([text](url)) -> <a href="url">text</a>
+    def replace_link(match):
+        link_text = match.group(1)
+        url = match.group(2)
+        # Экранируем URL, особенно если там есть кавычки или другие символы
+        escaped_url = html.escape(url, quote=True)
+        # Текст ссылки НЕ экранируем здесь, т.к. он может содержать другую разметку
+        return f'<a href="{escaped_url}">{link_text}</a>'
+    # Ищем [текст_не_]](url_без_))
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_link, text)
+
+    # 4. Жирный (*text*) -> <b>text</b>
+    # Используем нежадный поиск .*? и проверяем, чтобы перед/после не было \
+    # Заменяем только если символ * не является частью плейсхолдера
+    text = re.sub(r'(?<!\\)\*(?!\s)(.*?)(?<!\s)\*(?!\\)', r'<b>\1</b>', text)
+
+    # 5. Курсив (_text_) -> <i>text</i> (в Markdown V2 _это курсив_, __это подчеркивание__)
+    # Используем нежадный поиск .*?, проверяем пробелы и экранирование
+    text = re.sub(r'(?<!\\)_(?!\s)(.*?)(?<!\s)_(?!\\)', r'<i>\1</i>', text)
+
+    # 6. Подчеркнутый (__text__) -> <u>text</u>
+    text = re.sub(r'(?<!\\)__(?!\s)(.*?)(?<!\s)__(?!\\)', r'<u>\1</u>', text)
+
+    # 7. Зачеркнутый (~text~) -> <s>text</s>
+    text = re.sub(r'(?<!\\)~(?!\s)(.*?)(?<!\s)~(?!\\)', r'<s>\1</s>', text)
+
+    # 8. Спойлер (||text||) -> <tg-spoiler>text</tg-spoiler>
+    text = re.sub(r'(?<!\\)\|\|(?!\s)(.*?)(?<!\s)\|\|(?!\\)', r'<tg-spoiler>\1</tg-spoiler>', text)
+
+    # 9. Блок цитирования (> text или >> text)
+    # Это сложнее, так как цитаты могут быть многострочными и вложенными.
+    # Простой подход: заменить строки, начинающиеся с >, на <blockquote>.
+    # Более сложный: сгруппировать последовательные строки цитат.
+    # Используем простой подход для начала, заменяя каждую строку.
+    # Замечание: Это не будет поддерживать вложенность через >>
+    # Важно: Делаем это построчно ПОСЛЕ других замен.
+    lines = text.split('\n')
+    in_blockquote = False
+    result_lines = []
+    for line in lines:
+        if line.startswith('>'):
+            quote_content = line[1:].strip()
+            if not in_blockquote:
+                result_lines.append('<blockquote>') # Используем стандартный тег здесь
+                in_blockquote = True
+            # НЕ экранируем HTML здесь, т.к. внутри цитаты может быть другая разметка
+            result_lines.append(quote_content)
+        else:
+            if in_blockquote:
+                result_lines.append('</blockquote>')
+                in_blockquote = False
+            result_lines.append(line)
+    # Закрыть blockquote, если он был последним
+    if in_blockquote:
+        result_lines.append('</blockquote>')
+
+    text = '\n'.join(result_lines)
+
+    # 10. Восстановление экранированных символов
+    for placeholder, char in escaped_placeholders.items():
+        text = text.replace(placeholder, char)
+
+    return text
+
+
 def split_html_text(text: str, max_caption_length: int, max_message_length: int):
-    # Список поддерживаемых тегов
-    SUPPORTED_TAGS = {
-        "b": "<b>",
-        "i": "<i>",
-        "blockquote": "<blockquote expandable>",
-        "code": "<code>",
-        "pre": "<pre>"
-    }
-    
-    def fix_html_tags(html):
-        """Исправляет незакрытые или незавершенные теги."""
-        soup = BeautifulSoup(html, "html.parser")
-        return str(soup)
-    
-    def analyze_and_fix_tags(part):
-        """Анализирует часть текста на наличие незакрытых или неоткрытых тегов и исправляет их."""
-        stack = []  # Стек для отслеживания открытых тегов
-        fixed_part = ""
-        
+    """
+    Разделяет текст (сначала конвертируя Markdown V2 в HTML) на части для Telegram.
+    Старается сохранить HTML-теги. Заменяет <blockquote> на <blockquote expandable>.
+    Первая часть (caption) может иметь длину до max_caption_length (если > 0).
+    Остальные части имеют длину до max_message_length.
+
+    Args:
+        text: Исходный текст (может содержать Markdown V2).
+        max_caption_length: Максимальная длина первой части (0, если caption не нужен).
+        max_message_length: Максимальная длина последующих частей.
+
+    Returns:
+        Кортеж: (caption_part: str | None, message_parts: list[str])
+                 Возвращает (None, [исходный_html]) если длина текста меньше лимитов.
+    """
+
+    # ---- Шаг 1: Конвертация Markdown V2 в HTML ----
+    html_text = markdown_v2_to_html(text)
+
+    # Базовые проверки
+    if max_message_length <= 0:
+        raise ValueError("max_message_length должен быть положительным числом.")
+    if max_caption_length < 0:
+        raise ValueError("max_caption_length не может быть отрицательным.")
+
+    # Список поддерживаемых тегов Telegram (основные)
+    # <a href="...">, <b>, <i>, <u>, <s>, <tg-spoiler>, <code>, <pre>, <blockquote>
+    # Замечание: Telegram обрабатывает атрибут class в <pre><code class="...">
+    SUPPORTED_TAGS = {"a", "b", "i", "u", "s", "tg-spoiler", "code", "pre", "blockquote"}
+
+    parts = []
+    open_tags = [] # Стек открытых тегов на момент разреза
+    current_pos = 0
+    text_len = len(html_text)
+
+    # Определяем длину первого блока
+    first_max_len = max_caption_length if max_caption_length > 0 else max_message_length
+
+    # Если текст короткий и не требует разделения
+    is_caption_needed = max_caption_length > 0
+    initial_max_len = first_max_len if is_caption_needed else max_message_length
+
+    if text_len <= initial_max_len:
+         # Применяем модификацию blockquote к единственной части
+        final_text = html_text.replace('<blockquote>', '<blockquote expandable>')
+        if is_caption_needed:
+            return final_text, []
+        else:
+             # Если caption не нужен, но текст умещается в max_message_length
+            if text_len <= max_message_length:
+                 return None, [final_text]
+            # Если caption не нужен, но текст длиннее max_message_length (но <= first_max_len, что невозможно тут)
+            # Эта ветка по идее не должна сработать при text_len <= initial_max_len
+            # Но на всякий случай - продолжаем разделение
+
+    # --- Основной цикл разделения ---
+    while current_pos < text_len:
+        max_len = first_max_len if not parts else max_message_length
+        # Предварительная позиция конца среза
+        end_pos = min(current_pos + max_len, text_len)
+        cut_pos = end_pos # Позиция фактического разреза
+
+        # Если мы не в конце текста, ищем безопасное место для разреза
+        if end_pos < text_len:
+            # Ищем ближайший пробел, \n, или конец тега (>) с конца к началу
+            safe_cut_found = False
+            # Идем назад от предполагаемого конца среза
+            for i in range(end_pos - 1, current_pos - 1, -1):
+                char = html_text[i]
+                # Безопасные точки для разреза: пробельные символы или конец тега
+                if char in (' ', '\n', '\t', '>'):
+                    # Дополнительная проверка: не находимся ли мы внутри тега <...> ?
+                    # Ищем последний '<' перед позицией i+1
+                    last_open_bracket = html_text.rfind('<', current_pos, i + 1)
+                    # Ищем последний '>' перед позицией i+1
+                    last_close_bracket = html_text.rfind('>', current_pos, i + 1)
+
+                    # Если '<' найден и он после последнего '>', значит мы внутри тега <...текст_разреза
+                    if last_open_bracket != -1 and last_open_bracket > last_close_bracket:
+                        continue # Небезопасно, ищем дальше
+
+                    cut_pos = i + 1 # Режем *после* безопасного символа
+                    safe_cut_found = True
+                    break
+                # Если встретили '<' до безопасного символа, значит мы внутри тега <tag...разрез...
+                # Это тоже небезопасно, но проверка выше должна это покрыть.
+                # Добавим явную проверку на всякий случай
+                if char == '<':
+                     # Ищем '>' после этого '<' в пределах предполагаемого среза
+                     matching_close = html_text.find('>', i, end_pos)
+                     if matching_close == -1 or matching_close > end_pos -1:
+                          # Тег не закрывается в пределах среза, резать здесь нельзя
+                          continue
+
+            # Если безопасного места не нашли (очень длинное слово/тег без пробелов),
+            # вынужденно режем по max_len.
+            if not safe_cut_found:
+                cut_pos = end_pos
+                # Можно добавить предупреждение для отладки
+                # print(f"Warning: Forced cut required near position {cut_pos}")
+
+        # --- Извлечение и обработка части ---
+        # 1. Получаем сырой фрагмент текста
+        raw_part = html_text[current_pos:cut_pos]
+
+        # 2. Формируем префикс из открытых тегов с предыдущего шага
+        prefix = "".join([f"<{tag_info['name']}{tag_info['attrs']}>" for tag_info in open_tags])
+
+        # 3. Формируем суффикс из закрывающих тегов для *этой* части
+        # Анализируем теги *внутри* raw_part, учитывая начальный стек open_tags
+        # чтобы понять, какие теги останутся открытыми в конце ЭТОГО фрагмента
+        current_part_open_tags = list(open_tags) # Копия стека на начало этого фрагмента
+        temp_open_tags_next = list(open_tags) # Стек, который перейдет на СЛЕДУЮЩИЙ шаг
+
+        # Используем простой парсер стека тегов для определения состояния *в конце* raw_part
         i = 0
-        while i < len(part):
-            if part[i] == '<':
-                # Находим конец тега
-                end_index = part.find('>', i)
-                if end_index == -1:
-                    break  # Незавершенный тег, пропускаем
-                tag = part[i:end_index + 1]
-                
-                if tag.startswith("</"):  # Закрывающий тег
-                    tag_name = tag[2:-1].split()[0]  # Извлекаем имя тега (без атрибутов)
-                    if stack and stack[-1] == tag_name:
-                        stack.pop()  # Удаляем соответствующий открывающий тег из стека
-                    else:
-                        # Если закрывающий тег без открывающего, добавляем открывающий в начало
-                        fixed_part = SUPPORTED_TAGS[tag_name] + fixed_part
-                else:  # Открывающий тег
-                    tag_name = tag[1:-1].split()[0]  # Извлекаем имя тега (без атрибутов)
-                    if tag_name in SUPPORTED_TAGS:
-                        stack.append(tag_name)  # Добавляем тег в стек
-                fixed_part += tag
-                i = end_index + 1
-            else:
-                fixed_part += part[i]
-                i += 1
-        
-        # Добавляем недостающие закрывающие теги
-        while stack:
-            tag_name = stack.pop()
-            fixed_part += f"</{tag_name}>"
-        
-        return fixed_part
-    
-    def split_with_tag_fixing(text, max_length):
-        """Разделяет текст, сохраняя целостность HTML-тегов."""
-        if len(text) <= max_length:
-            return [analyze_and_fix_tags(text)]
-        
-        # Ищем место разреза
-        cut_index = max_length
-        while cut_index > 0 and text[cut_index] not in {' ', '\n', '>', '<'}:
-            cut_index -= 1
-        
-        # Отсекаем текст и проверяем теги
-        part, remaining = text[:cut_index], text[cut_index:]
-        fixed_part = analyze_and_fix_tags(part)
-        
-        return [fixed_part] + split_with_tag_fixing(remaining, max_length)
-    
-    # Первая часть до max_caption_length
-    caption_parts = split_with_tag_fixing(text, max_caption_length)
-    caption_part = caption_parts[0]
-    remaining_text = "".join(caption_parts[1:])
-    
-    # Оставшийся текст делим на max_message_length
-    message_parts = split_with_tag_fixing(remaining_text, max_message_length) if remaining_text else []
-    
+        while i < len(raw_part):
+            if raw_part[i] == '<':
+                end_tag_char_index = raw_part.find('>', i)
+                if end_tag_char_index != -1:
+                    tag_content = raw_part[i+1:end_tag_char_index]
+                    tag_parts = tag_content.split(maxsplit=1)
+                    tag_name = tag_parts[0].lower()
+
+                    is_closing_tag = tag_name.startswith('/')
+                    actual_tag_name = tag_name[1:] if is_closing_tag else tag_name
+                    attributes = ""
+                    if not is_closing_tag and len(tag_parts) > 1:
+                         attributes = " " + tag_parts[1]
+
+                    # Проверяем, поддерживается ли тег
+                    if actual_tag_name in SUPPORTED_TAGS:
+                        if is_closing_tag:
+                            # Закрывающий тег: пытаемся снять со стека
+                            if temp_open_tags_next and temp_open_tags_next[-1]['name'] == actual_tag_name:
+                                temp_open_tags_next.pop()
+                        # Проверяем самозакрывающиеся (хотя для HTML5 это редкость, кроме <br>, <hr> и т.д., которых нет в SUPPORTED_TAGS)
+                        # и пропускаем их добавление в стек
+                        elif not tag_content.endswith('/'):
+                             # Открывающий тег: добавляем в стек
+                             temp_open_tags_next.append({'name': actual_tag_name, 'attrs': attributes})
+
+                    i = end_tag_char_index # Переходим за '>'
+                else:
+                    # Незакрытый '<' в конце фрагмента? Игнорируем или обрабатываем как текст.
+                    # Безопаснее остановиться здесь.
+                    break
+            i += 1
+
+        # 4. Собираем финальную часть с префиксом и автозакрытием от BeautifulSoup
+        # Используем BeautifulSoup для надежного закрытия тегов *внутри* текущего фрагмента
+        # Префикс + сам фрагмент + закрывающие теги для того, что было открыто *в этом фрагменте*
+        # но не закрыто до cut_pos.
+        part_with_prefix = prefix + raw_part
+        soup = BeautifulSoup(part_with_prefix, 'html.parser')
+
+        # Получаем "исправленный" HTML фрагмент от BeautifulSoup
+        # BS автоматически закроет теги, которые были открыты в part_with_prefix
+        processed_part = "".join(str(content) for content in soup.body.contents) if soup.body else str(soup)
+
+        # Удаляем пустые строки в начале/конце, если они не <pre>
+        # processed_part = processed_part.strip() # Может быть слишком агрессивно для <pre>
+
+        # 5. Добавляем обработанную часть в результат, если она не пустая
+        if processed_part and not processed_part.isspace():
+             # --- Модификация blockquote для этой части ---
+             final_part = processed_part.replace('<blockquote>', '<blockquote expandable>')
+             parts.append(final_part)
+
+        # 6. Обновляем стек открытых тегов для следующей итерации
+        open_tags = temp_open_tags_next
+
+        # 7. Переходим к следующей части
+        current_pos = cut_pos
+
+    # Разделяем на caption и messages
+    caption_part = None
+    message_parts = []
+
+    if max_caption_length > 0 and parts:
+        caption_part = parts[0]
+        message_parts = parts[1:]
+    else:
+        message_parts = parts
+
+    # На случай если последний фрагмент оставил теги открытыми (хотя BS должен был закрыть)
+    # Можно добавить закрывающие теги к последнему элементу message_parts, но обычно не требуется
+
     return caption_part, message_parts
+
+
+
+
+
 
 
 
@@ -5226,7 +5474,9 @@ async def text_plant_help_with_gpt(update, context):
             # Генерация ответа через Gemini
             response_text = await generate_plant_issue_response(user_id, image=image)
             
-            text_parts = await send_reply_with_limit(response_text)
+            # Разбиваем текст с учетом HTML-тегов, игнорируя caption
+            caption_part, message_parts = split_html_text(response_text, 0, 4096)
+            text_parts = [caption_part] + message_parts if caption_part else message_parts
             
             # Создаем клавиатуру
             keyboard = [
@@ -5243,25 +5493,25 @@ async def text_plant_help_with_gpt(update, context):
                         await processing_message.edit_text(
                             part,
                             reply_markup=reply_markup,
-                            parse_mode='MarkdownV2'
+                            parse_mode='HTML'
                         )
                         return
                     else:
                         await processing_message.edit_text(
                             part,
-                            parse_mode='MarkdownV2'
+                            parse_mode='HTML'
                         )
                 elif i == len(text_parts) - 1:
                     # Последняя часть, добавляем кнопку
                     await update.callback_query.message.reply_text(
                         part,
                         reply_markup=reply_markup,
-                        parse_mode='MarkdownV2'
+                        parse_mode='HTML'
                     )
                 else:
                     await update.callback_query.message.reply_text(
                         part,
-                        parse_mode='MarkdownV2'
+                        parse_mode='HTML'
                     )
 
             await update.callback_query.answer()
@@ -5293,8 +5543,9 @@ async def mushrooms_gpt(update, context):
             # Генерация ответа через Gemini
             response_text = await generate_mushrooms_response(user_id, image=image)
 
-            # Прогоняем ответ через send_reply_with_limit
-            text_parts = await send_reply_with_limit(response_text)
+            # Разбиваем текст с учетом HTML-тегов, игнорируя caption
+            caption_part, message_parts = split_html_text(response_text, 0, 4096)
+            text_parts = [caption_part] + message_parts if caption_part else message_parts
 
             # Создаем клавиатуру
             keyboard = [
@@ -5310,25 +5561,25 @@ async def mushrooms_gpt(update, context):
                         await processing_message.edit_text(
                             part,
                             reply_markup=reply_markup,
-                            parse_mode='MarkdownV2'
+                            parse_mode='HTML'
                         )
                         return
                     else:
                         await processing_message.edit_text(
                             part,
-                            parse_mode='MarkdownV2'
+                            parse_mode='HTML'
                         )
                 elif i == len(text_parts) - 1:
                     # Последняя часть, добавляем кнопку
                     await update.callback_query.message.reply_text(
                         part,
                         reply_markup=reply_markup,
-                        parse_mode='MarkdownV2'
+                        parse_mode='HTML'
                     )
                 else:
                     await update.callback_query.message.reply_text(
                         part,
-                        parse_mode='MarkdownV2'
+                        parse_mode='HTML'
                     )
 
             await update.callback_query.answer()
@@ -5476,65 +5727,76 @@ from urllib.parse import quote  # Импортируем функцию quote
 
 async def barcode_with_gpt(update, context):
     query = update.callback_query
-
     user_id = query.from_user.id
     img_url = context.user_data.get('img_url')
-    
+
     if not img_url:
         await query.answer("Изображение не найдено.", show_alert=True)
         return
-    
+
     try:
+        # Отправляем сообщение о начале обработки
+        processing_message = await query.message.reply_text("Запрос принят, ожидайте...")
+
         # Открываем изображение
         with open('temp_image.jpg', 'rb') as file:
             image = Image.open(file)
             image.load()
-            
-            # Запрос к Gemini (или другой модели для генерации ответа)
+
+            # Запрос к модели
             response = await generate_barcode_response(user_id, image=image, query=None)
-            logging.info(f"response: {response}")              
-            # Вычленение названия товара между "0)Название товара:" и "1)Общее краткое впечатление:"
+            logging.info(f"response: {response}")
+
+            # Поиск названия товара
             product_name_match = re.search(
                 r'Название товара.*?[:：]\s*(.*?)\s*\n\s*1\)', 
-                response,
+                response, 
                 re.IGNORECASE
             )
-            logging.info(f"product_name_match: {product_name_match}") 
             product_name = product_name_match.group(1).strip() if product_name_match else "Не найдено"
-            logging.info(f"product_name: {product_name}")             
-            # Кодируем product_name для использования в URL
+            logging.info(f"product_name: {product_name}")
+
             encoded_product_name = quote(product_name)
 
-            # Очистка response от текста до "1)"
-            match = re.search(r'товара:\s*', response, re.IGNORECASE)  # \s* убирает пробелы после "товара:"
+            # Очистка текста от заголовка
+            match = re.search(r'товара:\s*', response, re.IGNORECASE)
             if match:
-                response = response[match.end():]  # Обрезаем начиная сразу после "товара: "
+                response = response[match.end():]
 
-            # Просто отправляем ответ в Telegram
-            await context.bot.send_message(chat_id=user_id, text=f"{response}")
-            
-            # Создаем кнопки для поиска отзывов
-            google_search_url = f"https://www.google.com/search?q={encoded_product_name}+отзывы"
-            yandex_search_url = f"https://yandex.ru/search/?text={encoded_product_name}+отзывы"
-            
+            # Разделяем текст на части по 4096 символов
+            caption_part, message_parts = split_html_text(response, 0, 4096)
+            text_parts = [caption_part] + message_parts if caption_part else message_parts
+
+            # Клавиатура с отзывами
             keyboard = [
-                [InlineKeyboardButton("🔍 Поиск отзывов в Google", web_app=WebAppInfo(url=google_search_url))],
-                [InlineKeyboardButton("🔍 Поиск отзывов в Яндекс", web_app=WebAppInfo(url=yandex_search_url))],
+                [InlineKeyboardButton("🔍 Поиск отзывов в Google", web_app=WebAppInfo(url=f"https://www.google.com/search?q={encoded_product_name}+отзывы"))],
+                [InlineKeyboardButton("🔍 Поиск отзывов в Яндекс", web_app=WebAppInfo(url=f"https://yandex.ru/search/?text={encoded_product_name}+отзывы"))],
                 [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Отправляем сообщение с кнопками
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="Вы можете найти отзывы об этом товаре самостоятельно по кнопкам ниже, прислать новое фото или вернуться в главное меню:",
-                reply_markup=reply_markup
-            )  
-            if query:
-                await query.answer()                      
+
+            # Отправляем ответ по частям
+            for i, part in enumerate(text_parts):
+                if i == 0:
+                    if len(text_parts) == 1:
+                        await processing_message.edit_text(
+                            part,
+                            reply_markup=reply_markup,
+                            parse_mode="HTML"
+                        )
+                        return
+                    else:
+                        await processing_message.edit_text(part, parse_mode="HTML")
+                elif i == len(text_parts) - 1:
+                    await query.message.reply_text(part, reply_markup=reply_markup, parse_mode="HTML")
+                else:
+                    await query.message.reply_text(part, parse_mode="HTML")
+
+            await query.answer()
+
     except Exception as e:
         logging.error(f"Ошибка при обработке изображения: {e}")
-        await query.answer("Ошибка при обработке изображения.", show_alert=True)
+        await processing_message.edit_text("Произошла ошибка при обработке изображения.")
 
 
 async def barcode_with_gpt_maybe(update, context):
@@ -5736,7 +5998,7 @@ async def scientific_gpt(update, context):
     try:
         # Формируем запрос для получения информации о растении
         query_text = (
-            f"Дай информацию по растению с названием {scientific_name}, по следующим пунктам:\n"
+            f"Дай информацию по растению с названием {scientific_name} в пределах 300 слов, по следующим пунктам:\n"
             "0) Что это. Гриб, растение, дерево, ягода. Этот пункт начни с фразы \"0)Это: \" В ответе напиши только одно слово из перечисленных, если ничего не подходит то напиши \"распознать не вышло\"\n"
             "1) Русскоязычные названия, от самого популярного до самых редких, если есть. Этот пункт начни с фразы \"1)Русские названия: \" В ответе перечисли только название или названия без лишних пояснений. Если русского названия нет то напиши исходное название игнорируя то что оно не является русским\n"
             "2) Общая краткая информация и описание, как выглядит, не длиннее 30 слов. Этот пункт начни с фразы \"2)Общая информация: \"\n"
@@ -5874,7 +6136,7 @@ async def handle_coordinates(update, context):
             waiting_message = await update.message.reply_text(f"Вы указали '{user_input}'. Ищу информацию об этом растении...")
             try:
                 query = (
-                    f"Дай информацию по растению с названием {user_input}, по следующим пунктам:\n"
+                    f"Дай информацию по растению с названием {user_input} в пределах 300 слов, по следующим пунктам:\n"
                     "0) Что это. Гриб, растение, дерево, ягода. Этот пункт начни с фразы \"0)Это: \" В ответе напиши только одно слово из перечисленных, если ничего не подходит то напиши \"распознать не вышло\"\n"
                     "1) Русскоязычные названия, от самого популярного до самых редких, если есть. Этот пункт начни с фразы \"1)Русские названия: \" В ответе перечисли только название или названия без лишних пояснений\n"
                     "2) Общая краткая информация и описание, как выглядит, не длиннее 30 слов. Этот пункт начни с фразы \"2)Общая информация: \"\n"
@@ -6403,7 +6665,8 @@ async def gpt_plants_more_handler(update, context):
     response_text = await generate_plant_help_response(user_id, query=query)
 
     # Разбиваем текст на части
-    text_parts = await send_reply_with_limit(response_text)
+    caption_part, message_parts = split_html_text(response_text, 0, 4096)
+    text_parts = [caption_part] + message_parts if caption_part else message_parts
 
     logger.info(f"text_parts {text_parts}")
 
@@ -6465,7 +6728,8 @@ async def gpt_plants_help_handler(update, context):
 
     # Генерация ответа без контекста
     response_text = await generate_plant_help_response(user_id, query=query)
-    text_parts = await send_reply_with_limit(response_text)
+    caption_part, message_parts = split_html_text(response_text, 0, 4096)
+    text_parts = [caption_part] + message_parts if caption_part else message_parts
     logger.info(f"response_text {response_text}")
     keyboard = [
         [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],     
