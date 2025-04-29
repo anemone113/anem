@@ -694,7 +694,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
 
         # Генерация ответа от модели Gemini
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -713,8 +713,8 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                 top_p=0.9,
                 top_k=40,
                 #max_output_tokens=5000,
-                presence_penalty=0.6,
-                frequency_penalty=0.6,
+                #presence_penalty=0.6,
+                #frequency_penalty=0.6,
                 safety_settings=safety_settings
             )
         ) 
@@ -853,7 +853,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
             google_search=GoogleSearch()
         )        
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -870,8 +870,8 @@ async def generate_animation_response(video_file_path, user_id, query=None):
                 temperature=1.2,
                 top_p=0.9,
                 top_k=40,
-                presence_penalty=0.5,
-                frequency_penalty=0.5,
+                #presence_penalty=0.5,
+                #frequency_penalty=0.5,
                 tools=[google_search_tool],                 
                 safety_settings=safety_settings
             )
@@ -985,7 +985,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
             google_search=GoogleSearch()
         )        
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -1002,8 +1002,8 @@ async def generate_video_response(video_file_path, user_id, query=None):
                 temperature=1.2,
                 top_p=0.9,
                 top_k=40,
-                presence_penalty=0.5,
-                frequency_penalty=0.5,
+                #presence_penalty=0.5,
+                #frequency_penalty=0.5,
                 tools=[google_search_tool],                 
                 safety_settings=safety_settings
             )
@@ -1094,7 +1094,7 @@ async def generate_document_response(document_path, user_id, query=None):
 
         google_search_tool = Tool(google_search=GoogleSearch())
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -1112,8 +1112,8 @@ async def generate_document_response(document_path, user_id, query=None):
                 #max_output_tokens=10000,                
                 top_p=0.95,
                 top_k=25,
-                presence_penalty=0.7,
-                frequency_penalty=0.7,
+                #presence_penalty=0.7,
+               # frequency_penalty=0.7,
                 tools=[google_search_tool],
                 safety_settings=[
                     types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
@@ -1207,7 +1207,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
             google_search=GoogleSearch()
         )      
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -1224,8 +1224,8 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                 temperature=1.4,
                 top_p=0.95,
                 top_k=25,
-                presence_penalty=0.7,
-                frequency_penalty=0.7,
+                #presence_penalty=0.7,
+                #frequency_penalty=0.7,
                 tools=[google_search_tool],                
                 safety_settings=[
                     types.SafetySetting(
@@ -1533,7 +1533,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                 google_search=GoogleSearch()
             )
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash-preview-04-17',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,                
@@ -1541,8 +1541,8 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                     top_p=0.95,
                     top_k=25,
                     #max_output_tokens=4500,
-                    presence_penalty=0.7,
-                    frequency_penalty=0.7,
+                    #presence_penalty=0.7,
+                    #frequency_penalty=0.7,
                     tools=[google_search_tool],
                     safety_settings=[
                         types.SafetySetting(
@@ -1626,7 +1626,7 @@ async def generate_mushrooms_response(user_id, image):
 
         # Генерация ответа от модели Gemini
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -1644,8 +1644,8 @@ async def generate_mushrooms_response(user_id, image):
                 top_p=0.9,
                 top_k=40,
                 #max_output_tokens=2000,
-                presence_penalty=0.6,
-                frequency_penalty=0.6,
+                #presence_penalty=0.6,
+                #frequency_penalty=0.6,
                 tools=[google_search_tool],
                 safety_settings=safety_settings
             )
@@ -1719,7 +1719,7 @@ async def generate_mapplants_response(user_id, image):
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -1737,8 +1737,8 @@ async def generate_mapplants_response(user_id, image):
                 top_p=0.9,
                 top_k=40,
                 #max_output_tokens=2000,
-                presence_penalty=0.6,
-                frequency_penalty=0.6,
+                #presence_penalty=0.6,
+                #frequency_penalty=0.6,
                 tools=[google_search_tool],
                 safety_settings=safety_settings
             )
@@ -1782,15 +1782,15 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash-preview-04-17',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(               
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
                     #max_output_tokens=2000,
-                    presence_penalty=0.7,
-                    frequency_penalty=0.7,
+                    #presence_penalty=0.7,
+                    #frequency_penalty=0.7,
                     tools=[google_search_tool],
                     safety_settings=[
                         types.SafetySetting(
@@ -1858,7 +1858,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch())        
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash-preview-04-17',
                 contents=[
                     types.Content(
                         role="user",
@@ -1876,8 +1876,8 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                     top_p=0.9,
                     top_k=40,
                     #max_output_tokens=3000,
-                    presence_penalty=0.6,
-                    frequency_penalty=0.6,
+                    #presence_penalty=0.6,
+                    #frequency_penalty=0.6,
                     tools=[google_search_tool],
                     safety_settings=safety_settings
                 )
@@ -1945,7 +1945,7 @@ async def generate_plant_issue_response(user_id, image):
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -1963,8 +1963,8 @@ async def generate_plant_issue_response(user_id, image):
                 top_p=0.9,
                 top_k=40,
                 #max_output_tokens=2000,
-                presence_penalty=0.6,
-                frequency_penalty=0.6,
+                #presence_penalty=0.6,
+                #frequency_penalty=0.6,
                 tools=[google_search_tool],
                 safety_settings=safety_settings
             )
@@ -2024,7 +2024,7 @@ async def generate_barcode_response(user_id, image=None, query=None):
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=[
                 types.Content(
                     role="user",
@@ -2042,8 +2042,8 @@ async def generate_barcode_response(user_id, image=None, query=None):
                 top_p=0.9,
                 top_k=40,
                 #max_output_tokens=1000,
-                presence_penalty=0.6,
-                frequency_penalty=0.6,
+                #presence_penalty=0.6,
+                #frequency_penalty=0.6,
                 tools=[google_search_tool],
                 safety_settings=safety_settings
             )
@@ -2087,7 +2087,7 @@ async def generate_barcode_analysis(user_id, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash-preview-04-17',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig( 
                     system_instruction=system_instruction,                              
@@ -2095,8 +2095,8 @@ async def generate_barcode_analysis(user_id, query=None):
                     top_p=0.95,
                     top_k=25,
                     #max_output_tokens=2000,
-                    presence_penalty=0.7,
-                    frequency_penalty=0.7,
+                    #presence_penalty=0.7,
+                    #frequency_penalty=0.7,
                     tools=[google_search_tool],
                     safety_settings=[
                         types.SafetySetting(
@@ -2146,15 +2146,15 @@ async def generate_barcode_otzyvy(user_id, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash-preview-04-17',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(                             
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
                     #max_output_tokens=2000,
-                    presence_penalty=0.7,
-                    frequency_penalty=0.7,
+                    #presence_penalty=0.7,
+                    #frequency_penalty=0.7,
                     tools=[google_search_tool],
                     safety_settings=[
                         types.SafetySetting(
@@ -2204,15 +2204,15 @@ async def generate_plant_help_response(user_id, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash-preview-04-17',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(               
                     temperature=1.4,
                     top_p=0.95,
                     top_k=25,
                     #max_output_tokens=2000,
-                    presence_penalty=0.7,
-                    frequency_penalty=0.7,
+                    #presence_penalty=0.7,
+                    #frequency_penalty=0.7,
                     tools=[google_search_tool],
                     safety_settings=[
                         types.SafetySetting(
@@ -2276,15 +2276,15 @@ async def translate_promt_with_gemini(user_id, query=None):
                 client = genai.Client(api_key=GOOGLE_API_KEY)
                 google_search_tool = Tool(google_search=GoogleSearch()) 
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash',
+                    model='gemini-2.5-flash-preview-04-17',
                     contents=context,  # Здесь передаётся переменная context
                     config=types.GenerateContentConfig(               
                         temperature=1.4,
                         top_p=0.95,
                         top_k=25,
                         #max_output_tokens=2000,
-                        presence_penalty=0.7,
-                        frequency_penalty=0.7,
+                        #presence_penalty=0.7,
+                        #frequency_penalty=0.7,
                         tools=[google_search_tool],
                         safety_settings=[
                             types.SafetySetting(
@@ -2337,15 +2337,15 @@ async def generate_word(chat_id):
     try:
         # Создаём клиент с правильным ключом
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-04-17',
             contents=context,  # Здесь передаётся переменная context
             config=types.GenerateContentConfig(
                 temperature=1.7,
                 top_p=0.9,
                 top_k=40,
                 #max_output_tokens=2500,
-                presence_penalty=1.0,
-                frequency_penalty=0.8,
+                #presence_penalty=1.0,
+                #frequency_penalty=0.8,
                 safety_settings=[
                     types.SafetySetting(
                         category='HARM_CATEGORY_HATE_SPEECH',
