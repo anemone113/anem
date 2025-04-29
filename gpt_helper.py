@@ -1,7 +1,6 @@
 import logging
 import io
 from collections import deque
-import google.generativeai as genai
 from PIL import Image
 import base64
 import json
