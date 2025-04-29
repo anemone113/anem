@@ -6654,7 +6654,7 @@ async def gpt_plants_more_handler(update, context):
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
         return
-
+    await query.answer("Ищу информацию, подождите около 10-15 секунд.", show_alert=True)
     query = (
         f"Расскажи больше про {scientific_name}, например, интересные факты, "
         "способы применения, укажи если ядовито, какие-то особенности и прочее. "
@@ -6687,25 +6687,25 @@ async def gpt_plants_more_handler(update, context):
                 await message.edit_text(
                     part,
                     reply_markup=reply_markup,
-                    parse_mode='MarkdownV2'
+                    parse_mode='HTML'
                 )
                 return  # <-- Не продолжаем, чтобы не дублировать
             else:
                 await message.edit_text(
                     part,
-                    parse_mode='MarkdownV2'
+                    parse_mode='HTML'
                 )
         elif i == len(text_parts) - 1:
             # Последняя часть, добавляем кнопку
             await update.callback_query.message.reply_text(
                 part,
                 reply_markup=reply_markup,
-                parse_mode='MarkdownV2'
+                parse_mode='HTML'
             )
         else:
             await update.callback_query.message.reply_text(
                 part,
-                parse_mode='MarkdownV2'
+                parse_mode='HTML'
             )
 
     # Добавляем кнопки только в последнем сообщении
@@ -6722,7 +6722,7 @@ async def gpt_plants_help_handler(update, context):
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
         return
-
+    await query.answer("Ищу информацию, подождите около 10-15 секунд.", show_alert=True)
     # Формируем запрос с научным названием
     query = f"Как ухаживать за {scientific_name}? Ответ не длиннее 200 слов"
 
@@ -6748,25 +6748,25 @@ async def gpt_plants_help_handler(update, context):
                 await message.edit_text(
                     part,
                     reply_markup=reply_markup,
-                    parse_mode='MarkdownV2'
+                    parse_mode='HTML'
                 )
                 return  # <-- Не продолжаем, чтобы не дублировать
             else:
                 await message.edit_text(
                     part,
-                    parse_mode='MarkdownV2'
+                    parse_mode='HTML'
                 )
         elif i == len(text_parts) - 1:
             # Последняя часть, добавляем кнопку
             await update.callback_query.message.reply_text(
                 part,
                 reply_markup=reply_markup,
-                parse_mode='MarkdownV2'
+                parse_mode='HTML'
             )
         else:
             await update.callback_query.message.reply_text(
                 part,
-                parse_mode='MarkdownV2'
+                parse_mode='HTML'
             )
 
     # Добавляем кнопки только в последнем сообщении
