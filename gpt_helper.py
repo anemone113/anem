@@ -719,7 +719,10 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
         ) 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
 
             return response_text
         else:
@@ -1565,7 +1568,10 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
             )     
 
             if response.candidates and response.candidates[0].content.parts:
-                response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+                response_text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
 
 
 
@@ -1652,7 +1658,10 @@ async def generate_mushrooms_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
             return response_text
         else:
             logging.warning("Gemini не вернул ответ на запрос для изображения.")
@@ -1745,7 +1754,10 @@ async def generate_mapplants_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
 
             return response_text
         else:
@@ -1813,7 +1825,10 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             )     
        
             if response.candidates and response.candidates[0].content.parts:
-                response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+                response = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
             
                 return response
             else:
@@ -1884,7 +1899,10 @@ async def generate_text_rec_response(user_id, image=None, query=None):
 
             # Проверяем наличие ответа
             if response.candidates and response.candidates[0].content.parts:
-                response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+                response_text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
 
                 return response_text
             else:
@@ -1971,7 +1989,10 @@ async def generate_plant_issue_response(user_id, image):
 
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
 
             return response_text
         else:
@@ -2049,7 +2070,10 @@ async def generate_barcode_response(user_id, image=None, query=None):
         )
         # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
-            response_text = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
 
             return response_text
         else:
@@ -2119,7 +2143,10 @@ async def generate_barcode_analysis(user_id, query=None):
             )     
        
             if response.candidates and response.candidates[0].content.parts:
-                response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+                response = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
           
                 return response
             else:
@@ -2177,7 +2204,10 @@ async def generate_barcode_otzyvy(user_id, query=None):
             )     
        
             if response.candidates and response.candidates[0].content.parts:
-                response = ''.join(part.text or '' for part in response.candidates[0].content.parts).strip()
+                response = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
                 logging.info(f"response: {response}")            
                 return response
             else:
@@ -2235,7 +2265,10 @@ async def generate_plant_help_response(user_id, query=None):
             )     
             logging.info(f"response: {response}")       
             if response.candidates and response.candidates[0].content.parts:
-                response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+                response = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
             
                 return response
             else:
@@ -2307,7 +2340,10 @@ async def translate_promt_with_gemini(user_id, query=None):
                 )     
            
                 if response.candidates and response.candidates[0].content.parts:
-                    response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
+                    response = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
                 
                     return response
                 else:
@@ -2367,7 +2403,10 @@ async def generate_word(chat_id):
         )     
    
         if response.candidates and response.candidates[0].content.parts:
-            bot_response = response.candidates[0].content.parts[0].text.strip()
+            bot_response = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
             logger.info("Ответ от Gemini: %s", bot_response)
             return bot_response
         else:
