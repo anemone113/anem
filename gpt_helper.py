@@ -1594,12 +1594,14 @@ def limit_response_length(text):
     return text[:MAX_MESSAGE_LENGTH - 3] + '...' if len(text) > MAX_MESSAGE_LENGTH else text
 
 
-async def generate_mushrooms_response(user_id, image):
+async def generate_mushrooms_response(user_id, image, query):
     """Генерирует текстовое описание гриба на основе изображения."""
+    system_instruction = "Определи что это за гриб. Кратко расскажи о нём, где растёт и чаще всего встречается, как выглядит, какие-то особенности, съедобен или нет, другую важную информацию. Если у тебя есть несколько вариантов то перечисли их. Если необходимо используй html разметку доступную в telegram. Суммарная длина текста не должна быть выше 300 слов:"
 
     # Формируем статичный контекст для запроса
-    context = "Определи что это за гриб. Кратко расскажи о нём, где растёт и чаще всего встречается, как выглядит, какие-то особенности, съедобен или нет, другую важную или интересную информацию. Старайся при этом быть лаконичной и достаточно краткой. Если у тебя есть несколько вариантов того что это за гриб может быть то перечисли их в заданном формате пронумеров начиная с 1. Если необходимо используй html разметку доступную в telegram. Суммарная длина текста не должна быть выше 300 слов:"
-
+    context = (         
+            f"Уточнение касательно гриба от пользователя: {query}"    
+    )
     try:
         # Сохраняем изображение во временный файл
         with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
@@ -1645,10 +1647,11 @@ async def generate_mushrooms_response(user_id, image):
                 )
             ],
             config=types.GenerateContentConfig(
+                system_instruction=system_instruction,                    
                 temperature=1.0,
                 top_p=0.9,
                 top_k=40,
-                #max_output_tokens=2000,
+                #max_output_tokens=1000,
                 #presence_penalty=0.6,
                 #frequency_penalty=0.6,
                 tools=[google_search_tool],
