@@ -621,9 +621,11 @@ async def start(update: Update, context: CallbackContext) -> int:
         if update.message.photo:
             file = await update.message.photo[-1].get_file()
             image_path = 'temp_image.jpg'
+            caption = update.message.caption  # <-- сохраняем подпись
         elif update.message.document and update.message.document.mime_type.startswith('image/'):
             file = await update.message.document.get_file()
             image_path = 'temp_image.jpg'
+            caption = update.message.caption  # <-- сохраняем подпись
         else:
             keyboard = [
                 [InlineKeyboardButton("🪴 Мои растения 🪴", callback_data='myplants')], 
@@ -648,6 +650,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         inat_url = "https://www.inaturalist.org/computer_vision_demo"
 
         context.user_data['img_url'] = img_url
+        context.user_data['img_caption'] = caption
 
         # Формируем клавиатуру с кнопками для распознавания
         keyboard = [
@@ -5524,7 +5527,7 @@ async def text_plant_help_with_gpt(update, context):
 async def mushrooms_gpt(update, context):
     user_id = update.effective_user.id
     img_url = context.user_data.get('img_url')
-
+    caption = context.user_data.get('img_caption')
     # Проверяем наличие изображения в контексте
     if not img_url:
         await update.callback_query.answer("Изображение не найдено.")
@@ -5541,7 +5544,7 @@ async def mushrooms_gpt(update, context):
             image.load()  # Загружаем изображение полностью
 
             # Генерация ответа через Gemini
-            response_text = await generate_mushrooms_response(user_id, image=image)
+            response_text = await generate_mushrooms_response(user_id, image=image, query=caption)
 
             # Разбиваем текст с учетом HTML-тегов, игнорируя caption
             caption_part, message_parts = split_html_text(response_text, 0, 4096)
