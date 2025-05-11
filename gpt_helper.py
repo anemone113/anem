@@ -180,6 +180,9 @@ def load_all_plants_data() -> dict:
         logging.error(f"Ошибка при загрузке данных о растениях: {e}")
         return {}
 
+
+
+
 def update_to_user_mapplants(user_id: int, name: str, new_name: str, new_data: dict) -> None:
     """Переименовывает растение пользователя, обновляя существующие данные."""
     try:
@@ -783,6 +786,52 @@ def add_to_context(user_id, message, message_type):
     
     if entry not in user_contexts[user_id]:
         user_contexts[user_id].append(entry)
+
+
+
+async def generate_gemini_inline_response(query: str) -> str:
+    """Генерирует краткий ответ от Gemini для инлайн-запроса."""
+    system_instruction = (
+        "Ты умная и лаконичная нейросеть. Отвечай кратко, по сути запроса, избегая вводных фраз и лишних размышлений."
+    )
+
+    context = (
+        f"Ответь на запрос кратко и по существу:\n{query}"
+    )
+
+    try:
+        google_search_tool = Tool(
+            google_search=GoogleSearch()
+        )        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-preview-04-17',
+            contents=context,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=1.3,
+                top_p=0.95,
+                top_k=20,
+                tools=[google_search_tool],                
+                max_output_tokens=7000,
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+            )
+        )
+        if response.candidates and response.candidates[0].content.parts:
+            full_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text
+            ).strip()
+            return full_text
+        else:
+            return "Извините, не удалось получить ответ."
+    except Exception as e:
+        logger.error("Ошибка в generate_gemini_inline_response: %s", e)
+        return "Произошла ошибка. Попробуйте позже."
 
 
 
