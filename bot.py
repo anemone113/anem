@@ -461,6 +461,32 @@ KAOMOJI_LIST = [
 ]
 
 
+
+from telegram import InlineQueryResultArticle, InputTextMessageContent
+from telegram.ext import InlineQueryHandler
+from uuid import uuid4
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query.strip()
+    if not query:
+        return
+
+    full_answer = await generate_gemini_inline_response(query)
+
+    # Обрезаем для предпросмотра
+    preview_text = (full_answer[:100] + '...') if len(full_answer) > 100 else full_answer
+
+    results = [
+        InlineQueryResultArticle(
+            id=str(uuid4()),
+            title="Ответ от Фуми",
+            description=preview_text,
+            input_message_content=InputTextMessageContent(full_answer)
+        )
+    ]
+
+    await update.inline_query.answer(results, cache_time=0, is_personal=True)
+
+
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     # Логируем полное состояние пользователя
@@ -13094,6 +13120,7 @@ def main() -> None:
 
     application.add_handler(MessageHandler(filters.StatusUpdate.PINNED_MESSAGE, ignore_pinned_message))
     # Добавляем обработчики команд
+    application.add_handler(InlineQueryHandler(inline_query_handler))    
     application.add_handler(CallbackQueryHandler(handle_edit_button, pattern='edit_article'))
     application.add_handler(CallbackQueryHandler(handle_delete_button, pattern='delete_last'))
     application.add_handler(CallbackQueryHandler(handle_edit_delete, pattern='^edit_|^delete_'))
