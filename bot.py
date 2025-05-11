@@ -67,7 +67,8 @@ from gpt_helper import (
     get_all_tokens,
     set_all_tokens,
     get_last_successful_token,
-    set_last_successful_token
+    set_last_successful_token,
+    generate_gemini_inline_response
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
