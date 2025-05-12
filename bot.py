@@ -473,15 +473,23 @@ from telegram.ext import ContextTypes
 debounce_tasks = defaultdict(asyncio.Task)
 
 async def handle_debounced_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
-    full_answer = await generate_gemini_inline_response(query)
-    preview_text = (full_answer[:100] + '...') if len(full_answer) > 100 else full_answer
+    full_answer_raw = await generate_gemini_inline_response(query)
+
+    # Экранируем спецсимволы
+    escaped_answer = escape(full_answer_raw)
+
+    # Обрезаем текст с учетом тега <blockquote> (36 символов)
+    truncated = escaped_answer[:4060]
+    html_answer = f"<blockquote expandable>{truncated}</blockquote>"
+
+    preview_text = (escaped_answer[:100] + '...') if len(escaped_answer) > 100 else escaped_answer
 
     results = [
         InlineQueryResultArticle(
             id=str(uuid4()),
             title="Ответ от Фуми",
             description=preview_text,
-            input_message_content=InputTextMessageContent(full_answer)
+            input_message_content=InputTextMessageContent(html_answer, parse_mode=ParseMode.HTML)
         )
     ]
 
