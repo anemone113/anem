@@ -487,7 +487,7 @@ async def handle_debounced_inline_query(update: Update, context: ContextTypes.DE
     results = [
         InlineQueryResultArticle(
             id=str(uuid4()),
-            title="Ответ от Фуми",
+            title="Ответ от нейросети:",
             description=preview_text,
             input_message_content=InputTextMessageContent(html_answer, parse_mode=ParseMode.HTML)
         )
@@ -509,7 +509,7 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     async def delayed_response():
         try:
-            await asyncio.sleep(1.8)  # Задержка 1 секунда
+            await asyncio.sleep(1.0)  # Задержка 1 секунда
             await handle_debounced_inline_query(update, context, query)
         except asyncio.CancelledError:
             pass  # Задача отменена, ничего не делаем
