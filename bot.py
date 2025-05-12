@@ -463,17 +463,17 @@ KAOMOJI_LIST = [
 
 
 
-from telegram import InlineQueryResultArticle, InputTextMessageContent
-from telegram.ext import InlineQueryHandler
+import asyncio
+from collections import defaultdict
 from uuid import uuid4
-async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query.strip()
-    if not query:
-        return
+from telegram import InlineQueryResultArticle, InputTextMessageContent, Update
+from telegram.ext import ContextTypes
 
+# Словарь для отслеживания задач дебаунса
+debounce_tasks = defaultdict(asyncio.Task)
+
+async def handle_debounced_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
     full_answer = await generate_gemini_inline_response(query)
-
-    # Обрезаем для предпросмотра
     preview_text = (full_answer[:100] + '...') if len(full_answer) > 100 else full_answer
 
     results = [
@@ -486,6 +486,28 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     ]
 
     await update.inline_query.answer(results, cache_time=0, is_personal=True)
+
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query.strip()
+    user_id = update.inline_query.from_user.id
+
+    if not query:
+        return
+
+    # Отменить предыдущую задачу, если она еще не завершена
+    task = debounce_tasks.get(user_id)
+    if task and not task.done():
+        task.cancel()
+
+    async def delayed_response():
+        try:
+            await asyncio.sleep(1.8)  # Задержка 1 секунда
+            await handle_debounced_inline_query(update, context, query)
+        except asyncio.CancelledError:
+            pass  # Задача отменена, ничего не делаем
+
+    # Создаем и сохраняем новую задачу
+    debounce_tasks[user_id] = asyncio.create_task(delayed_response())
 
 
 async def start(update: Update, context: CallbackContext) -> int:
