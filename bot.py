@@ -467,7 +467,7 @@ import asyncio
 from collections import defaultdict
 from uuid import uuid4
 from telegram import InlineQueryResultArticle, InputTextMessageContent, Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, InlineQueryHandler
 
 # Словарь для отслеживания задач дебаунса
 debounce_tasks = defaultdict(asyncio.Task)
