@@ -471,29 +471,50 @@ from telegram.ext import ContextTypes, InlineQueryHandler
 
 # Словарь для отслеживания задач дебаунса
 debounce_tasks = defaultdict(asyncio.Task)
+debounce_tasks = defaultdict(asyncio.Task)
+
+def _remove_task_from_context(task: asyncio.Task, user_data: dict):
+    user_tasks_set = user_data.get('user_tasks')
+    if user_tasks_set:
+        user_tasks_set.discard(task)
 
 async def handle_debounced_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
-    full_answer_raw = await generate_gemini_inline_response(query)
+    inline_query = update.inline_query
+    user_id = inline_query.from_user.id
 
-    # Экранируем спецсимволы
-    escaped_answer = escape(full_answer_raw)
+    async def background_inline_answer():
+        try:
+            full_answer_raw = await generate_gemini_inline_response(query)
+            escaped_answer = escape(full_answer_raw)
 
-    # Обрезаем текст с учетом тега <blockquote> (36 символов)
-    truncated = escaped_answer[:4060]
-    html_answer = f"<blockquote expandable>{truncated}</blockquote>"
+            truncated = escaped_answer[:4060]
+            html_answer = f"<blockquote expandable>{truncated}</blockquote>"
 
-    preview_text = (escaped_answer[:100] + '...') if len(escaped_answer) > 100 else escaped_answer
+            preview_text = (escaped_answer[:100] + '...') if len(escaped_answer) > 100 else escaped_answer
 
-    results = [
-        InlineQueryResultArticle(
-            id=str(uuid4()),
-            title="Ответ от нейросети:",
-            description=preview_text,
-            input_message_content=InputTextMessageContent(html_answer, parse_mode=ParseMode.HTML)
-        )
-    ]
+            results = [
+                InlineQueryResultArticle(
+                    id=str(uuid4()),
+                    title="Ответ от Анемо",
+                    description=preview_text,
+                    input_message_content=InputTextMessageContent(
+                        html_answer,
+                        parse_mode=ParseMode.HTML
+                    )
+                )
+            ]
 
-    await update.inline_query.answer(results, cache_time=0, is_personal=True)
+            await inline_query.answer(results, cache_time=0, is_personal=True)
+
+        except asyncio.CancelledError:
+            logger.info(f"Фоновая задача inline запроса пользователя {user_id} была отменена.")
+        except Exception as e:
+            logger.error(f"Ошибка при обработке inline запроса: {e}")
+
+    task = asyncio.create_task(background_inline_answer())
+    user_tasks_set = context.user_data.setdefault('user_tasks', set())
+    user_tasks_set.add(task)
+    task.add_done_callback(lambda t: _remove_task_from_context(t, context.user_data))
 
 async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
