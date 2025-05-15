@@ -21,7 +21,7 @@ from google.genai.types import (
     SafetySetting,
     Tool
 )
-
+import aiohttp
 from google.genai.types import CreateCachedContentConfig, GenerateContentConfig, Part
 import re
 import time
@@ -803,7 +803,7 @@ async def generate_gemini_inline_response(query: str) -> str:
         google_search_tool = Tool(
             google_search=GoogleSearch()
         )        
-        response = client.models.generate_content(
+        response = await client.aio.models.generate_content(
             model='gemini-2.5-flash-preview-04-17',
             contents=context,
             config=types.GenerateContentConfig(
