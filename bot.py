@@ -471,8 +471,7 @@ from telegram.ext import ContextTypes, InlineQueryHandler
 
 # Словарь для отслеживания задач дебаунса
 debounce_tasks = defaultdict(asyncio.Task)
-debounce_tasks = defaultdict(asyncio.Task)
-
+last_query_times = {}
 def _remove_task_from_context(task: asyncio.Task, user_data: dict):
     user_tasks_set = user_data.get('user_tasks')
     if user_tasks_set:
