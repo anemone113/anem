@@ -1307,7 +1307,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
         if not response.candidates[0].content.parts:
             logging.warning("Ответ Gemini не содержит частей контента.")
             return "Извините, я не могу обработать этот аудиофайл."
-
+        logger.info("Ответ от Gemini: %s", response)
         # Извлечение текста ответа
         bot_response = ''.join(part.text for part in response.candidates[0].content.parts if part.text).strip()
         logger.info("Ответ от Gemini: %s", bot_response)              
