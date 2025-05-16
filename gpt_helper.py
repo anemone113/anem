@@ -108,6 +108,37 @@ def save_publications_to_firebase(user_id, message_id, data):
         logging.error(f"Ошибка при сохранении публикации {user_id}_{message_id} в Firebase: {e}")
 
 
+
+def save_inline_query_to_firebase(user_id: int, query: str, response: str):
+    """Сохраняет последний запрос и ответ пользователя (до 10 штук)"""
+    try:
+        ref = db.reference(f"neuro_search/{user_id}")
+        current_data = ref.get() or []
+
+        # Удаляем дубликаты по query
+        current_data = [item for item in current_data if item.get("query") != query]
+
+        # Добавляем новый запрос в начало списка
+        current_data.insert(0, {"query": query, "response": response})
+
+        # Ограничиваем 10 последними
+        if len(current_data) > 10:
+            current_data = current_data[:10]
+
+        ref.set(current_data)
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении inline запроса в Firebase: {e}")
+def load_user_inline_queries(user_id: int) -> list[dict]:
+    """Загружает последние 10 inline-запросов пользователя."""
+    try:
+        ref = db.reference(f"neuro_search/{user_id}")
+        return ref.get() or []
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке inline-запросов пользователя {user_id}: {e}")
+        return []
+
+
+
 def load_shared_publications():
     """Загружает общие публикации из Firebase."""
     try:
