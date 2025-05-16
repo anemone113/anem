@@ -68,7 +68,9 @@ from gpt_helper import (
     set_all_tokens,
     get_last_successful_token,
     set_last_successful_token,
-    generate_gemini_inline_response
+    generate_gemini_inline_response,
+    save_inline_query_to_firebase,
+    load_user_inline_queries
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -504,7 +506,7 @@ async def handle_debounced_inline_query(update: Update, context: ContextTypes.DE
             ]
 
             await inline_query.answer(results, cache_time=0, is_personal=True)
-
+            save_inline_query_to_firebase(user_id, query, full_answer_raw)
         except asyncio.CancelledError:
             logger.info(f"Фоновая задача inline запроса пользователя {user_id} была отменена.")
         except Exception as e:
@@ -520,6 +522,27 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.inline_query.from_user.id
 
     if not query:
+        saved_queries = load_user_inline_queries(user_id)
+    
+        results = []
+        for item in saved_queries:
+            text = item.get("query", "")
+            response = item.get("response", "")
+            preview = (response[:100] + "...") if len(response) > 100 else response
+            results.append(
+                InlineQueryResultArticle(
+                    id=str(uuid4()),
+                    title=text,
+                    description=preview,
+                    input_message_content=InputTextMessageContent(
+                        f"<blockquote expandable>{escape(response[:4060])}</blockquote>",
+                        parse_mode=ParseMode.HTML
+                    )
+                )
+            )
+    
+        if results:
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
         return
 
     now = datetime.utcnow()
