@@ -120,7 +120,7 @@ waiting_for_coordinates = {}
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
+MAX_MESSAGE_LENGTH = 4096
 # Основные функции
 # Загружаем данные при запуске бота
 media_group_storage = load_publications_from_firebase()
@@ -1916,45 +1916,37 @@ async def receive_role_input(update: Update, context: CallbackContext):
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.message.chat_id)
     username = update.message.from_user.username or update.message.from_user.first_name
-    user_id = update.message.from_user.id  # Получение user_id
+    user_id = update.message.from_user.id
     caption = update.message.caption or ""
 
     logger.info("Обработка аудио от пользователя")
 
-    # Скачивание аудиофайла
     audio = update.message.audio or update.message.voice
     file = await context.bot.get_file(audio.file_id)
 
-    # Определение исходного расширения файла
-    file_extension = os.path.splitext(file.file_path)[1] or ".oga"  # Если расширение неизвестно, используем .oga
-
-    # Создание временного файла с исходным расширением
+    file_extension = os.path.splitext(file.file_path)[1] or ".oga"
     fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
-
-    # Закрытие файлового дескриптора, чтобы освободить ресурс
     os.close(fd)
 
-    # Загрузка аудио в файл
     await file.download_to_drive(local_file_path)
 
-    # Определение типа аудиофайла и формирование полной подписи
     audio_type = "[Голосовое сообщение]" if update.message.voice else "[Аудиофайл]"
-    full_caption = f"{audio_type} {caption}".strip()  # Убираем лишний пробел, если caption пустой
-
+    full_caption = f"{audio_type} {caption}".strip()
 
     try:
-        # Генерация ответа с передачей user_id
         full_audio_response = await generate_audio_response(local_file_path, user_id, query=caption)
+        logger.info("Ответ от Gemini: %s", full_audio_response)
 
         add_to_context(user_id, full_caption, message_type="user_send_audio")         
-        add_to_context(user_id, full_audio_response, message_type="bot_audio_response")  # Добавляем ответ в контекст
+        add_to_context(user_id, full_audio_response, message_type="bot_audio_response")
         save_context_to_firebase(user_id) 
 
-        # Отправка текста с результатом пользователю
-        await update.message.reply_text(full_audio_response)
+        # Разбивка текста на части по 4096 символов
+        for i in range(0, len(full_audio_response), MAX_MESSAGE_LENGTH):
+            part = full_audio_response[i:i+MAX_MESSAGE_LENGTH]
+            await update.message.reply_text(part)
 
     finally:
-        # Удаление временного файла
         os.remove(local_file_path)
 
 async def handle_gptgif(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5793,7 +5785,7 @@ async def handle_followup_question(update, context):
     await update.callback_query.message.reply_text("Пожалуйста, введите ваш уточняющий вопрос.")
     return ASKING_FOR_FOLLOWUP
 
-MAX_MESSAGE_LENGTH = 4096
+
 
 def split_text_into_chunks(text, max_length=MAX_MESSAGE_LENGTH):
     """Разделяет текст на части, каждая из которых не превышает max_length."""
