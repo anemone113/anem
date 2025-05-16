@@ -804,7 +804,7 @@ async def generate_gemini_inline_response(query: str) -> str:
             google_search=GoogleSearch()
         )        
         response = await client.aio.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.0-flash',
             contents=context,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
