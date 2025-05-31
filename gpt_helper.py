@@ -55,6 +55,125 @@ user_roles = {}
 # Конфигурация логирования
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+
+def save_ozon_tracking_to_firebase(user_id: int, item_data: dict):
+    """Сохраняет товар для отслеживания в Firebase."""
+    try:
+        user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items")
+        current_items = user_ref.get() or []
+
+        # Опционально: Предотвращение дублирования URL или обновление существующих
+        existing_item_index = -1
+        for i, existing_item in enumerate(current_items):
+            if existing_item.get("url") == item_data["url"]:
+                existing_item_index = i
+                break
+        
+        if existing_item_index != -1:
+            # Обновляем существующий элемент
+            # Заменяем старые данные отслеживания новыми для того же URL
+            current_items[existing_item_index] = item_data 
+            logger.info(f"Обновлен товар {item_data['url']} для пользователя {user_id}")
+        else:
+            # Добавляем новый элемент
+            current_items.append(item_data)
+            logger.info(f"Добавлен новый товар {item_data['url']} для пользователя {user_id}")
+
+        user_ref.set(current_items) # Сохраняем весь список обратно
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении отслеживания Ozon в Firebase: {e}")
+        return False
+
+
+def load_ozon_tracking_from_firebase(user_id: int):
+    """Загружает все отслеживаемые товары Ozon для пользователя из Firebase."""
+    try:
+        user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items")
+        tracked_items = user_ref.get()
+
+        if tracked_items is None:
+            logger.info(f"Нет отслеживаемых товаров для пользователя {user_id}")
+            return []
+        
+        logger.info(f"Загружено {len(tracked_items)} товаров для пользователя {user_id}")
+        return tracked_items
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке отслеживаемых товаров Ozon из Firebase: {e}")
+        return []
+
+def load_ozon_product_firebase(user_id: int, product_id: str):
+    """Возвращает конкретный отслеживаемый товар по product_id для пользователя из Firebase."""
+    try:
+        user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items/")
+        tracked_items = user_ref.get()
+
+        if not tracked_items:
+            logger.info(f"Нет отслеживаемых товаров для пользователя {user_id}")
+            return None
+
+        for item in tracked_items:
+            if item.get("item_id") == product_id:
+                logger.info(f"Товар с ID {product_id} найден для пользователя {user_id}")
+                return item
+
+        logger.info(f"Товар с ID {product_id} не найден у пользователя {user_id}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке товара Ozon из Firebase: {e}")
+        return None
+
+
+def delete_ozon_product_firebase(user_id: int, product_id: str) -> bool:
+    """Удаляет конкретный отслеживаемый товар по product_id для пользователя из Firebase."""
+    try:
+        user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items/")
+        tracked_items = user_ref.get()
+
+        if not tracked_items:
+            logger.info(f"Нет отслеживаемых товаров для пользователя {user_id}")
+            return False
+
+        # Оставим только те товары, у которых item_id не равен product_id
+        updated_items = [item for item in tracked_items if item.get("item_id") != product_id]
+
+        # Обновим список в Firebase
+        user_ref.set(updated_items)
+        logger.info(f"Товар с ID {product_id} удалён для пользователя {user_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка при удалении товара Ozon из Firebase: {e}")
+        return False
+
+
+def update_ozon_tracking_item(user_id: str, item_id: str, updated_fields: dict) -> bool:
+    try:
+        from firebase_admin import db
+        user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items")
+        current_items = user_ref.get() or []
+
+        updated = False
+        for item in current_items:
+            if item.get("item_id") == item_id:
+                item.update(updated_fields)  # Обновляем только нужные поля
+                updated = True
+                break
+
+        if updated:
+            user_ref.set(current_items)  # Сохраняем обратно весь список
+            return True
+        else:
+            logger.warning(f"Товар с item_id={item_id} не найден у пользователя {user_id}")
+            return False
+    except Exception as e:
+        logger.exception(f"Ошибка при обновлении отслеживаемого товара: {e}")
+        return False
+
+
 def load_context_from_firebase():
     """Загружает user_contexts, user_roles, пресеты и модели из Firebase."""
     global user_contexts, user_roles, user_presets, user_models
