@@ -524,6 +524,7 @@ async def handle_debounced_inline_query(update: Update, context: ContextTypes.DE
 
 async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
+
     user_id = update.inline_query.from_user.id
 
     if not query:
@@ -564,7 +565,7 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         delay = 3.0
     else:
         time_since_last = (now - last_query_time).total_seconds()
-        delay = 1.8 if time_since_last < 3 else 3.0
+        delay = 2.0 if time_since_last < 3 else 3.0
 
     async def delayed_response():
         try:
@@ -573,9 +574,9 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             # Проверка: если пользователь не вводил текст последние 1.5 секунды — запускаем
             final_delay = 0.0
             latest_time = last_query_times.get(user_id)
-            if latest_time and (datetime.utcnow() - latest_time).total_seconds() < 1.8:
+            if latest_time and (datetime.utcnow() - latest_time).total_seconds() < 3.0:
                 # Пользователь всё еще печатает — откладываем
-                final_delay = 1.8
+                final_delay = 1.5
 
             if final_delay > 0:
                 await asyncio.sleep(final_delay)
