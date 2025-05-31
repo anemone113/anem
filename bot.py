@@ -13363,26 +13363,31 @@ def format_price_table(tracked_items, page):
     end = start + MAX_ITEMS_PER_PAGE
     subset = tracked_items[start:end]
 
-    lines = ["Название    | нач.цена | тек.цена | разница"]
+    lines = ["Название  | нач.₽  | тек.₽  | мин.₽"]
     for item in subset:
         try:
-            title = item['title'][:10].ljust(12)
-            base = item.get('base_price_when_set', 0)
+            title = item['title'][:10].ljust(10)
+            base = int(float(item.get('base_price_when_set', 0)))
 
             price_entries = item.get('price_history', [])
             if price_entries:
                 last_entry = price_entries[-1]
                 latest_card_price = last_entry.get('card_price', base)
                 try:
-                    latest_card_price = int(latest_card_price)
+                    latest_card_price = int(float(latest_card_price))
                 except (ValueError, TypeError):
                     latest_card_price = base
-            else:
-                latest_card_price = base  # если истории нет — используем базовую цену
 
-            diff = latest_card_price - base
-            sign = '+' if diff > 0 else ''
-            line = f"{title}| {base:^8} | {latest_card_price:^8} | {sign}{diff:^7}"
+                # Найти минимальную цену из истории
+                min_card_price = min(
+                    int(entry.get('card_price', base)) for entry in price_entries
+                    if str(entry.get('card_price')).isdigit()
+                )
+            else:
+                latest_card_price = base
+                min_card_price = base
+
+            line = f"{title}|{base:^8}|{latest_card_price:^8}|{min_card_price:^8}"
             lines.append(line)
 
         except Exception as e:
