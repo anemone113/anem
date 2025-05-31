@@ -13717,7 +13717,7 @@ async def ozon_track_start_callback(update: Update, context: ContextTypes.DEFAUL
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
-        text="Хотите включить уведомления о понижении цены? Если да, то на сколько (в рублях от текущей цены с картой Ozon, если она есть, иначе от обычной цены)?",
+        text="Хотите включить уведомления о понижении цены? Если да, то на сколько (в рублях от текущей цены с картой Ozon)?",
         reply_markup=reply_markup
     )
 
@@ -13796,13 +13796,27 @@ async def ozon_set_threshold_callback(update: Update, context: ContextTypes.DEFA
         }]
     }
 
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Мои Отслеживания 📒", callback_data="myozon_items")]
+    ])
+
     if save_ozon_tracking_to_firebase(user_id, item_to_save):
         if threshold > 0:
-            await query.edit_message_text(f"Товар '{product_details['title'][:50]}...' сохранен! Вы получите уведомление, если цена упадет на {threshold} руб. или более.")
+            await query.edit_message_text(
+                f"Товар '{product_details['title'][:50]}...' сохранен! Вы получите уведомление, если цена упадет на {threshold} руб. или более.",
+                reply_markup=keyboard
+            )
         else:
-            await query.edit_message_text(f"Товар '{product_details['title'][:50]}...' сохранен. Уведомления о снижении цены отключены.")
+            await query.edit_message_text(
+                f"Товар '{product_details['title'][:50]}...' сохранен. Уведомления о снижении цены отключены.",
+                reply_markup=keyboard
+            )
     else:
-        await query.edit_message_text("Не удалось сохранить товар для отслеживания. Пожалуйста, попробуйте позже.")
+        await query.edit_message_text(
+            "Не удалось сохранить товар для отслеживания. Пожалуйста, попробуйте позже.",
+            reply_markup=keyboard
+        )
+
 
     # Очищаем временное хранилище для этого взаимодействия
     if product_interaction_id in temp_data_store:
