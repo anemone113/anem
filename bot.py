@@ -70,7 +70,12 @@ from gpt_helper import (
     set_last_successful_token,
     generate_gemini_inline_response,
     save_inline_query_to_firebase,
-    load_user_inline_queries
+    load_user_inline_queries,
+    save_ozon_tracking_to_firebase,
+    load_ozon_tracking_from_firebase,
+    load_ozon_product_firebase,
+    delete_ozon_product_firebase,
+    update_ozon_tracking_item
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -13172,6 +13177,866 @@ async def duplicate_message(update: Update, context: CallbackContext) -> None:
         # Если пользователь не в режиме дублирования, продолжаем с основной логикой
         await start(update, context)
 
+
+
+
+
+
+
+
+def load_cookies_from_file(path: str) -> dict:
+    cookies = {}
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split('\t')
+            if len(parts) < 7:
+                continue
+            name = parts[5]
+            value = parts[6]
+            cookies[name] = value
+    return cookies
+
+async def handle_ozon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        keyboard = [
+            [
+                InlineKeyboardButton("Мои товары", callback_data="myozon_items")
+            ]
+        ]        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "📊Если вы хотите добавить новый товар то укажите на него ссылку после команды <code>/ozon</code>\n"
+            "Формата:\n"
+            "<pre>/ozon Ваша_Ссылка</pre>\n"
+            "Пример:\n"
+            "<pre>/ozon https://www.ozon.ru/product/filtr-dlya-ochistki-vody-pod-moyku-barer-master-osmo-50-bez-krana-pyatistupenchatyy-c-tehnologiey-1388575614/</pre>\n\n"
+            "Либо вы можете посмотреть уже добавленные вами товары и графики по ним по кнопке ниже:",
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        logger.info("Пользователь не указал ссылку после команды /ozon")
+        return
+
+    user_url = context.args[0]
+    logger.info(f"Получена ссылка от пользователя: {user_url}")
+
+    if "ozon.ru" not in user_url:
+        await update.message.reply_text("Пожалуйста, укажите корректную ссылку на ozon.")
+        logger.info(f"Получена некорректная ссылка: {user_url}")
+        return
+
+    # Генерируем уникальный ключ для этого взаимодействия с продуктом для хранения в контексте
+    # Использование самого URL может быть слишком длинным или проблематичным для callback_data позже
+    # Более простой способ - использовать user_url как ключ в user_data напрямую, если это работает для вашего контекста.
+    # Для callback_data мы передадим короткий, уникальный ID.
+    product_interaction_id = str(uuid.uuid4()).split('-')[0] # Короткий уникальный ID
+
+    api_url = f"https://www.ozon.ru/api/entrypoint-api.bx/page/json/v2?url={user_url}"
+    logger.info(f"Сформирован API-запрос: {api_url}")
+    #cookie_path = os.path.join("config", "ozon.txt") # Убедитесь, что этот путь корректен
+    cookie_path = "/etc/secrets/ozon.txt"
+    logger.info(f"cookie_path: {cookie_path}")
+    cookies = load_cookies_from_file(cookie_path)
+    logger.info(f"cookies: {cookies if cookies else 'Куки не загружены'}")
+
+    try:
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            async with session.get(api_url) as response:
+                logger.info(f"Ответ от API Ozon: статус {response.status}")
+                if response.status != 200:
+                    # Попытка получить больше информации об ошибке
+                    error_text = await response.text()
+                    logger.error(f"Ошибка API Ozon {response.status}: {error_text[:500]}")
+                    await update.message.reply_text(f"Ошибка при получении данных с Ozon: {response.status}. Попробуйте обновить cookies.")
+                    return
+                data = await response.json()
+
+        widget_states_raw = data.get("widgetStates", {})
+        logger.info(f"Извлечён widgetStates: {list(widget_states_raw.keys())[:5]}...")
+
+        price_data = None
+        for key, value in widget_states_raw.items():
+            if key.startswith("webPrice") and isinstance(value, str):
+                try:
+                    price_data = json.loads(value)
+                    logger.info(f"Найден webPrice по ключу: {key}")
+                    break
+                except json.JSONDecodeError:
+                    logger.info(f"Ошибка декодирования JSON по ключу: {key}")
+                    continue
+
+        if not price_data:
+            await update.message.reply_text("Не удалось найти информацию о цене. Структура ответа Ozon могла измениться.")
+            logger.warning(f"Не найден webPrice для {user_url}. Ключи Data: {data.keys()}. Ключи WidgetStates: {list(widget_states_raw.keys())}")
+            return
+        
+        # Очистка цен от символов валюты и неразрывных пробелов
+        card_price_raw = price_data.get("cardPrice", "—").replace('₽', '').replace('\u2009', '').replace('&nbsp;', '').strip()
+        price_raw = price_data.get("price", "—").replace('₽', '').replace('\u2009', '').replace('&nbsp;', '').strip()
+        original_price_raw = price_data.get("originalPrice", "—").replace('₽', '').replace('\u2009', '').replace('&nbsp;', '').strip()
+
+        # Сохраняем None если цена "—", иначе строку с ценой
+        card_price = card_price_raw if card_price_raw != "—" else None
+        price = price_raw if price_raw != "—" else None
+        original_price = original_price_raw # Старая цена может быть "—"
+
+        title_candidates = [
+            data.get("seo", {}).get("title", ""),
+            data.get("seo", {}).get("metaTitle", ""),
+            data.get("seo", {}).get("ogTitle", "")
+        ]
+        title = next((t for t in title_candidates if t), "Название товара не найдено")
+        title = title.split(" купить")[0] # Очищаем заголовок
+
+        # Сохраняем данные для потенциального отслеживания
+        if 'ozon_tracking_temp' not in context.user_data:
+            context.user_data['ozon_tracking_temp'] = {}
+        context.user_data['ozon_tracking_temp'][product_interaction_id] = {
+            "url": user_url,
+            "title": title,
+            "card_price": card_price, # Храним как строку или None
+            "price": price,           # Храним как строку или None
+        }
+
+        response_text = (
+            f"📦 <b>{title}</b>\n\n"
+            f"💳 Цена с Ozon Картой: <b>{card_price_raw}</b>\n" # Отображаем исходные строки
+            f"💰 Цена без карты: <b>{price_raw}</b>\n"
+            f"📉 Старая цена: <s>{original_price}</s>"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("Сохранить для отслеживания 🎯", callback_data=f"ozon_track_start_{product_interaction_id}")
+            ],
+            [
+                InlineKeyboardButton("Мои Отслеживания 📒", callback_data="myozon_items")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_html(response_text, reply_markup=reply_markup)
+
+    except aiohttp.ClientError as e:
+        logger.error(f"Aiohttp ClientError при запросе к Ozon: {e}")
+        await update.message.reply_text(f"Сетевая ошибка при доступе к Ozon: {str(e)}")
+    except json.JSONDecodeError as e:
+        logger.error(f"JSONDecodeError при обработке ответа Ozon: {e}")
+        await update.message.reply_text("Ошибка при обработке данных от Ozon. Формат ответа мог измениться.")
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка в handle_ozon: {e}", exc_info=True)
+        await update.message.reply_text(f"Произошла ошибка: {str(e)}")
+
+
+
+async def ozon_delete_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    product_id = query.data.split("_")[-1]
+
+    success = delete_ozon_product_firebase(user_id, product_id)
+
+    if not success:
+        await query.answer("Ошибка при удалении товара.", show_alert=True)
+        return
+
+    # Получаем обновлённый список товаров
+    user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items/")
+    tracked_items = user_ref.get() or []
+
+    # Отрисовываем новую клавиатуру (по умолчанию страница 0)
+    keyboard = build_keyboard(tracked_items, page=0)
+
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+
+
+MAX_ITEMS_PER_PAGE = 5
+
+def format_price_table(tracked_items, page):
+    start = page * MAX_ITEMS_PER_PAGE
+    end = start + MAX_ITEMS_PER_PAGE
+    subset = tracked_items[start:end]
+
+    lines = ["Название    | нач.цена | тек.цена | разница"]
+    for item in subset:
+        try:
+            title = item['title'][:10].ljust(12)
+            base = item.get('base_price_when_set', 0)
+
+            price_entries = item.get('price_history', [])
+            if price_entries:
+                last_entry = price_entries[-1]
+                latest_card_price = last_entry.get('card_price', base)
+                try:
+                    latest_card_price = int(latest_card_price)
+                except (ValueError, TypeError):
+                    latest_card_price = base
+            else:
+                latest_card_price = base  # если истории нет — используем базовую цену
+
+            diff = latest_card_price - base
+            sign = '+' if diff > 0 else ''
+            line = f"{title}| {base:^8} | {latest_card_price:^8} | {sign}{diff:^7}"
+            lines.append(line)
+
+        except Exception as e:
+            print("Ошибка на товаре:", item.get("title"))
+            raise
+
+    return '<pre>' + '\n'.join(lines) + '</pre>'
+
+def build_keyboard(tracked_items, page):
+    MAX_ITEMS_PER_PAGE = 5  # Убедись, что это число определено корректно
+    start = page * MAX_ITEMS_PER_PAGE
+    end = start + MAX_ITEMS_PER_PAGE
+    subset = tracked_items[start:end]
+
+    buttons = []
+    for item in subset:
+        title = item.get('title', '')[:20]
+        product_id = item.get('item_id', '')
+        is_active = item.get('is_active_tracking', False)
+        threshold = item.get('notification_threshold_rub')
+
+        # Галочка для активных
+        if is_active:
+            title = f"✅ {title}"
+
+        # Формат ⏰:значение
+        if isinstance(threshold, (int, float)) and threshold > 0:
+            threshold_text = f"⏰: {threshold}"
+        else:
+            threshold_text = "⏰: нет"
+
+        buttons.append([
+            InlineKeyboardButton(title, callback_data=f"ozon_view_stat_{product_id}"),
+            InlineKeyboardButton(threshold_text, callback_data=f"changenotif_{product_id}"),            
+            InlineKeyboardButton("Удалить", callback_data=f"ozon_delete_{product_id}"),
+
+        ])
+
+    # Навигация по страницам
+    nav_buttons = []
+    total_pages = (len(tracked_items) - 1) // MAX_ITEMS_PER_PAGE + 1
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"ozon_page_{page - 1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("Вперёд ➡️", callback_data=f"ozon_page_{page + 1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    return InlineKeyboardMarkup(buttons)
+
+
+
+async def ozon_message_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+
+
+
+import io
+import matplotlib.pyplot as plt
+from datetime import datetime
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+
+async def ozon_view_stat(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    data = query.data
+
+    if not data.startswith("ozon_view_stat_"):
+        return
+
+    product_id = data.replace("ozon_view_stat_", "")
+    logger.info(f"product_id: {product_id}")
+
+    # Шаг 1: отправка временного сообщения
+    waiting_message = await query.message.reply_text("⏳ Подождите, строю график...")
+
+    try:
+        product_data = load_ozon_product_firebase(user_id, product_id)
+        if not product_data:
+            await waiting_message.edit_text(
+                "❌ Не удалось загрузить данные о товаре.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]])
+            )
+            return
+
+        title = product_data.get("title", "Без названия")
+        initial_price = float(product_data.get("initial_card_price_at_tracking", 0))
+        price_history = product_data.get("price_history", [])
+        url = product_data.get("url", "")
+
+        if not price_history:
+            await waiting_message.edit_text(
+                "❌ Нет истории цен для этого товара.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]])
+            )
+            return
+
+        # Построение графика
+        price_history_sorted = sorted(price_history, key=lambda x: x["timestamp_utc"])
+        dates = [datetime.fromisoformat(p["timestamp_utc"]) for p in price_history_sorted]
+        prices = [float(p["card_price"]) for p in price_history_sorted]
+
+        current_price = prices[-1]
+        min_price = min(prices)
+        price_diff = initial_price - current_price
+
+        fig, ax = plt.subplots()
+        ax.plot(dates, prices, marker='o', linestyle='-', color='blue')
+        ax.set_title("Динамика цены")
+        ax.set_xlabel("Дата")
+        ax.set_ylabel("Цена, ₽")
+        ax.grid(True)
+        fig.autofmt_xdate()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close(fig)
+
+        stat_text = (
+            f"📦 <b>{title}</b>\n\n"
+            f"🔹 <b>Изначальная цена:</b> {initial_price} ₽\n"
+            f"🔸 <b>Текущая цена:</b> {current_price} ₽\n"
+            f"📉 <b>Минимальная цена:</b> {min_price} ₽\n"
+            f"↘️ <b>Разница:</b> {price_diff:.2f} ₽\n"
+            f"🔗 <a href='{url}'>Ссылка на товар</a>"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+        ])
+
+        # Удаляем временное сообщение
+        await waiting_message.delete()
+
+        # Отправляем график
+        await query.message.reply_photo(photo=buf, caption=stat_text, parse_mode="HTML", reply_markup=keyboard)
+
+    except Exception as e:
+        logger.exception("Ошибка при построении графика:")
+        await waiting_message.edit_text(
+            "❌ Произошла ошибка при построении графика.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]])
+        )
+
+
+
+async def show_tracked_items(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0):
+    user = update.effective_user
+    if not user:
+        if update.callback_query:
+            user = update.callback_query.from_user
+        else:
+            return  # или выбросить исключение
+
+    user_id = str(user.id)
+    user_data = context.application.bot_data.get(user_id, {})
+    tracked_items = load_ozon_tracking_from_firebase(user_id)
+    logger.info(f"tracked_items: {tracked_items}")
+    if not tracked_items:
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text("У вас пока нет отслеживаемых товаров.")
+        elif update.message:
+            await update.message.reply_text("У вас пока нет отслеживаемых товаров.")
+        return
+
+    text = format_price_table(tracked_items, page)
+    keyboard = build_keyboard(tracked_items, page)
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text=text, reply_markup=keyboard, parse_mode="HTML")
+    elif update.message:
+        await update.message.reply_html(text, reply_markup=keyboard)
+
+
+
+
+async def ozon_change_threshold_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, product_id = query.data.split("_", 1)
+    except ValueError:
+        await query.edit_message_text("Ошибка: неверный формат команды изменения порога.")
+        return
+
+    user_id = str(query.from_user.id)
+    tracked_items = load_ozon_tracking_from_firebase(user_id)
+
+    # Ищем нужный товар
+    item = next((x for x in tracked_items if x["item_id"] == product_id), None)
+    if not item:
+        await query.edit_message_text("Товар не найден в отслеживаемых.")
+        return
+
+    # Сохраняем во временное хранилище
+    temp_data_store = context.user_data.setdefault("ozon_change_temp", {})
+    temp_data_store[product_id] = item
+
+    # Показываем клавиатуру с выбором порога
+    threshold_options = [50, 100, 200, 300, 500, 1000, 2500, 5000, 10000]
+    keyboard = []
+    row = []
+    for th in threshold_options:
+        row.append(InlineKeyboardButton(str(th), callback_data=f"ozon_update_thresh_{th}_{product_id}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    keyboard.append([
+        InlineKeyboardButton("Уведомления не нужны 🚫", callback_data=f"ozon_update_thresh_0_{product_id}")
+    ])
+
+    await query.edit_message_text(
+        text="Выберите новый порог уведомлений о снижении цены:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def ozon_update_threshold_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, _, _, threshold_str, product_id = query.data.split("_", 4)
+        threshold = int(threshold_str)
+    except Exception:
+        await query.edit_message_text("Ошибка: не удалось прочитать порог и ID.")
+        return
+
+    user_id = str(query.from_user.id)
+    temp_data_store = context.user_data.get("ozon_change_temp", {})
+    item = temp_data_store.get(product_id)
+
+    if not item:
+        await query.edit_message_text("Временные данные не найдены. Попробуйте снова.")
+        return
+
+    # Обновляем поля
+    item["notification_threshold_rub"] = threshold
+    item["is_active_tracking"] = threshold > 0
+    item["last_changed_utc"] = datetime.now(timezone.utc).isoformat()
+
+    # Сохраняем обратно в Firebase
+    update_success = update_ozon_tracking_item(user_id, product_id, item)
+
+    if update_success:
+        if threshold > 0:
+            msg = f"Порог уведомлений для товара «{item['title'][:50]}...» установлен на {threshold} руб."
+        else:
+            msg = f"Уведомления для товара «{item['title'][:50]}...» отключены."
+    else:
+        msg = "Ошибка при сохранении изменений. Попробуйте позже."
+
+    # Удаляем временные данные
+    temp_data_store.pop(product_id, None)
+
+    # Обновляем список отслеживаемых товаров
+    tracked_items = load_ozon_tracking_from_firebase(user_id)
+    keyboard = build_keyboard(tracked_items, page=0)
+    text = format_price_table(tracked_items, page=0)
+
+    await query.edit_message_text(text=text, reply_markup=keyboard, parse_mode="HTML")
+
+
+
+# Обработчик команды "мои товары"
+async def handle_my_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # update может быть как командой, так и callback_query
+    # Нужно правильно получить update для передачи в show_tracked_items
+
+    # Если это callback_query — у него другой объект update
+    if update.callback_query:
+        await update.callback_query.answer()  # закрыть "часики" на кнопке
+        # Подменяем update, чтобы show_tracked_items работал как обычно
+        await show_tracked_items(update, context, page=0)
+    else:
+        await show_tracked_items(update, context, page=0)
+
+# Обработчик callback_data для смены страницы
+async def handle_ozonpage_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.split('_')[-1])
+    await show_tracked_items(update, context, page=page)
+
+
+
+async def ozon_track_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer() # Подтверждаем callback-запрос
+
+    try:
+        # callback_data=f"ozon_track_start_{product_interaction_id}"
+        _, _, _, product_interaction_id = query.data.split("_", 3)
+    except ValueError:
+        logger.error(f"Неверный callback_data для ozon_track_start: {query.data}")
+        await query.edit_message_text("Ошибка: неверные данные для отслеживания.")
+        return
+
+    temp_data_store = context.user_data.get('ozon_tracking_temp', {})
+    logger.info(f"temp_data_store: {temp_data_store}")    
+    product_details = temp_data_store.get(product_interaction_id)
+
+    if not product_details:
+        logger.warning(f"Временные данные не найдены для product_interaction_id: {product_interaction_id}")
+        await query.edit_message_text("Не удалось найти данные о товаре для отслеживания. Попробуйте снова.")
+        return
+
+    threshold_options = [50, 100, 200, 300, 500, 1000, 2500, 5000, 10000]
+    keyboard = []
+    row = []
+    for th in threshold_options:
+        # callback_data=f"ozon_set_thresh_{th}_{product_interaction_id}"
+        row.append(InlineKeyboardButton(str(th), callback_data=f"ozon_set_thresh_{th}_{product_interaction_id}"))
+        if len(row) == 3: # 3 кнопки в ряду
+            keyboard.append(row)
+            row = []
+    if row: # Добавляем оставшиеся кнопки
+        keyboard.append(row)
+
+    keyboard.append([InlineKeyboardButton("Уведомления не нужны 🚫", callback_data=f"ozon_set_thresh_0_{product_interaction_id}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        text="Хотите включить уведомления о понижении цены? Если да, то на сколько (в рублях от текущей цены с картой Ozon, если она есть, иначе от обычной цены)?",
+        reply_markup=reply_markup
+    )
+
+
+
+
+async def ozon_set_threshold_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        logging.info(f"Получен callback_data: {query.data}")
+
+        # Пример: callback_data=f"ozon_set_thresh_{th}_{product_interaction_id}"
+        parts = query.data.split("_", 4)
+        logging.info(f"Разбито на части: {parts}")
+
+        _, _, _, threshold_str, product_interaction_id = parts
+        threshold = int(threshold_str)
+
+        logging.info(f"Порог: {threshold}, ID взаимодействия: {product_interaction_id}")
+    except ValueError:
+        logger.error(f"Неверный callback_data для ozon_set_threshold: {query.data}")
+        await query.edit_message_text("Ошибка: неверные данные порога.")
+        return
+
+    user_id = query.from_user.id
+    temp_data_store = context.user_data.get('ozon_tracking_temp', {})
+    product_details = temp_data_store.get(product_interaction_id)
+
+    if not product_details:
+        logger.warning(f"Временные данные не найдены для product_interaction_id: {product_interaction_id} при установке порога.")
+        await query.edit_message_text("Не удалось найти данные о товаре. Попробуйте снова.")
+        return
+
+    # Определяем базовую цену для отслеживания (цена по карте, если есть, иначе обычная цена)
+    # Убедимся, что цены являются числами для расчетов. Предполагаем, что они хранятся как строки типа "123.45" или None.
+    try:
+        base_price_to_track = None
+        # product_details["card_price"] и product_details["price"] хранят строки или None
+        card_price_val_str = product_details.get("card_price")
+        price_val_str = product_details.get("price")
+
+        if card_price_val_str: # Если есть цена по карте (не None и не пустая строка)
+            base_price_to_track = float(str(card_price_val_str).replace(',', '.'))
+        elif price_val_str: # Иначе, если есть обычная цена
+            base_price_to_track = float(str(price_val_str).replace(',', '.'))
+        
+        if base_price_to_track is None:
+            await query.edit_message_text("Не удалось определить текущую цену для отслеживания.")
+            logger.error(f"Не удалось определить базовую цену для отслеживания: {product_details}")
+            return
+
+    except ValueError as e:
+        await query.edit_message_text("Ошибка в формате цены товара.")
+        logger.error(f"ValueError при конвертации цены для отслеживания: {e}, детали: {product_details}")
+        return
+
+    current_time_iso = datetime.now(timezone.utc).isoformat()
+
+    item_to_save = {
+        "item_id": str(uuid.uuid4()), # Уникальный ID для этого отслеживаемого товара
+        "url": product_details["url"],
+        "title": product_details["title"],
+        "initial_card_price_at_tracking": product_details["card_price"], # Цена на момент установки отслеживания
+        "initial_price_at_tracking": product_details["price"],         # Цена на момент установки отслеживания
+        "base_price_when_set": base_price_to_track, # Конкретная цена (карта/обычная), использованная для расчета порога
+        "notification_threshold_rub": threshold,
+        "added_timestamp_utc": current_time_iso,
+        "last_checked_timestamp_utc": current_time_iso,
+        "is_active_tracking": threshold > 0,
+        "price_history": [{
+            "timestamp_utc": current_time_iso,
+            "card_price": product_details["card_price"], # Сохраняем исходные строки или None
+            "price": product_details["price"]
+        }]
+    }
+
+    if save_ozon_tracking_to_firebase(user_id, item_to_save):
+        if threshold > 0:
+            await query.edit_message_text(f"Товар '{product_details['title'][:50]}...' сохранен! Вы получите уведомление, если цена упадет на {threshold} руб. или более.")
+        else:
+            await query.edit_message_text(f"Товар '{product_details['title'][:50]}...' сохранен. Уведомления о снижении цены отключены.")
+    else:
+        await query.edit_message_text("Не удалось сохранить товар для отслеживания. Пожалуйста, попробуйте позже.")
+
+    # Очищаем временное хранилище для этого взаимодействия
+    if product_interaction_id in temp_data_store:
+        del temp_data_store[product_interaction_id]
+        if not temp_data_store: # если словарь пуст
+             del context.user_data['ozon_tracking_temp']
+
+
+
+
+
+
+
+async def fetch_ozon_product_data_for_check(url: str, cookies: dict):
+    """Вспомогательная функция для получения текущих данных для данного URL Ozon."""
+    api_url = f"https://www.ozon.ru/api/entrypoint-api.bx/page/json/v2?url={url}"
+    async with aiohttp.ClientSession(cookies=cookies) as session:
+        async with session.get(api_url) as response:
+            if response.status == 200:
+                data = await response.json()
+                widget_states_raw = data.get("widgetStates", {})
+                price_data_json = None
+                for key, value in widget_states_raw.items():
+                    if key.startswith("webPrice") and isinstance(value, str):
+                        try:
+                            price_data_json = json.loads(value)
+                            break
+                        except json.JSONDecodeError:
+                            continue # Пропускаем, если JSON невалидный
+                
+                if price_data_json:
+                    card_price_raw = price_data_json.get("cardPrice", "—").replace('₽', '').replace('\u2009', '').replace('&nbsp;', '').strip()
+                    price_raw = price_data_json.get("price", "—").replace('₽', '').replace('\u2009', '').replace('&nbsp;', '').strip()
+                    
+                    current_card_price_float = None
+                    current_price_float = None
+
+                    try:
+                        if card_price_raw != "—":
+                            current_card_price_float = float(card_price_raw.replace(',', '.'))
+                    except ValueError: 
+                        logger.warning(f"Не удалось распознать цену по карте '{card_price_raw}' для {url}")
+                    
+                    try:
+                        if price_raw != "—":
+                            current_price_float = float(price_raw.replace(',', '.'))
+                    except ValueError:
+                        logger.warning(f"Не удалось распознать обычную цену '{price_raw}' для {url}")
+
+                    return {
+                        "card_price_str": card_price_raw if card_price_raw != "—" else None,
+                        "price_str": price_raw if price_raw != "—" else None,
+                        "current_card_price_float": current_card_price_float,
+                        "current_price_float": current_price_float,
+                    }
+            else:
+                error_text_short = await response.text()
+                logger.error(f"Ошибка API Ozon при проверке {response.status} для {url}: {error_text_short[:200]}")
+    return None
+
+
+async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Запуск ежедневной проверки цен Ozon...")
+    all_tracking_data_ref = db.reference("ozon_prices")
+    all_users_tracking = all_tracking_data_ref.get()
+
+    if not all_users_tracking:
+        logger.info("Нет товаров для отслеживания.")
+        return
+
+    #cookie_path = os.path.join("config", "ozon.txt") # Убедитесь, что этот путь корректен
+    cookie_path = "/etc/secrets/ozon.txt"
+    cookies = load_cookies_from_file(cookie_path)
+    if not cookies:
+        logger.error("Не удалось загрузить cookies для проверки цен Ozon. Проверка отменена.")
+        return
+
+    current_time_iso = datetime.now(timezone.utc).isoformat()
+
+    for user_id_str, user_data in all_users_tracking.items():
+        user_id = int(user_id_str)
+        tracked_items = user_data.get("tracked_items", [])
+        updated_items_for_user = [] # Список для обновления данных пользователя в БД
+        needs_db_update_for_user = False
+
+        for item_index, item_copy in enumerate(tracked_items): # Работаем с копией для безопасного изменения
+            item = dict(item_copy) # Создаем изменяемую копию элемента списка
+
+            if not item.get("is_active_tracking", False):
+                updated_items_for_user.append(item) # Сохраняем неактивные элементы
+                continue
+
+            url = item.get("url")
+            if not url:
+                updated_items_for_user.append(item) # Сохраняем невалидные элементы или фильтруем их
+                continue
+            
+            logger.info(f"Проверка товара: {url} для пользователя {user_id}")
+            current_price_info = await fetch_ozon_product_data_for_check(url, cookies)
+            
+            item["last_checked_timestamp_utc"] = current_time_iso # Обновляем время проверки независимо от успеха
+            needs_db_update_for_user = True # Помечаем, что нужно обновить, т.к. время проверки изменилось
+
+            if current_price_info:
+                # Добавляем в историю цен
+                if "price_history" not in item or not isinstance(item["price_history"], list):
+                    item["price_history"] = [] # Инициализируем, если отсутствует или не список
+                
+                item["price_history"].append({
+                    "timestamp_utc": current_time_iso,
+                    "card_price": current_price_info["card_price_str"],
+                    "price": current_price_info["price_str"]
+                })
+                # needs_db_update_for_user уже True
+
+                # Определяем релевантную текущую цену для сравнения
+                price_to_compare = None
+                if current_price_info["current_card_price_float"] is not None:
+                    price_to_compare = current_price_info["current_card_price_float"]
+                elif current_price_info["current_price_float"] is not None:
+                    price_to_compare = current_price_info["current_price_float"]
+                
+                if price_to_compare is not None:
+                    base_price_when_set = item.get("base_price_when_set") # Цена (карта/обычная) при установке порога
+                    threshold_rub = item.get("notification_threshold_rub", 0)
+
+                    if base_price_when_set is not None and threshold_rub > 0:
+                        try:
+                            target_price = float(base_price_when_set) - float(threshold_rub)
+                            if price_to_compare <= target_price:
+                                message = (
+                                    f"🔔 Цена на товар снизилась!\n"
+                                    f"📦 <a href='{url}'>{item.get('title', 'Товар')}</a>\n"
+                                    f"📉 Было (при установке отслеживания): {base_price_when_set} ₽\n"
+                                    f"✨ Стало: {price_to_compare} ₽ (Карта: {current_price_info['card_price_str'] or '—'} ₽, Без карты: {current_price_info['price_str'] or '—'} ₽)\n"
+                                    f"🎯 Порог: {threshold_rub} ₽"
+                                )
+                                try:
+                                    keyboard = InlineKeyboardMarkup([
+                                        [
+                                            InlineKeyboardButton("✅ Да, от новой цены", callback_data=f"ozon_continue_new|{item_index}"),
+                                            InlineKeyboardButton("📉 Да, от старой", callback_data=f"ozon_continue_old|{item_index}"),
+                                            InlineKeyboardButton("❌ Нет, остановить", callback_data=f"ozon_stop|{item_index}")
+                                        ]
+                                    ])
+
+                                    await context.bot.send_message(
+                                        chat_id=user_id,
+                                        text=message + "\n\nХотите продолжить отслеживание?",
+                                        parse_mode='HTML',
+                                        reply_markup=keyboard,
+                                        disable_web_page_preview=False
+                                    )
+                                    logger.info(f"Отправлено уведомление о снижении цены пользователю {user_id} для товара {url}")
+                                    # Деактивируем отслеживание для этого товара, чтобы избежать спама, или обновляем base_price_when_set
+                                    item["is_active_tracking"] = False # Простое отключение
+                                    # Или, чтобы разрешить дальнейшее отслеживание от новой цены:
+                                    # item["base_price_when_set"] = price_to_compare 
+                                    # item["initial_card_price_at_tracking"] = current_price_info["card_price_str"]
+                                    # item["initial_price_at_tracking"] = current_price_info["price_str"]
+                                    # item["added_timestamp_utc"] = current_time_iso # Отражает новое время базовой линии
+                                    # needs_db_update_for_user уже True
+                                except Exception as e:
+                                    logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
+                        except ValueError:
+                             logger.error(f"Ошибка конвертации base_price_when_set или threshold_rub в float для {url} пользователя {user_id}")
+            else:
+                 logger.warning(f"Не удалось получить текущую цену для {url} пользователя {user_id}")
+            
+            updated_items_for_user.append(item) # Добавляем измененный или не измененный элемент в новый список
+        
+        if needs_db_update_for_user: # Если были какие-либо изменения или проверки
+            db.reference(f"ozon_prices/{user_id}/tracked_items").set(updated_items_for_user)
+            logger.info(f"Обновлены данные отслеживания в Firebase для пользователя {user_id}")
+
+
+
+
+
+async def ozon_tracking_choice_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    action_data = query.data  # например: "ozon_continue_new|2"
+    action, item_index_str = action_data.split("|")
+    item_index = int(item_index_str)
+
+    user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items")
+    tracked_items = user_ref.get()
+
+    if not tracked_items or item_index >= len(tracked_items):
+        await query.edit_message_text("Ошибка: товар не найден.")
+        return
+
+    item = tracked_items[item_index]
+    current_time_iso = datetime.now(timezone.utc).isoformat()
+
+    if action == "ozon_continue_new":
+        # Устанавливаем новую цену как базовую и активируем
+        item["base_price_when_set"] = item.get("price_history", [])[-1]["price"]
+        item["is_active_tracking"] = True
+        item["added_timestamp_utc"] = current_time_iso
+        await query.edit_message_text("✅ Отслеживание продолжено от новой цены.")
+
+    elif action == "ozon_continue_old":
+        item["is_active_tracking"] = True
+        await query.edit_message_text("📉 Отслеживание продолжено от старой цены.")
+
+    elif action == "ozon_stop":
+        item["is_active_tracking"] = False
+        await query.edit_message_text("❌ Отслеживание остановлено.")
+
+    else:
+        await query.edit_message_text("Неизвестный выбор.")
+
+    # Сохраняем изменения
+    tracked_items[item_index] = item
+    user_ref.set(tracked_items)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 async def ignore_pinned_message(update: Update, context: CallbackContext):
     # Ничего не делаем, просто игнорируем событие закрепления
     pass
@@ -13378,6 +14243,21 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_palettesort, pattern=r"^palettesort_\d+_\d+$"))
     application.add_handler(CallbackQueryHandler(sort_by_criteria, pattern=r"^sort_\w+_\w+$"))
 
+    #OZON
+    application.add_handler(CommandHandler("ozon", handle_ozon))
+    application.add_handler(CallbackQueryHandler(ozon_track_start_callback, pattern="^ozon_track_start_"))
+    application.add_handler(CallbackQueryHandler(ozon_set_threshold_callback, pattern="^ozon_set_thresh_"))
+    application.add_handler(CallbackQueryHandler(ozon_tracking_choice_handler, pattern=r"^ozon_(continue_new|continue_old|stop)\|\d+$"))
+    application.add_handler(CallbackQueryHandler(handle_ozonpage_change, pattern=r"^ozon_page_\d+$"))
+    application.add_handler(CallbackQueryHandler(handle_my_items, pattern=r"^myozon_items$"))
+    application.add_handler(CallbackQueryHandler(ozon_view_stat, pattern=r"^ozon_view_stat_"))
+    application.add_handler(CallbackQueryHandler(ozon_delete_handler, pattern=r"^ozon_delete_"))
+    application.add_handler(CallbackQueryHandler(ozon_message_delete, pattern="^ozondelete_msg$"))
+    application.add_handler(CallbackQueryHandler(ozon_change_threshold_callback, pattern=r"^changenotif_"))
+    application.add_handler(CallbackQueryHandler(ozon_update_threshold_callback, pattern=r"^ozon_update_thresh_"))    
+
+
+    
     # Обработчик для просмотра конкретной отложенной записи
     application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$')) 
     application.add_handler(CommandHandler("token", token_set))       
@@ -13414,7 +14294,42 @@ def main() -> None:
 
     logger.info("Bot started and polling...")  
     keep_alive()#запускаем flask-сервер в отдельном потоке. Подробнее ниже...
-    application.run_polling() #запуск бота    
+    # Планируем ежедневную задачу
+    job_queue = application.job_queue
+    # Запускать раз в день, например, в 09:00 UTC. Настройте время по необходимости.
+    # import pytz # для таймзон
+    # time = datetime.time(hour=9, minute=0, tzinfo=pytz.timezone('UTC'))
+    # Для простоты, запускаем каждые 24 часа с первого запуска: interval=24 * 60 * 60, first=10
+    job_queue.run_repeating(daily_ozon_price_check_job, interval=24 * 60 * 60, first=10) # Запустить через 10с, затем каждые 24ч
 
+    application.run_polling()  
 if __name__ == '__main__':
+    # Настройка логирования
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+    logger = logging.getLogger(__name__) # Определяем logger здесь, если он не определен глобально ранее
+
+    # Инициализация Firebase (замените вашей фактической инициализацией)
+    try:
+        import firebase_admin
+        from firebase_admin import credentials, db # db используется глобально в функциях выше
+        
+        # Проверяем, не был ли Firebase уже инициализирован, чтобы избежать ошибок при горячей перезагрузке
+        if not firebase_admin._apps:
+            cred_path = os.path.join("config", "firebase_service_key.json") # Храните ваш JSON ключ сервиса здесь
+            if not os.path.exists(cred_path):
+                 logger.critical(f"Файл ключа сервиса Firebase не найден по пути {cred_path}. Выход.")
+                 exit()
+            cred = credentials.Certificate(cred_path)
+            # Замените 'YOUR_FIREBASE_DATABASE_URL' на URL вашей БД
+            firebase_admin.initialize_app(cred, {'databaseURL': 'YOUR_FIREBASE_DATABASE_URL'}) 
+            logger.info("Firebase Admin SDK инициализирован.")
+        else:
+            logger.info("Firebase Admin SDK уже был инициализирован.")
+    except Exception as e:
+        logger.critical(f"Не удалось инициализировать Firebase Admin SDK: {e}")
+        exit() # Критическая ошибка, бот не может функционировать без БД
+
     main()
