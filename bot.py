@@ -6211,10 +6211,14 @@ async def scientific_gpt(update, context):
             waiting_for_coordinates[user_id] = True
             waiting_for_coordinates[user_id] = {"name": name, "record_key": record_key}
         # Создаем кнопку с WebApp
-        webapp_url2 = "https://epsg.io/map#srs=4326&x=38.371124&y=56.035226&z=9&layer=streets"            
+        # Создаем кнопку с WebApp
+        webapp_url2 = "https://epsg.io/map#srs=4326&x=38.371124&y=56.035226&z=9&layer=streets"       
+        # Создаем кнопку "В главное меню"
         keyboard = [
             [InlineKeyboardButton("Получить координаты", web_app=WebAppInfo(url=webapp_url2))],
-        ]        
+            [InlineKeyboardButton("🌌Отмена🌌", callback_data='restart')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)    
         # Формируем сообщение об успешном добавлении
         success_message = (
             f"Растение '<b>{name}</b>' добавлено успешно!\n"
