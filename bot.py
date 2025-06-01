@@ -13454,7 +13454,7 @@ def format_price_table(tracked_items, page):
     return '<pre>' + '\n'.join(lines) + '</pre>'
 
 def build_keyboard(tracked_items, page):
-    MAX_ITEMS_PER_PAGE = 5  # Убедись, что это число определено корректно
+    MAX_ITEMS_PER_PAGE = 5
     start = page * MAX_ITEMS_PER_PAGE
     end = start + MAX_ITEMS_PER_PAGE
     subset = tracked_items[start:end]
@@ -13470,17 +13470,20 @@ def build_keyboard(tracked_items, page):
         if is_active:
             title = f"✅ {title}"
 
-        # Формат ⏰:значение
+        # ⬅️ Изменение: проверяем рубли, иначе проценты
         if isinstance(threshold, (int, float)) and threshold > 0:
             threshold_text = f"⏰: {threshold}"
         else:
-            threshold_text = "⏰: нет"
+            percent = item.get('notification_threshold_percent')  # ⬅️
+            if isinstance(percent, (int, float)) and percent > 0:  # ⬅️
+                threshold_text = f"⏰: {percent}%"  # ⬅️
+            else:
+                threshold_text = "⏰: нет"
 
         buttons.append([
             InlineKeyboardButton(title, callback_data=f"ozon_view_stat_{product_id}"),
-            InlineKeyboardButton(threshold_text, callback_data=f"changenotif_{product_id}"),            
+            InlineKeyboardButton(threshold_text, callback_data=f"changenotif_{product_id}"),
             InlineKeyboardButton("Удалить", callback_data=f"ozon_delete_{product_id}"),
-
         ])
 
     # Навигация по страницам
@@ -13652,7 +13655,7 @@ async def ozon_change_threshold_callback(update: Update, context: ContextTypes.D
     temp_data_store[product_id] = item
 
     # Показываем клавиатуру с выбором порога
-    threshold_options = [50, 100, 200, 300, 500, 1000, 2500, 5000, 10000]
+    threshold_options = [50, 100, 200, 300, 500, 1000, 2500, 5000, 10000, "5-10%", "10-20%", "20-30%", "30-40%", "40-50%"]
     keyboard = []
     row = []
     for th in threshold_options:
@@ -13678,45 +13681,118 @@ async def ozon_update_threshold_callback(update: Update, context: ContextTypes.D
     await query.answer()
 
     try:
-        _, _, _, threshold_str, product_id = query.data.split("_", 4)
-        threshold = int(threshold_str)
-    except Exception:
-        await query.edit_message_text("Ошибка: не удалось прочитать порог и ID.")
+        # callback_data=f"ozon_update_thresh_{th}_{product_id}"
+        # parts[0]=ozon, parts[1]=update, parts[2]=thresh, parts[3]=th, parts[4]=product_id
+        parts = query.data.split("_", 4)
+        threshold_str = parts[3]
+        product_id = parts[4]
+        # logger.info(f"ozon_update_threshold_callback: data='{query.data}', threshold_str='{threshold_str}', product_id='{product_id}'")
+    except IndexError: # Если split вернул меньше 5 частей
+        logger.error(f"ozon_update_threshold_callback: Неверный формат callback_data: {query.data}")
+        await query.edit_message_text("Ошибка: не удалось прочитать данные для обновления порога.")
         return
+    # Убрали int(threshold_str) отсюда, будем парсить ниже
 
     user_id = str(query.from_user.id)
     temp_data_store = context.user_data.get("ozon_change_temp", {})
     item = temp_data_store.get(product_id)
 
     if not item:
-        await query.edit_message_text("Временные данные не найдены. Попробуйте снова.")
+        logger.warning(f"ozon_update_threshold_callback: Временные данные для {product_id} не найдены (user {user_id}).")
+        await query.edit_message_text("Временные данные не найдены. Попробуйте начать изменение порога заново.")
         return
 
-    # Обновляем поля
-    item["notification_threshold_rub"] = threshold
-    item["is_active_tracking"] = threshold > 0
+    # Логика определения типа порога (аналогично ozon_set_threshold_callback)
+    new_threshold_rub = 0
+    new_threshold_percent = 0
+    new_is_percent_threshold = False
+    new_is_active_tracking = True # По умолчанию отслеживание активно
+
+    if threshold_str == "0": # Уведомления не нужны
+        new_is_active_tracking = False
+    elif "%" in threshold_str:
+        new_is_percent_threshold = True
+        try:
+            new_threshold_percent = int(threshold_str.split('-')[0].replace('%', ''))
+            if new_threshold_percent <= 0:
+                 await query.edit_message_text("Ошибка: процентное значение должно быть положительным.")
+                 # Очищаем временные данные в случае ошибки, чтобы не застрять
+                 temp_data_store.pop(product_id, None)
+                 if not temp_data_store:
+                     context.user_data.pop("ozon_change_temp", None)
+                 return
+        except ValueError:
+            logger.error(f"Неверный формат процентного порога при обновлении: {threshold_str}")
+            await query.edit_message_text("Ошибка: неверный формат процентного порога.")
+            temp_data_store.pop(product_id, None)
+            if not temp_data_store:
+                context.user_data.pop("ozon_change_temp", None)
+            return
+    else: # Это абсолютное значение в рублях
+        try:
+            new_threshold_rub = int(threshold_str)
+            if new_threshold_rub <= 0: # Должно быть >0, т.к. "0" обработан отдельно
+                await query.edit_message_text("Ошибка: пороговое значение должно быть положительным.")
+                temp_data_store.pop(product_id, None)
+                if not temp_data_store:
+                    context.user_data.pop("ozon_change_temp", None)
+                return
+        except ValueError:
+            logger.error(f"Неверный формат абсолютного порога при обновлении: {threshold_str}")
+            await query.edit_message_text("Ошибка: неверный формат числового порога.")
+            temp_data_store.pop(product_id, None)
+            if not temp_data_store:
+                context.user_data.pop("ozon_change_temp", None)
+            return
+
+    # Обновляем поля в объекте item
+    item["notification_threshold_rub"] = new_threshold_rub
+    item["notification_threshold_percent"] = new_threshold_percent
+    item["is_percent_threshold"] = new_is_percent_threshold
+    item["is_active_tracking"] = new_is_active_tracking
     item["last_changed_utc"] = datetime.now(timezone.utc).isoformat()
+    # Важно: base_price_when_set НЕ меняется при простом изменении порога.
+    # Оно меняется только если пользователь выбирает "отслеживать от новой цены"
+    # после срабатывания уведомления.
 
     # Сохраняем обратно в Firebase
-    update_success = update_ozon_tracking_item(user_id, product_id, item)
+    # Убедитесь, что update_ozon_tracking_item определена и работает
+    update_success = update_ozon_tracking_item(user_id, product_id, item) 
 
+    msg = ""
     if update_success:
-        if threshold > 0:
-            msg = f"Порог уведомлений для товара «{item['title'][:50]}...» установлен на {threshold} руб."
-        else:
-            msg = f"Уведомления для товара «{item['title'][:50]}...» отключены."
+        item_title_short = item.get('title', 'Товар')[:50]
+        if not new_is_active_tracking:
+            msg = f"Уведомления для товара «{item_title_short}...» отключены."
+        elif new_is_percent_threshold:
+            base_price_display = item.get('base_price_when_set', 'начальной')
+            msg = (f"Порог для «{item_title_short}...» изменен: {new_threshold_percent}% "
+                   f"(от базовой цены {base_price_display} ₽).")
+        else: # Рублевый порог
+            msg = f"Порог для «{item_title_short}...» изменен: {new_threshold_rub} руб."
     else:
         msg = "Ошибка при сохранении изменений. Попробуйте позже."
 
     # Удаляем временные данные
     temp_data_store.pop(product_id, None)
+    if not temp_data_store: # если словарь стал пустым
+        context.user_data.pop("ozon_change_temp", None)
 
-    # Обновляем список отслеживаемых товаров
-    tracked_items = load_ozon_tracking_from_firebase(user_id)
-    keyboard = build_keyboard(tracked_items, page=0)
-    text = format_price_table(tracked_items, page=0)
 
-    await query.edit_message_text(text=text, reply_markup=keyboard, parse_mode="HTML")
+    # Обновляем сообщение со списком отслеживаемых товаров
+    # Убедитесь, что эти функции определены и работают
+    tracked_items_after_update = load_ozon_tracking_from_firebase(user_id) 
+    # Предполагается, что у вас есть система пагинации, page=0 может быть не всегда корректным
+    # Возможно, потребуется передавать/сохранять текущую страницу пользователя
+    current_page = context.user_data.get(f"ozon_list_page_{user_id}", 0) # Пример получения текущей страницы
+    
+    keyboard = build_keyboard(tracked_items_after_update, page=current_page)
+    text_content = format_price_table(tracked_items_after_update, page=current_page)
+    
+    # Добавляем сообщение об успехе/ошибке ПЕРЕД таблицей.
+    final_text = msg + "\n\n" + text_content
+
+    await query.edit_message_text(text=final_text, reply_markup=keyboard, parse_mode="HTML")
 
 
 
@@ -13763,7 +13839,7 @@ async def ozon_track_start_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("Не удалось найти данные о товаре для отслеживания. Попробуйте снова.")
         return
 
-    threshold_options = [50, 100, 200, 300, 500, 1000, 2500, 5000, 10000]
+    threshold_options = [50, 100, 200, 300, 500, 1000, 2500, 5000, 10000, "5-10%", "10-20%", "20-35%", "30-40%", "40-50%"]
     keyboard = []
     row = []
     for th in threshold_options:
@@ -13789,18 +13865,13 @@ async def ozon_track_start_callback(update: Update, context: ContextTypes.DEFAUL
 async def ozon_set_threshold_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     try:
         logging.info(f"Получен callback_data: {query.data}")
-
-        # Пример: callback_data=f"ozon_set_thresh_{th}_{product_interaction_id}"
-        parts = query.data.split("_", 4)
+        parts = query.data.split("_", 4) # ozon_set_thresh_{th}_{product_interaction_id}
         logging.info(f"Разбито на части: {parts}")
-
         _, _, _, threshold_str, product_interaction_id = parts
-        threshold = int(threshold_str)
-
-        logging.info(f"Порог: {threshold}, ID взаимодействия: {product_interaction_id}")
+        # threshold = int(threshold_str) # <-- Убираем эту строку, обработаем ниже
+        logging.info(f"Строка порога: {threshold_str}, ID взаимодействия: {product_interaction_id}")
     except ValueError:
         logger.error(f"Неверный callback_data для ozon_set_threshold: {query.data}")
         await query.edit_message_text("Ошибка: неверные данные порога.")
@@ -13815,24 +13886,19 @@ async def ozon_set_threshold_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("Не удалось найти данные о товаре. Попробуйте снова.")
         return
 
-    # Определяем базовую цену для отслеживания (цена по карте, если есть, иначе обычная цена)
-    # Убедимся, что цены являются числами для расчетов. Предполагаем, что они хранятся как строки типа "123.45" или None.
     try:
         base_price_to_track = None
-        # product_details["card_price"] и product_details["price"] хранят строки или None
         card_price_val_str = product_details.get("card_price")
         price_val_str = product_details.get("price")
-
-        if card_price_val_str: # Если есть цена по карте (не None и не пустая строка)
+        if card_price_val_str:
             base_price_to_track = float(str(card_price_val_str).replace(',', '.'))
-        elif price_val_str: # Иначе, если есть обычная цена
+        elif price_val_str:
             base_price_to_track = float(str(price_val_str).replace(',', '.'))
         
         if base_price_to_track is None:
             await query.edit_message_text("Не удалось определить текущую цену для отслеживания.")
             logger.error(f"Не удалось определить базовую цену для отслеживания: {product_details}")
             return
-
     except ValueError as e:
         await query.edit_message_text("Ошибка в формате цены товара.")
         logger.error(f"ValueError при конвертации цены для отслеживания: {e}, детали: {product_details}")
@@ -13840,20 +13906,52 @@ async def ozon_set_threshold_callback(update: Update, context: ContextTypes.DEFA
 
     current_time_iso = datetime.now(timezone.utc).isoformat()
 
+    threshold_rub = 0
+    threshold_percent = 0
+    is_percent_threshold = False
+    is_active_tracking = True # По умолчанию отслеживание активно, если выбран порог
+
+    if threshold_str == "0": # Уведомления не нужны
+        is_active_tracking = False
+    elif "%" in threshold_str:
+        is_percent_threshold = True
+        try:
+            # Берем первое число из диапазона, например "5" из "5-10%"
+            threshold_percent = int(threshold_str.split('-')[0].replace('%', ''))
+            if threshold_percent <= 0: # Процент должен быть положительным
+                 await query.edit_message_text("Ошибка: процентное значение должно быть положительным.")
+                 return
+        except ValueError:
+            logger.error(f"Неверный формат процентного порога: {threshold_str}")
+            await query.edit_message_text("Ошибка: неверный формат процентного порога.")
+            return
+    else: # Это абсолютное значение в рублях
+        try:
+            threshold_rub = int(threshold_str)
+            if threshold_rub <= 0: # Абсолютный порог тоже должен быть положительным, если это не "0"
+                await query.edit_message_text("Ошибка: пороговое значение должно быть положительным.")
+                return
+        except ValueError:
+            logger.error(f"Неверный формат абсолютного порога: {threshold_str}")
+            await query.edit_message_text("Ошибка: неверный формат числового порога.")
+            return
+
     item_to_save = {
-        "item_id": str(uuid.uuid4()), # Уникальный ID для этого отслеживаемого товара
+        "item_id": str(uuid.uuid4()),
         "url": product_details["url"],
         "title": product_details["title"],
-        "initial_card_price_at_tracking": product_details["card_price"], # Цена на момент установки отслеживания
-        "initial_price_at_tracking": product_details["price"],         # Цена на момент установки отслеживания
-        "base_price_when_set": base_price_to_track, # Конкретная цена (карта/обычная), использованная для расчета порога
-        "notification_threshold_rub": threshold,
+        "initial_card_price_at_tracking": product_details["card_price"],
+        "initial_price_at_tracking": product_details["price"],
+        "base_price_when_set": base_price_to_track,
+        "notification_threshold_rub": threshold_rub, # Будет 0, если выбран процент
+        "notification_threshold_percent": threshold_percent, # Будет 0, если выбраны рубли
+        "is_percent_threshold": is_percent_threshold,
         "added_timestamp_utc": current_time_iso,
         "last_checked_timestamp_utc": current_time_iso,
-        "is_active_tracking": threshold > 0,
+        "is_active_tracking": is_active_tracking,
         "price_history": [{
             "timestamp_utc": current_time_iso,
-            "card_price": product_details["card_price"], # Сохраняем исходные строки или None
+            "card_price": product_details["card_price"],
             "price": product_details["price"]
         }]
     }
@@ -13862,28 +13960,30 @@ async def ozon_set_threshold_callback(update: Update, context: ContextTypes.DEFA
         [InlineKeyboardButton("Мои Отслеживания 📒", callback_data="myozon_items")]
     ])
 
-    if save_ozon_tracking_to_firebase(user_id, item_to_save):
-        if threshold > 0:
-            await query.edit_message_text(
-                f"Товар '{product_details['title'][:50]}...' сохранен! Вы получите уведомление, если цена упадет на {threshold} руб. или более.",
-                reply_markup=keyboard
+    if save_ozon_tracking_to_firebase(user_id, item_to_save): # Убедитесь, что эта функция у вас определена
+        if not is_active_tracking:
+            message_text = f"Товар '{product_details['title'][:50]}...' сохранен. Уведомления о снижении цены отключены."
+        elif is_percent_threshold:
+            message_text = (
+                f"Товар '{product_details['title'][:50]}...' сохранен! "
+                f"Вы получите уведомление, если цена упадет на {threshold_percent}% или более "
+                f"от текущей цены {base_price_to_track} ₽."
             )
-        else:
-            await query.edit_message_text(
-                f"Товар '{product_details['title'][:50]}...' сохранен. Уведомления о снижении цены отключены.",
-                reply_markup=keyboard
+        else: # Рублевый порог
+            message_text = (
+                f"Товар '{product_details['title'][:50]}...' сохранен! "
+                f"Вы получите уведомление, если цена упадет на {threshold_rub} руб. или более."
             )
+        await query.edit_message_text(message_text, reply_markup=keyboard)
     else:
         await query.edit_message_text(
             "Не удалось сохранить товар для отслеживания. Пожалуйста, попробуйте позже.",
             reply_markup=keyboard
         )
 
-
-    # Очищаем временное хранилище для этого взаимодействия
     if product_interaction_id in temp_data_store:
         del temp_data_store[product_interaction_id]
-        if not temp_data_store: # если словарь пуст
+        if not temp_data_store:
              del context.user_data['ozon_tracking_temp']
 
 
@@ -13942,16 +14042,15 @@ async def fetch_ozon_product_data_for_check(url: str, cookies: dict):
 
 async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Запуск ежедневной проверки цен Ozon...")
-    all_tracking_data_ref = db.reference("ozon_prices")
+    all_tracking_data_ref = db.reference("ozon_prices") # Убедитесь, что db определена
     all_users_tracking = all_tracking_data_ref.get()
 
     if not all_users_tracking:
         logger.info("Нет товаров для отслеживания.")
         return
 
-    #cookie_path = os.path.join("config", "ozon.txt") # Убедитесь, что этот путь корректен
-    cookie_path = "/etc/secrets/ozon.txt"
-    cookies = load_cookies_from_file(cookie_path)
+    cookie_path = os.path.join("config", "ozon.txt")
+    cookies = load_cookies_from_file(cookie_path) # Убедитесь, что эта функция определена
     if not cookies:
         logger.error("Не удалось загрузить cookies для проверки цен Ozon. Проверка отменена.")
         return
@@ -13961,40 +14060,36 @@ async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
     for user_id_str, user_data in all_users_tracking.items():
         user_id = int(user_id_str)
         tracked_items = user_data.get("tracked_items", [])
-        updated_items_for_user = [] # Список для обновления данных пользователя в БД
+        updated_items_for_user = []
         needs_db_update_for_user = False
 
-        for item_index, item_copy in enumerate(tracked_items): # Работаем с копией для безопасного изменения
-            item = dict(item_copy) # Создаем изменяемую копию элемента списка
-
+        for item_index, item_copy in enumerate(tracked_items):
+            item = dict(item_copy)
             if not item.get("is_active_tracking", False):
-                updated_items_for_user.append(item) # Сохраняем неактивные элементы
+                updated_items_for_user.append(item)
                 continue
-
+            
             url = item.get("url")
             if not url:
-                updated_items_for_user.append(item) # Сохраняем невалидные элементы или фильтруем их
+                updated_items_for_user.append(item)
                 continue
             
             logger.info(f"Проверка товара: {url} для пользователя {user_id}")
-            current_price_info = await fetch_ozon_product_data_for_check(url, cookies)
+            current_price_info = await fetch_ozon_product_data_for_check(url, cookies) # Убедитесь, что эта функция определена
             
-            item["last_checked_timestamp_utc"] = current_time_iso # Обновляем время проверки независимо от успеха
-            needs_db_update_for_user = True # Помечаем, что нужно обновить, т.к. время проверки изменилось
+            item["last_checked_timestamp_utc"] = current_time_iso
+            needs_db_update_for_user = True
 
             if current_price_info:
-                # Добавляем в историю цен
                 if "price_history" not in item or not isinstance(item["price_history"], list):
-                    item["price_history"] = [] # Инициализируем, если отсутствует или не список
+                    item["price_history"] = []
                 
                 item["price_history"].append({
                     "timestamp_utc": current_time_iso,
                     "card_price": current_price_info["card_price_str"],
                     "price": current_price_info["price_str"]
                 })
-                # needs_db_update_for_user уже True
 
-                # Определяем релевантную текущую цену для сравнения
                 price_to_compare = None
                 if current_price_info["current_card_price_float"] is not None:
                     price_to_compare = current_price_info["current_card_price_float"]
@@ -14002,29 +14097,48 @@ async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
                     price_to_compare = current_price_info["current_price_float"]
                 
                 if price_to_compare is not None:
-                    base_price_when_set = item.get("base_price_when_set") # Цена (карта/обычная) при установке порога
-                    threshold_rub = item.get("notification_threshold_rub", 0)
+                    base_price_when_set_str = item.get("base_price_when_set")
+                    # Получаем значения порогов. По умолчанию 0, если не найдены.
+                    threshold_rub_val = item.get("notification_threshold_rub", 0) 
+                    threshold_percent_val = item.get("notification_threshold_percent", 0)
+                    is_percent = item.get("is_percent_threshold", False)
 
-                    if base_price_when_set is not None and threshold_rub > 0:
+                    if base_price_when_set_str is not None and (threshold_rub_val > 0 or threshold_percent_val > 0) :
                         try:
-                            target_price = float(base_price_when_set) - float(threshold_rub)
-                            if price_to_compare <= target_price:
+                            base_price_when_set = float(base_price_when_set_str)
+                            target_price = None
+                            threshold_description = ""
+
+                            if is_percent and threshold_percent_val > 0:
+                                # Рассчитываем целевую цену для процентного порога
+                                price_drop_for_percent = base_price_when_set * (threshold_percent_val / 100.0)
+                                target_price = base_price_when_set - price_drop_for_percent
+                                threshold_description = f"{threshold_percent_val}% (было {base_price_when_set} ₽, снижение на ~{price_drop_for_percent:.2f} ₽)"
+                            elif not is_percent and threshold_rub_val > 0:
+                                # Рассчитываем целевую цену для рублевого порога
+                                target_price = base_price_when_set - float(threshold_rub_val)
+                                threshold_description = f"{threshold_rub_val} ₽"
+                            
+                            if target_price is not None and price_to_compare <= target_price:
                                 message = (
                                     f"🔔 Цена на товар снизилась!\n"
                                     f"📦 <a href='{url}'>{item.get('title', 'Товар')}</a>\n"
                                     f"📉 Было (при установке отслеживания): {base_price_when_set} ₽\n"
                                     f"✨ Стало: {price_to_compare} ₽ (Карта: {current_price_info['card_price_str'] or '—'} ₽, Без карты: {current_price_info['price_str'] or '—'} ₽)\n"
-                                    f"🎯 Порог: {threshold_rub} ₽"
+                                    f"🎯 Установленный порог: {threshold_description}"
                                 )
                                 try:
+                                    # Кнопки для продолжения/остановки отслеживания (ваш существующий код)
+                                    # Обратите внимание, что callback_data для кнопок продолжения может потребовать
+                                    # item["item_id"] вместо item_index, если item_index может меняться.
+                                    # Пока оставим item_index, как у вас было.
                                     keyboard = InlineKeyboardMarkup([
                                         [
-                                            InlineKeyboardButton("✅ Да, от новой цены", callback_data=f"ozon_continue_new|{item_index}"),
-                                            InlineKeyboardButton("📉 Да, от старой", callback_data=f"ozon_continue_old|{item_index}"),
-                                            InlineKeyboardButton("❌ Нет, остановить", callback_data=f"ozon_stop|{item_index}")
+                                            InlineKeyboardButton("✅ Да, от новой цены", callback_data=f"ozon_continue_new|{item.get('item_id', item_index)}"), # Рекомендую использовать item_id
+                                            InlineKeyboardButton("📉 Да, от старой", callback_data=f"ozon_continue_old|{item.get('item_id', item_index)}"),
+                                            InlineKeyboardButton("❌ Нет, остановить", callback_data=f"ozon_stop|{item.get('item_id', item_index)}")
                                         ]
                                     ])
-
                                     await context.bot.send_message(
                                         chat_id=user_id,
                                         text=message + "\n\nХотите продолжить отслеживание?",
@@ -14033,26 +14147,20 @@ async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
                                         disable_web_page_preview=False
                                     )
                                     logger.info(f"Отправлено уведомление о снижении цены пользователю {user_id} для товара {url}")
-                                    # Деактивируем отслеживание для этого товара, чтобы избежать спама, или обновляем base_price_when_set
-                                    item["is_active_tracking"] = False # Простое отключение
-                                    # Или, чтобы разрешить дальнейшее отслеживание от новой цены:
-                                    # item["base_price_when_set"] = price_to_compare 
-                                    # item["initial_card_price_at_tracking"] = current_price_info["card_price_str"]
-                                    # item["initial_price_at_tracking"] = current_price_info["price_str"]
-                                    # item["added_timestamp_utc"] = current_time_iso # Отражает новое время базовой линии
-                                    # needs_db_update_for_user уже True
+                                    item["is_active_tracking"] = False # Деактивируем после уведомления
                                 except Exception as e:
                                     logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
                         except ValueError:
-                             logger.error(f"Ошибка конвертации base_price_when_set или threshold_rub в float для {url} пользователя {user_id}")
+                             logger.error(f"Ошибка конвертации base_price_when_set или порогов в float для {url} пользователя {user_id}")
             else:
                  logger.warning(f"Не удалось получить текущую цену для {url} пользователя {user_id}")
             
-            updated_items_for_user.append(item) # Добавляем измененный или не измененный элемент в новый список
+            updated_items_for_user.append(item)
         
-        if needs_db_update_for_user: # Если были какие-либо изменения или проверки
+        if needs_db_update_for_user:
             db.reference(f"ozon_prices/{user_id}/tracked_items").set(updated_items_for_user)
             logger.info(f"Обновлены данные отслеживания в Firebase для пользователя {user_id}")
+
 
 
 
@@ -14098,6 +14206,9 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
     # Сохраняем изменения
     tracked_items[item_index] = item
     user_ref.set(tracked_items)
+
+from datetime import time
+import pytz
 
 
 
@@ -14376,7 +14487,9 @@ def main() -> None:
     # import pytz # для таймзон
     # time = datetime.time(hour=9, minute=0, tzinfo=pytz.timezone('UTC'))
     # Для простоты, запускаем каждые 24 часа с первого запуска: interval=24 * 60 * 60, first=10
-    job_queue.run_repeating(daily_ozon_price_check_job, interval=24 * 60 * 60, first=10) # Запустить через 10с, затем каждые 24ч
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    time_to_run = time(hour=9, minute=0, tzinfo=moscow_tz)
+    job_queue.run_daily(daily_ozon_price_check_job, time=time_to_run)
 
     application.run_polling()  
 if __name__ == '__main__':
