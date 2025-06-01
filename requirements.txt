@@ -18,3 +18,4 @@ numpy==2.2.2
 python-dotenv==1.0.1
 matplotlib
 python-telegram-bot[job-queue]
+pytz
