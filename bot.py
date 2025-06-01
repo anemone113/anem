@@ -3450,7 +3450,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
                 "height": height,
                 "width": width,
                 "seed": seed,
-                "max_sequence_length": 512,
+                #"max_sequence_length": 512,
             }
             if selected_model['params']['negative']:
                 params["negative_prompt"] = negative_prompt
