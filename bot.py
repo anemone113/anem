@@ -6423,6 +6423,8 @@ async def handle_coordinates(update, context):
         ref = db.reference(f"map_plants/{user_id}/{name}/{record_key}")
         current_data = ref.get() or {}
         current_data["coordinates"] = f"{lat}, {lon}"
+        if img_url and "img_url" not in current_data:
+            current_data["img_url"] = img_url
         ref.set(current_data)
 
         del waiting_for_coordinates[user_id]
