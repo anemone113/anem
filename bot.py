@@ -2737,6 +2737,14 @@ MODELS = {
             "add_prompt": "",
             "negative": True
         },
+        "ByteDance/Hyper-SD": {
+            "add_prompt": "",
+            "negative": True
+        },    
+        "ByteDance/SDXL-Lightning": {
+            "add_prompt": "",
+            "negative": True
+        },              
         "stabilityai/stable-diffusion-3.5-large": {
             "add_prompt": "",
             "negative": True
@@ -2797,6 +2805,10 @@ MODELS = {
             "add_prompt": "",
             "negative": False
         },
+        "HiDream-ai/HiDream-I1-Full": {
+            "add_prompt": "",
+            "negative": False
+        },        
         "XLabs-AI/flux-RealismLora": {
             "add_prompt": "",
             "negative": False
@@ -2805,6 +2817,10 @@ MODELS = {
             "add_prompt": "",
             "negative": False
         },          
+        "openfree/flux-chatgpt-ghibli-lora": {
+            "add_prompt": "Ghibli style ",
+            "negative": False
+        },             
         "glif-loradex-trainer/araminta": {
             "add_prompt": "",
             "negative": False
@@ -2856,11 +2872,19 @@ MODELS = {
             "add_prompt": "oil paint ",
             "negative": False
         },
+        "openfree/winslow-homer": {
+            "add_prompt": "watercolor ",
+            "negative": False
+        },        
 
         "prithivMLmods/Canopus-Pixar-3D-Flux-LoRA": {
             "add_prompt": "Pixar 3D ",
             "negative": False
         },  
+        "UmeAiRT/FLUX.1-dev-LoRA-Modern_Pixel_art": {
+            "add_prompt": "Pixel art ",
+            "negative": False
+        },         
         "alvdansen/flux-koda": {
             "add_prompt": "",
             "negative": False
@@ -2905,6 +2929,10 @@ MODELS = {
             "add_prompt": "nsfw ",
             "negative": False
         },
+        "Keltezaa/Dynamic_Pose_Uncensored": {
+            "add_prompt": "",
+            "negative": False
+        }                         
     },
     "imagen3": { 
         "imagen3": {
@@ -2917,6 +2945,9 @@ MODELS = {
 MODEL_SHORTNAMES = {
     # Stable Diffusion
     "stabilityai/stable-diffusion-3.5-large-turbo": "⏳ SD Turbo ⏳",
+    "ByteDance/Hyper-SD": "⏳ Hyper-SD ⏳", 
+    "ByteDance/SDXL-Lightning": "⏳ SDXL-Lightning ⏳",       
+   
     "stabilityai/stable-diffusion-3.5-large": "SD Large",
     "alvdansen/phantasma-anime": "Phantasma Anime",
     "alvdansen/frosting_lane_redux": "Frosting Lane SD", 
@@ -2928,7 +2959,7 @@ MODEL_SHORTNAMES = {
     "artificialguybr/PixelArtRedmond": "PixelArt",
     "alvdansen/soft-focus-3d": "Soft Focus 3D",
     "artificialguybr/analogredmond-v2": "Старые фотографии",
-    "prithivMLmods/SD3.5-Large-Photorealistic-LoRA": "Фотографии",
+    "prithivMLmods/SD3.5-Large-Photorealistic-LoRA": "Фотографии", #вроде нет
    
     
     # FLUX
@@ -2936,6 +2967,9 @@ MODEL_SHORTNAMES = {
     "Shakker-Labs/FLUX.1-dev-LoRA-add-details": "FLUX more details",
     "XLabs-AI/flux-RealismLora": "Realism Lora",
     "dennis-sleepytales/frosting_lane_flux": "Frosting lane Flux",
+    "openfree/flux-chatgpt-ghibli-lora": "Ghibli ChatGpt",
+    "HiDream-ai/HiDream-I1-Full": "HiDream-ai",    
+
 
     #alvdansen/frosting_lane_flux     
     "glif-loradex-trainer/araminta": "Araminta Illust Art",
@@ -2958,7 +2992,8 @@ MODEL_SHORTNAMES = {
 
     "alvdansen/flux-koda": "Flux Koda",
     "alvdansen/flux_film_foto": "Film Foto",
-
+    "UmeAiRT/FLUX.1-dev-LoRA-Modern_Pixel_art": "Modern pixel art ",
+    "openfree/winslow-homer": "Watercolor",    
     
     
     # OTHERS
@@ -2970,10 +3005,14 @@ MODEL_SHORTNAMES = {
     "xey/sldr_flux_nsfw_v2-studio": "NSFW",
     "Shakker-Labs/FLUX.1-dev-LoRA-Logo-Design": "Flux Logo Design",
     "gokaygokay/Flux-Game-Assets-LoRA-v2": "3D Game Assets",
-    "fofr/flux-80s-cyberpunk": "Flux 80s Cyberpunk",    
-    
-    "google_imagen3": "Google Imagen 3",             
+    "fofr/flux-80s-cyberpunk": "Flux 80s Cyberpunk",     
+    "Keltezaa/Dynamic_Pose_Uncensored": "Pose_Uncensored ",
+
+
+
+    "google_imagen3": "Google Imagen(временно не работает)",             
 }
+
 
 
 
@@ -2996,7 +3035,7 @@ async def choose_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌠 Stable Diffusion", callback_data='category_🌠stable')],
         [InlineKeyboardButton("🌃 FLUX", callback_data='category_🌃flux')],
         [InlineKeyboardButton("💡 others", callback_data='category_💡others')],
-        [InlineKeyboardButton(f"🎨 Google Imagen 3{imagen_selected}", callback_data='select_imagen3')],        
+        [InlineKeyboardButton(f"🎨 Google Imagen 3(Временно недоступно){imagen_selected}", callback_data='select_imagen3')],        
         [InlineKeyboardButton("Таблица моделей и примеры", callback_data='examples_table')],
         [InlineKeyboardButton("❌ Отмена", callback_data="cancelmodel")]               
     ]
@@ -3337,7 +3376,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
 
     for i, HF_API_KEY in enumerate(token_order):
         logger.info(f"Пробуем API-ключ {i+1}/{len(token_order)}: {HF_API_KEY}")
-        client_image = AsyncInferenceClient(api_key=HF_API_KEY, timeout=300)
+        client_image = AsyncInferenceClient(provider="fal-ai", api_key=HF_API_KEY, timeout=300)
 
         try:
             start_time = time.time()  # Фиксируем начальное время
