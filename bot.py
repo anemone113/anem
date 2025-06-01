@@ -171,59 +171,71 @@ USER_IDS = [19029917, 20618514, 25377082, 35194055, 57673989, 68017381, 69314002
 
 from telegram import MessageEntity
 
+# Настройка логирования для отладки
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 async def sendall(update: Update, context: CallbackContext) -> None:
-    """Отправляет сообщение (текст или фото с подписью) указанным пользователям с сохранением форматирования."""
+    """
+    Отправляет сообщение (копируя его) указанным пользователям.
+    Поддерживает текст, фото с подписью, видео с подписью и другие типы медиа.
+    """
     if not update.message or not update.message.reply_to_message:
-        await update.message.reply_text("Используйте команду /sendall в ответ на сообщение, которое нужно разослать.")
+        await update.message.reply_text(
+            "Используйте команду /sendall в ответ на сообщение, которое нужно разослать."
+        )
         return
 
-    # Получаем аргументы после команды
     args = context.args
-    user_ids = USER_IDS  # Используем ID по умолчанию
-    
-    if args:
-        try:
-            user_ids = [int(uid.strip()) for uid in args[0].split(',')]
-        except ValueError:
-            await update.message.reply_text("Некорректный формат ID. Используйте запятую без пробелов: /sendall 12345,67890")
-            return
-    
-    reply_msg = update.message.reply_to_message
-    message_text = reply_msg.text or reply_msg.caption  # Текст из сообщения
-    photo = reply_msg.photo[-1] if reply_msg.photo else None  # Последнее фото
-    entities = reply_msg.entities or reply_msg.caption_entities  # Форматирование текста
+    user_ids_to_send = USER_IDS  # ID по умолчанию
 
-    if not message_text and not photo:
-        await update.message.reply_text("Сообщение, на которое вы ответили, не содержит текста или фото.")
+    if args:
+        # Можно добавить ключевое слово 'all' для использования списка по умолчанию,
+        # если аргументы обычно используются для конкретных ID.
+        if args[0].lower() == 'all' and USER_IDS:
+            user_ids_to_send = USER_IDS
+        else:
+            try:
+                user_ids_to_send = [int(uid.strip()) for uid in args[0].split(',')]
+            except ValueError:
+                await update.message.reply_text(
+                    "Некорректный формат ID. Используйте запятую для разделения: /sendall 12345,67890"
+                )
+                return
+            except IndexError: # Если context.args пуст, но проверка args прошла
+                 await update.message.reply_text(
+                    "Пожалуйста, укажите ID пользователей через запятую или используйте 'all' для списка по умолчанию (если он настроен)."
+                )
+                 return
+    
+    if not user_ids_to_send: # Проверка, если список ID оказался пустым
+        await update.message.reply_text("Список ID пользователей для рассылки пуст.")
         return
 
-    success_count, fail_count = 0, 0
+    replied_message = update.message.reply_to_message
+    success_count = 0
+    fail_count = 0
 
-    for user_id in user_ids:
+    for user_id in user_ids_to_send:
         try:
-            if photo:
-                await context.bot.send_photo(
-                    chat_id=user_id,
-                    photo=photo.file_id,
-                    caption=message_text,
-                    parse_mode=None,  # Убираем HTML, так как передаем `entities`
-                    caption_entities=entities,  # Восстанавливаем форматирование
-                    disable_web_page_preview=True  # Отключаем превью ссылок в подписи
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=message_text,
-                    parse_mode=None,  # Отключаем `parse_mode`, так как передаем `entities`
-                    entities=entities,
-                    disable_web_page_preview=True  # Отключаем превью ссылок в тексте
-                )
+            await context.bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=replied_message.chat.id,
+                message_id=replied_message.message_id,
+                # copy_message автоматически копирует подписи, entities и состояние web_page_preview.
+            )
             success_count += 1
         except Exception as e:
             fail_count += 1
-            print(f"Ошибка при отправке пользователю {user_id}: {e}")
+            # Логируем ошибку с полной трассировкой
+            logger.error(f"Ошибка при копировании сообщения пользователю {user_id} (ID сообщения: {replied_message.message_id}): {e}", exc_info=True)
 
-    await update.message.reply_text(f"Сообщение отправлено {success_count} пользователям, не удалось {fail_count}.")
+    await update.message.reply_text(
+        f"Рассылка завершена. Успешно отправлено: {success_count}. Ошибок: {fail_count}."
+    )
 
 
 async def send_reply_with_limit(text, max_length=4096):
