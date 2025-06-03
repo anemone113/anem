@@ -14049,7 +14049,8 @@ async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Нет товаров для отслеживания.")
         return
 
-    cookie_path = os.path.join("config", "ozon.txt")
+    #cookie_path = os.path.join("config", "ozon.txt")
+    cookie_path = "/etc/secrets/ozon.txt"
     cookies = load_cookies_from_file(cookie_path) # Убедитесь, что эта функция определена
     if not cookies:
         logger.error("Не удалось загрузить cookies для проверки цен Ozon. Проверка отменена.")
@@ -14487,7 +14488,7 @@ def main() -> None:
     # time = datetime.time(hour=9, minute=0, tzinfo=pytz.timezone('UTC'))
     # Для простоты, запускаем каждые 24 часа с первого запуска: interval=24 * 60 * 60, first=10
     moscow_tz = pytz.timezone('Europe/Moscow')
-    time_to_run = datetime.time(hour=7, minute=37, tzinfo=moscow_tz)
+    time_to_run = datetime.time(hour=7, minute=46, tzinfo=moscow_tz)
     
     job_queue = application.job_queue
     job_queue.run_daily(daily_ozon_price_check_job, time=time_to_run)
