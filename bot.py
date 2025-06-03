@@ -94,11 +94,10 @@ import wikipedia
 from telegram.error import Forbidden, TelegramError, TimedOut
 from telegram.helpers import escape, mention_html
 from huggingface_hub import AsyncInferenceClient
-import time
 import os
 from dotenv import load_dotenv
 import html
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
 import uuid
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
@@ -14487,7 +14486,7 @@ def main() -> None:
     # time = datetime.time(hour=9, minute=0, tzinfo=pytz.timezone('UTC'))
     # Для простоты, запускаем каждые 24 часа с первого запуска: interval=24 * 60 * 60, first=10
     moscow_tz = pytz.timezone('Europe/Moscow')
-    time_to_run = time(hour=8, minute=5, tzinfo=moscow_tz)
+    time_to_run = datetime.time(hour=8, minute=16, tzinfo=moscow_tz)
     
     job_queue = application.job_queue
     job_queue.run_daily(daily_ozon_price_check_job, time=time_to_run)
