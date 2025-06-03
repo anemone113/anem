@@ -14208,7 +14208,6 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
     tracked_items[item_index] = item
     user_ref.set(tracked_items)
 
-import datetime
 import pytz
 
 
@@ -14488,7 +14487,7 @@ def main() -> None:
     # time = datetime.time(hour=9, minute=0, tzinfo=pytz.timezone('UTC'))
     # Для простоты, запускаем каждые 24 часа с первого запуска: interval=24 * 60 * 60, first=10
     moscow_tz = pytz.timezone('Europe/Moscow')
-    time_to_run = datetime.time(hour=7, minute=46, tzinfo=moscow_tz)
+    time_to_run = time(hour=8, minute=5, tzinfo=moscow_tz)
     
     job_queue = application.job_queue
     job_queue.run_daily(daily_ozon_price_check_job, time=time_to_run)
