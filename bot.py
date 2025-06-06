@@ -13533,31 +13533,59 @@ async def ozon_view_stat(update, context):
         if not product_data:
             await waiting_message.edit_text(
                 "❌ Не удалось загрузить данные о товаре.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]])
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+                ])
             )
             return
 
         title = product_data.get("title", "Без названия")
-        initial_price = float(product_data.get("initial_card_price_at_tracking", 0))
-        price_history = product_data.get("price_history", [])
         url = product_data.get("url", "")
+        initial_price = float(product_data.get("initial_card_price_at_tracking", 0))
 
+        price_history = product_data.get("price_history", [])
         if not price_history:
             await waiting_message.edit_text(
                 "❌ Нет истории цен для этого товара.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]])
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+                ])
             )
             return
 
-        # Построение графика
-        price_history_sorted = sorted(price_history, key=lambda x: x["timestamp_utc"])
-        dates = [datetime.fromisoformat(p["timestamp_utc"]) for p in price_history_sorted]
-        prices = [float(p["card_price"]) for p in price_history_sorted]
+        # Фильтрация некорректных записей
+        price_history_filtered = [
+            p for p in price_history
+            if p and "timestamp_utc" in p and "card_price" in p and p["card_price"]
+        ]
+
+        valid_price_data = []
+        for p in price_history_filtered:
+            try:
+                date = datetime.fromisoformat(p["timestamp_utc"])
+                price = float(p["card_price"])
+                valid_price_data.append((date, price))
+            except (ValueError, TypeError):
+                continue  # Пропускаем некорректные записи
+
+        if not valid_price_data:
+            await waiting_message.edit_text(
+                "❌ Нет корректной истории цен для этого товара.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+                ])
+            )
+            return
+
+        # Сортировка по дате
+        valid_price_data.sort(key=lambda x: x[0])
+        dates, prices = zip(*valid_price_data)
 
         current_price = prices[-1]
         min_price = min(prices)
         price_diff = initial_price - current_price
 
+        # Построение графика
         fig, ax = plt.subplots()
         ax.plot(dates, prices, marker='o', linestyle='-', color='blue')
         ax.set_title("Динамика цены")
@@ -13584,17 +13612,22 @@ async def ozon_view_stat(update, context):
             [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
         ])
 
-        # Удаляем временное сообщение
         await waiting_message.delete()
 
-        # Отправляем график
-        await query.message.reply_photo(photo=buf, caption=stat_text, parse_mode="HTML", reply_markup=keyboard)
+        await query.message.reply_photo(
+            photo=buf,
+            caption=stat_text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
 
     except Exception as e:
         logger.exception("Ошибка при построении графика:")
         await waiting_message.edit_text(
             "❌ Произошла ошибка при построении графика.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]])
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+            ])
         )
 
 
@@ -14173,6 +14206,7 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
     await query.answer()
 
     user_id = query.from_user.id
+    chat_id = query.message.chat_id  # для отправки нового сообщения
     action_data = query.data  # например: "ozon_continue_new|62588580-4e10-4da3-b236-b969b591a4d7"
     action, item_id = action_data.split("|")
 
@@ -14180,7 +14214,7 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
     tracked_items = user_ref.get()
 
     if not tracked_items:
-        await query.edit_message_text("Ошибка: список отслеживаемых товаров пуст.")
+        await context.bot.send_message(chat_id=chat_id, text="Ошибка: список отслеживаемых товаров пуст.")
         return
 
     # Поиск нужного товара по item_id
@@ -14193,7 +14227,7 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
             break
 
     if item is None:
-        await query.edit_message_text("Ошибка: товар не найден.")
+        await context.bot.send_message(chat_id=chat_id, text="Ошибка: товар не найден.")
         return
 
     current_time_iso = datetime.now(timezone.utc).isoformat()
@@ -14202,18 +14236,18 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
         item["base_price_when_set"] = item.get("price_history", [])[-1]["price"]
         item["is_active_tracking"] = True
         item["added_timestamp_utc"] = current_time_iso
-        await query.edit_message_text("✅ Отслеживание продолжено от новой цены.")
+        await context.bot.send_message(chat_id=chat_id, text="✅ Отслеживание продолжено от новой цены.")
 
     elif action == "ozon_continue_old":
         item["is_active_tracking"] = True
-        await query.edit_message_text("📉 Отслеживание продолжено от старой цены.")
+        await context.bot.send_message(chat_id=chat_id, text="📉 Отслеживание продолжено от старой цены.")
 
     elif action == "ozon_stop":
         item["is_active_tracking"] = False
-        await query.edit_message_text("❌ Отслеживание остановлено.")
+        await context.bot.send_message(chat_id=chat_id, text="❌ Отслеживание остановлено.")
 
     else:
-        await query.edit_message_text("Неизвестный выбор.")
+        await context.bot.send_message(chat_id=chat_id, text="Неизвестный выбор.")
         return
 
     # Сохраняем изменения
