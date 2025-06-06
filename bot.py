@@ -14133,11 +14133,12 @@ async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
                                     # Обратите внимание, что callback_data для кнопок продолжения может потребовать
                                     # item["item_id"] вместо item_index, если item_index может меняться.
                                     # Пока оставим item_index, как у вас было.
+                                    item_id = item.get("item_id")
                                     keyboard = InlineKeyboardMarkup([
                                         [
-                                            InlineKeyboardButton("✅ Да, от новой цены", callback_data=f"ozon_continue_new|{item.get('item_id', item_index)}"), # Рекомендую использовать item_id
-                                            InlineKeyboardButton("📉 Да, от старой", callback_data=f"ozon_continue_old|{item.get('item_id', item_index)}"),
-                                            InlineKeyboardButton("❌ Нет, остановить", callback_data=f"ozon_stop|{item.get('item_id', item_index)}")
+                                            InlineKeyboardButton("✅ Да, от новой цены", callback_data=f"ozon_continue_new|{item_id}"),
+                                            InlineKeyboardButton("📉 Да, от старой", callback_data=f"ozon_continue_old|{item_id}"),
+                                            InlineKeyboardButton("❌ Нет, остановить", callback_data=f"ozon_stop|{item_id}")
                                         ]
                                     ])
                                     await context.bot.send_message(
@@ -14172,22 +14173,32 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
     await query.answer()
 
     user_id = query.from_user.id
-    action_data = query.data  # например: "ozon_continue_new|2"
-    action, item_index_str = action_data.split("|")
-    item_index = int(item_index_str)
+    action_data = query.data  # например: "ozon_continue_new|62588580-4e10-4da3-b236-b969b591a4d7"
+    action, item_id = action_data.split("|")
 
     user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items")
     tracked_items = user_ref.get()
 
-    if not tracked_items or item_index >= len(tracked_items):
+    if not tracked_items:
+        await query.edit_message_text("Ошибка: список отслеживаемых товаров пуст.")
+        return
+
+    # Поиск нужного товара по item_id
+    item = None
+    item_index = None
+    for i, tracked_item in enumerate(tracked_items):
+        if tracked_item.get("item_id") == item_id:
+            item = tracked_item
+            item_index = i
+            break
+
+    if item is None:
         await query.edit_message_text("Ошибка: товар не найден.")
         return
 
-    item = tracked_items[item_index]
     current_time_iso = datetime.now(timezone.utc).isoformat()
 
     if action == "ozon_continue_new":
-        # Устанавливаем новую цену как базовую и активируем
         item["base_price_when_set"] = item.get("price_history", [])[-1]["price"]
         item["is_active_tracking"] = True
         item["added_timestamp_utc"] = current_time_iso
@@ -14203,6 +14214,7 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
 
     else:
         await query.edit_message_text("Неизвестный выбор.")
+        return
 
     # Сохраняем изменения
     tracked_items[item_index] = item
@@ -14232,7 +14244,7 @@ async def ignore_pinned_message(update: Update, context: CallbackContext):
 def main() -> None:
     load_context_from_firebase()  # Загружаем историю чатов в user_contexts
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
+    ozon_choice_handler = CallbackQueryHandler(ozon_tracking_choice_handler, pattern=r"^ozon_(continue_new|continue_old|stop)\|[0-9a-fA-F\-]{36}$")
     # Настройка ConversationHandler для основной логики
     conversation_handler = ConversationHandler(
         entry_points=[
@@ -14249,7 +14261,10 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
             ],
         },
-        fallbacks=[MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message)],
+        fallbacks=[
+            ozon_choice_handler, # <--- ДОБАВИТЬ СЮДА
+            MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message)
+        ],
         per_user=True
     )
 
@@ -14262,8 +14277,9 @@ def main() -> None:
             ],
         },
         fallbacks=[
+            ozon_choice_handler, # <--- ДОБАВИТЬ СЮДА
             CommandHandler('fin_search', finish_search),
-            CommandHandler('restart', restart),  # Добавлен обработчик для /restart
+            CommandHandler('restart', restart),
         ],
         per_user=True,
         allow_reentry=True
@@ -14280,8 +14296,9 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_followup_question),            ],        
         },
         fallbacks=[
+            ozon_choice_handler, # <--- ДОБАВИТЬ СЮДА
             CommandHandler('fin_ocr', finish_ocr),
-            CommandHandler('restart', restart),  # Добавлен обработчик для /restart
+            CommandHandler('restart', restart),
         ],
         per_user=True,
         allow_reentry=True
@@ -14299,8 +14316,9 @@ def main() -> None:
             ],
         },
         fallbacks=[
+            ozon_choice_handler, # <--- ДОБАВИТЬ СЮДА
             CommandHandler('fin_gpt', stop_gpt),
-            CommandHandler('restart', restart),  # Добавлен обработчик для /restart
+            CommandHandler('restart', restart),
         ],
         per_user=True,
         allow_reentry=True
@@ -14434,7 +14452,7 @@ def main() -> None:
     application.add_handler(CommandHandler("ozon", handle_ozon))
     application.add_handler(CallbackQueryHandler(ozon_track_start_callback, pattern="^ozon_track_start_"))
     application.add_handler(CallbackQueryHandler(ozon_set_threshold_callback, pattern="^ozon_set_thresh_"))
-    application.add_handler(CallbackQueryHandler(ozon_tracking_choice_handler, pattern=r"^ozon_(continue_new|continue_old|stop)\|\d+$"))
+    application.add_handler(ozon_choice_handler)
     application.add_handler(CallbackQueryHandler(handle_ozonpage_change, pattern=r"^ozon_page_\d+$"))
     application.add_handler(CallbackQueryHandler(handle_my_items, pattern=r"^myozon_items$"))
     application.add_handler(CallbackQueryHandler(ozon_view_stat, pattern=r"^ozon_view_stat_"))
