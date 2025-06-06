@@ -13421,37 +13421,53 @@ def format_price_table(tracked_items, page):
     subset = tracked_items[start:end]
 
     lines = ["Название  | нач.₽  | тек.₽  | мин.₽"]
+
     for item in subset:
         try:
-            title = item['title'][:10].ljust(10)
-            base = int(float(item.get('base_price_when_set', 0)))
+            if not isinstance(item, dict):
+                continue  # пропустить, если item не словарь
 
-            price_entries = item.get('price_history', [])
-            if price_entries:
-                last_entry = price_entries[-1]
-                latest_card_price = last_entry.get('card_price', base)
-                try:
-                    latest_card_price = int(float(latest_card_price))
-                except (ValueError, TypeError):
-                    latest_card_price = base
+            title = str(item.get('title', '—'))[:10].ljust(10)
 
-                # Найти минимальную цену из истории
-                min_card_price = min(
-                    int(entry.get('card_price', base)) for entry in price_entries
-                    if str(entry.get('card_price')).isdigit()
-                )
-            else:
-                latest_card_price = base
-                min_card_price = base
+            try:
+                base = int(float(item.get('base_price_when_set', 0)))
+            except (ValueError, TypeError):
+                base = 0
+
+            price_entries = item.get('price_history') or []
+            valid_prices = []
+
+            latest_card_price = base  # по умолчанию
+            for entry in reversed(price_entries):
+                if isinstance(entry, dict):
+                    try:
+                        price = int(float(entry.get('card_price', base)))
+                        latest_card_price = price
+                        break  # нашли последний валидный — выходим
+                    except (ValueError, TypeError):
+                        continue
+
+            # найти минимальную цену
+            for entry in price_entries:
+                if isinstance(entry, dict):
+                    try:
+                        price = int(float(entry.get('card_price', base)))
+                        valid_prices.append(price)
+                    except (ValueError, TypeError):
+                        continue
+
+            min_card_price = min(valid_prices) if valid_prices else base
 
             line = f"{title}|{base:^8}|{latest_card_price:^8}|{min_card_price:^8}"
             lines.append(line)
 
         except Exception as e:
-            print("Ошибка на товаре:", item.get("title"))
-            raise
+            print("Ошибка на товаре:", item.get("title") if isinstance(item, dict) else str(item))
+            continue  # не прерывать выполнение из-за одного товара
 
     return '<pre>' + '\n'.join(lines) + '</pre>'
+
+
 
 def build_keyboard(tracked_items, page):
     MAX_ITEMS_PER_PAGE = 5
