@@ -14207,6 +14207,9 @@ async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
                  logger.warning(f"Не удалось получить текущую цену для {url} пользователя {user_id}")
             
             updated_items_for_user.append(item)
+            delay = random.uniform(5, 15) 
+            logger.info(f"Пауза на {delay:.2f} секунд перед следующим товаром.")
+            await asyncio.sleep(delay)    
         
         if needs_db_update_for_user:
             db.reference(f"ozon_prices/{user_id}/tracked_items").set(updated_items_for_user)
