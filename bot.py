@@ -506,12 +506,15 @@ async def handle_debounced_inline_query(update: Update, context: ContextTypes.DE
         try:
             full_answer_raw = await generate_gemini_inline_response(query)
             escaped_answer = escape(full_answer_raw)
-
+    
+            # Всегда сохраняем ответ, даже если ответить не успели
+            save_inline_query_to_firebase(user_id, query, full_answer_raw)
+    
             truncated = escaped_answer[:4060]
             html_answer = f"<blockquote expandable>{truncated}</blockquote>"
-
+    
             preview_text = (escaped_answer[:100] + '...') if len(escaped_answer) > 100 else escaped_answer
-
+    
             results = [
                 InlineQueryResultArticle(
                     id=str(uuid4()),
@@ -523,13 +526,16 @@ async def handle_debounced_inline_query(update: Update, context: ContextTypes.DE
                     )
                 )
             ]
-
-            await inline_query.answer(results, cache_time=0, is_personal=True)
-            save_inline_query_to_firebase(user_id, query, full_answer_raw)
+    
+            # Пытаемся ответить, если не успеем — не страшно
+            try:
+                await inline_query.answer(results, cache_time=0, is_personal=True)
+            except Exception as e:
+                logger.warning(f"Не удалось отправить inline ответ (возможно таймаут): {e}")
         except asyncio.CancelledError:
             logger.info(f"Фоновая задача inline запроса пользователя {user_id} была отменена.")
         except Exception as e:
-            logger.error(f"Ошибка при обработке inline запроса: {e}")
+            logger.error(f"Ошибка при генерации или сохранении inline запроса: {e}")
 
     task = asyncio.create_task(background_inline_answer())
     user_tasks_set = context.user_data.setdefault('user_tasks', set())
@@ -568,6 +574,26 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     last_query_time = last_query_times.get(user_id)
     last_query_times[user_id] = now
 
+
+    saved_queries = load_user_inline_queries(user_id)
+    for item in saved_queries:
+        if item.get("query") == query:
+            response = item.get("response", "")
+            preview = (response[:100] + "...") if len(response) > 100 else response
+            results = [
+                InlineQueryResultArticle(
+                    id=str(uuid4()),
+                    title="Ранее сгенерированный ответ",
+                    description=preview,
+                    input_message_content=InputTextMessageContent(
+                        f"<blockquote expandable>{escape(response[:4060])}</blockquote>",
+                        parse_mode=ParseMode.HTML
+                    )
+                )
+            ]
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+            return
+    
     # Отменить предыдущую задачу, если она еще не завершена
     task = debounce_tasks.get(user_id)
     if task and not task.done():
