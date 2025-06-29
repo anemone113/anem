@@ -9822,10 +9822,16 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     author_line = f"{author_name_final}"
 
             # Проверяем наличие даты и времени в ((дата, время))
-            match = re.search(r"\(\((\d{2}\.\d{2}),\s*(\d{2}:\d{2})\)\)", author_line)
-            if match:
-                time = f"{match.group(1)}, {match.group(2)}"
-                author_line = re.sub(r"\(\(\d{2}\.\d{2},\s*\d{2}:\d{2}\)\)", "", author_line).strip()
+            # Проверяем наличие даты и времени в формате ((дд.мм, чч:мм))
+            time_pattern = r"\(\((\d{2}\.\d{2}),\s*(\d{2}:\d{2})\)\)"
+            time_match = re.search(time_pattern, author_line)
+            
+            if time_match:
+                # Извлекаем время в нужном формате
+                time = f"{time_match.group(1)}, {time_match.group(2)}"
+                # Удаляем этот фрагмент из строки
+                author_line = re.sub(time_pattern, "", author_line).strip()
+                logger.info(f"Найдена отложенная дата публикации: {time}")
             else:
                 time = None
             # Создание статьи в Telegra.ph
