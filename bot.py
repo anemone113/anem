@@ -10093,7 +10093,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 # ПОСЛЕ всех обработок image_count и ПОЛУЧЕНИЯ message_id.
                 
                 # Немедленное планирование задачи, если было указано время
-                if time and 'message_id' in locals() and message_id:
+                if time and message_id:
                     key_for_job = f"{user_id}_{message_id}"
                     # 'pub_dt' - это объект datetime, который был вычислен в начале функции
                     schedule_publication_job(
@@ -10112,9 +10112,22 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     else "изображений"
                 )
 
+                post_text = (
+                    f'Готово✅\n'
+                    f'====--- В посте {image_count} {image_text}. ---====\n'
+                )
+                
+                if time:
+                    post_text += f'\n⏳Запись отложена на {time}⏳'
+                
+                post_text += (
+                    '\n\nНажмите одну из кнопок ниже, чтобы опубликовать его в вашу группу или канал, '
+                    'отредактировать или предложить в Анемон'
+                )
+                
                 await message_to_reply.reply_text(
-                    f'Готово✅\n====--- В посте {image_count} {image_text}. ---====\n\nНажмите одну из кнопок ниже чтобы опубликовать его в вашу группу или канал, отредактировать или предложить в Анемон',
-                    reply_markup=create_publish_button(user_id, message_id)  # Передаем message_id
+                    post_text,
+                    reply_markup=create_publish_button(user_id, message_id)
                 )
 
                 # Отправляем сообщение с кнопкой для публикации в ВК
@@ -10994,9 +11007,15 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         logging.info(f"Пост {key} успешно опубликован в Telegram канал {chat_id}.")
         
         # НОВОЕ: Удаляем ключ time только после успешной публикации
-        db.reference(f'users_publications/{user_id}/{key}/time').set(None)
+        db.reference(f'users_publications/{user_id}/{key}/time').delete()
         logging.info(f"Ключ time для {key} удален после публикации в VK.")
 
+        # Уведомляем пользователя об успешной публикации
+        await bot.send_message(
+            chat_id=user_id,
+            text="✅ Ваша отложенная публикация была успешно размещена в канале."
+        )
+    
     except Exception as e:
         logging.error(f"Ошибка при публикации поста {key} в Telegram: {e}")
 
@@ -11062,9 +11081,13 @@ async def publish_to_vk_scheduled(context: CallbackContext):
         logging.info(f"Пост {key} успешно опубликован в VK группу {owner_id}.")
 
         # НОВОЕ: Удаляем ключ time только после успешной публикации
-        db.reference(f'users_publications/{user_id}/{key}/time').set(None)
+        db.reference(f'users_publications/{user_id}/{key}/time').delete()
         logging.info(f"Ключ time для {key} удален после публикации в TG.")
-
+        # Уведомляем пользователя об успешной публикации
+        await bot.send_message(
+            chat_id=user_id,
+            text="✅ Ваша отложенная публикация была успешно размещена в ВК."
+        )
     except Exception as e:
         logging.error(f"Ошибка при публикации поста {key} в VK: {e}")
 
