@@ -9821,7 +9821,13 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 else:
                     author_line = f"{author_name_final}"
 
-
+            # Проверяем наличие даты и времени в ((дата, время))
+            match = re.search(r"\(\((\d{2}\.\d{2}),\s*(\d{2}:\d{2})\)\)", author_line)
+            if match:
+                time = f"{match.group(1)}, {match.group(2)}"
+                author_line = re.sub(r"\(\(\d{2}\.\d{2},\s*\d{2}:\d{2}\)\)", "", author_line).strip()
+            else:
+                time = None
             # Создание статьи в Telegra.ph
             content = [
                 {
@@ -9937,6 +9943,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                         media_group_storage[user_id][key] = {
                             "media": media_group_data,
                             "scheduled": 'Отсутствует',
+                            "time": time,
                         }
                         await update.effective_chat.pin_message(message_id)                        
                         save_media_group_data(media_group_storage, user_id)  # Сохраняем в файл
@@ -9960,7 +9967,8 @@ async def publish(update: Update, context: CallbackContext) -> None:
                                     "parse_mode": 'HTML'
                                 }
                             ],
-                            "scheduled": 'Отсутствует'  # Добавляем scheduled со значением None
+                            "scheduled": 'Отсутствует',
+                            "time": time,  # Добавляем scheduled со значением None
                         }
                         
                         # Отправляем изображение
@@ -10001,7 +10009,8 @@ async def publish(update: Update, context: CallbackContext) -> None:
                                 "parse_mode": 'HTML'
                             }
                         ],
-                        "scheduled": 'Отсутствует'  # Добавляем scheduled со значением None
+                        "scheduled": 'Отсутствует',
+                        "time": time,  # Добавляем scheduled со значением None
                     }
                     
                     # Отправляем сообщение
@@ -10854,6 +10863,189 @@ async def handle_new_caption(update: Update, context: CallbackContext, key) -> i
         
     # Завершаем обработку
     return ASKING_FOR_ARTIST_LINK
+
+
+
+async def publish_to_telegram_scheduled(context: CallbackContext):
+    """Публикует пост в Telegram по расписанию."""
+    job_data = context.job.data
+    user_id = job_data['user_id']
+    message_id = job_data['message_id']
+
+    bot = context.bot
+    logging.info(f"Начало публикации в Telegram для user_id: {user_id}, message_id: {message_id}")
+
+    # Загружаем данные из Firebase
+    media_group_storage = load_publications_from_firebase()
+    user_data = media_group_storage.get(str(user_id))
+    if not user_data:
+        logging.error(f"Данные пользователя {user_id} не найдены.")
+        return
+
+    key = f"{user_id}_{message_id}"
+    media_group_data = user_data.get(key)
+    if not media_group_data:
+        logging.error(f"Данные для публикации {key} не найдены.")
+        return
+    
+    # ... (Остальная логика из handle_publish_button, адаптированная под работу без update)
+
+    try:
+        # Логика извлечения медиа и каналов
+        media_items = media_group_data.get('media')
+        channel_ref = db.reference('users_publications/channels')
+        channels_data = channel_ref.get() or {}
+        user_channels = [
+            chat_id for chat_id, info in channels_data.items()
+            if user_id in info.get('user_ids', [])
+        ]
+
+        if not user_channels:
+            logging.warning(f"У пользователя {user_id} нет привязанных каналов.")
+            return
+
+        chat_id = user_channels[0]
+        media_group = []
+        for item in media_items:
+            file_url = item['file_id']
+            mime_type, _ = mimetypes.guess_type(file_url)
+            processed_image = await convert_image_repost(file_url) # Предполагается, что эта функция у вас есть
+            if processed_image:
+                caption = item.get('caption')
+                parse_mode = item.get('parse_mode')
+                if mime_type == "image/gif":
+                    media_group.append(InputMediaDocument(media=processed_image, caption=caption, filename="animation.gif", parse_mode=parse_mode))
+                else:
+                    media_group.append(InputMediaPhoto(media=processed_image, caption=caption, parse_mode=parse_mode))
+
+        # Отправка
+        await bot.send_media_group(chat_id=chat_id, media=media_group)
+        logging.info(f"Пост {key} успешно опубликован в Telegram канал {chat_id}.")
+        
+        # НОВОЕ: Удаляем ключ time только после успешной публикации
+        db.reference(f'users_publications/{user_id}/{key}/time').set(None)
+        logging.info(f"Ключ time для {key} удален после публикации в VK.")
+
+    except Exception as e:
+        logging.error(f"Ошибка при публикации поста {key} в Telegram: {e}")
+
+
+async def publish_to_vk_scheduled(context: CallbackContext):
+    """Публикует пост в VK по расписанию."""
+    job_data = context.job.data
+    user_id = job_data['user_id']
+    message_id = job_data['message_id']
+    
+    logging.info(f"Начало публикации в VK для user_id: {user_id}, message_id: {message_id}")
+
+    # Загружаем данные из Firebase
+    media_group_storage = load_publications_from_firebase()
+    user_data = media_group_storage.get(str(user_id))
+    if not user_data:
+        logging.error(f"Данные пользователя {user_id} не найдены.")
+        return
+
+    key = f"{user_id}_{message_id}"
+    media_group_data = user_data.get(key)
+    if not media_group_data:
+        logging.error(f"Данные для публикации {key} не найдены.")
+        return
+
+    # ... (Остальная логика из handle_vkpub_button, адаптированная)
+    
+    try:
+        media_items = media_group_data.get("media", [])
+        image_urls = [item.get("file_id") for item in media_items if "file_id" in item]
+        
+        vk_keys_ref = db.reference(f'users_publications/vk_keys/{user_id}')
+        vk_keys = vk_keys_ref.get()
+        if not vk_keys:
+            logging.warning(f"У пользователя {user_id} нет ключей для VK.")
+            return
+            
+        token = vk_keys.get("token")
+        owner_id = vk_keys.get("owner_id")
+
+        vk_session = VkApi(token=token)
+        vk = vk_session.get_api()
+        
+        uploaded_photos = []
+        first_caption = media_items[0].get("caption", "")
+        cleaned_caption = extract_text_before_first_link(first_caption) # Предполагается, что эта функция у вас есть
+        formatted_caption = format_caption_for_vk(first_caption) # Предполагается, что эта функция у вас есть
+
+        for url in image_urls:
+            photo = upload_photo_to_vk(vk, url, owner_id, formatted_caption) # Предполагается, что эта функция у вас есть
+            uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
+            
+        if int(owner_id) > 0:
+            owner_id = -int(owner_id)
+            
+        vk.wall.post(
+            owner_id=int(owner_id),
+            from_group=1,
+            message=cleaned_caption,
+            attachments=",".join(uploaded_photos),
+            random_id=get_random_id()
+        )
+        logging.info(f"Пост {key} успешно опубликован в VK группу {owner_id}.")
+
+        # НОВОЕ: Удаляем ключ time только после успешной публикации
+        db.reference(f'users_publications/{user_id}/{key}/time').set(None)
+        logging.info(f"Ключ time для {key} удален после публикации в TG.")
+
+    except Exception as e:
+        logging.error(f"Ошибка при публикации поста {key} в VK: {e}")
+
+
+
+def scan_and_schedule_publications(context: CallbackContext):
+    """
+    Сканирует все публикации и планирует их запуск.
+    Эта версия надежна и переживает перезапуски бота.
+    """
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    now = datetime.now(moscow_tz)
+    publications = load_publications_from_firebase()
+
+    for user_id, user_pubs in publications.items():
+        if user_id in ['channels', 'vk_keys']: continue
+
+        for message_id_key, pub_data in user_pubs.items():
+            if isinstance(pub_data, dict) and 'time' in pub_data and pub_data['time']:
+                time_str = pub_data['time']
+                try:
+                    pub_dt_naive = datetime.strptime(time_str, "%d.%m, %H:%M")
+                    pub_dt_with_year = pub_dt_naive.replace(year=now.year)
+                    if pub_dt_with_year < now:
+                        pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
+                    pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
+                    
+                    user_id_int = int(user_id)
+                    message_id_int = int(message_id_key.split('_')[-1])
+                    job_data = {'user_id': user_id_int, 'message_id': message_id_int, 'key': message_id_key}
+
+                    # НОВОЕ: Создаем уникальные имена для задач
+                    tg_job_name = f"tg_pub_{message_id_key}"
+                    vk_job_name = f"vk_pub_{message_id_key}"
+
+                    # НОВОЕ: Проверяем, существуют ли уже задачи с такими именами
+                    existing_tg_jobs = context.job_queue.get_jobs_by_name(tg_job_name)
+                    existing_vk_jobs = context.job_queue.get_jobs_by_name(vk_job_name)
+                    
+                    # Планируем, только если задач еще нет в очереди
+                    if not existing_tg_jobs:
+                        context.job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
+                        logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
+
+                    if not existing_vk_jobs:
+                        context.job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
+                        logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
+
+                    # !!! КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Мы больше НЕ удаляем ключ 'time' здесь !!!
+
+                except (ValueError, TypeError) as e:
+                    logging.error(f"Ошибка парсинга времени '{time_str}' для {message_id_key}: {e}")
 
 
 
@@ -14591,6 +14783,13 @@ def main() -> None:
     
     logging.info(f"Задача daily_ozon_price_check_job зарегистрирована на ежедневный запуск в {time_to_run.strftime('%H:%M')} по Москве.")
 
+    # Новая задача для сканирования публикаций
+    # Запускаем каждый час, первая проверка сразу после запуска бота
+    job_queue.run_repeating(scan_and_schedule_publications, interval=3600, first=0)
+    logging.info("Задача scan_and_schedule_publications зарегистрирована на ежечасный запуск.")
+
+
+    
     application.run_polling()  
 if __name__ == '__main__':
     # Настройка логирования
