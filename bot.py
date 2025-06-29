@@ -9820,12 +9820,12 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     author_line = f"{extra_phrase}\n\n{author_name_final}"
                 else:
                     author_line = f"{author_name_final}"
-
+            logger.info(f"author_line: {author_line}")
             # Проверяем наличие даты и времени в ((дата, время))
             # Проверяем наличие даты и времени в формате ((дд.мм, чч:мм))
             time_pattern = r"\(\((\d{2}\.\d{2}),\s*(\d{2}:\d{2})\)\)"
             time_match = re.search(time_pattern, author_line)
-            
+            logger.info(f"time_match: {time_match}")          
             if time_match:
                 # Извлекаем время в нужном формате
                 time = f"{time_match.group(1)}, {time_match.group(2)}"
