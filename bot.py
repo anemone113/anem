@@ -9833,7 +9833,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
             logger.info(f"time_match: {time_match}")       
             if time_match:
                 date_part = time_match.group(1)   # "30.06" или "18"
-                time_part = time_match.group(2)   # "10:35"
+                time_part = time_match.group(2)   # "0:35"
             
                 hour, minute = map(int, time_part.split(":"))
             
@@ -9844,11 +9844,13 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     year = now.year
             
                     try:
-                        pub_dt = datetime(year, month, day, hour, minute)
+                        naive_pub_dt = datetime(year, month, day, hour, minute)
+                        pub_dt = moscow_tz.localize(naive_pub_dt)
+            
                         if pub_dt < now:
-                            pub_dt = datetime(year + 1, month, day, hour, minute)
-                    except ValueError as e:
-                        logger.error(f"Неверная дата: {e}")
+                            pub_dt = moscow_tz.localize(datetime(year + 1, month, day, hour, minute))
+                    except Exception as e:
+                        logger.error(f"Ошибка в дате: {e}")
                         pub_dt = None
                 else:
                     # только день указан
@@ -9857,7 +9859,9 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     year = now.year
             
                     try:
-                        pub_dt = datetime(year, month, day, hour, minute)
+                        naive_pub_dt = datetime(year, month, day, hour, minute)
+                        pub_dt = moscow_tz.localize(naive_pub_dt)
+            
                         if pub_dt < now:
                             # пробуем следующий месяц
                             if month == 12:
@@ -9865,21 +9869,18 @@ async def publish(update: Update, context: CallbackContext) -> None:
                                 month = 1
                             else:
                                 month += 1
-                            pub_dt = datetime(year, month, day, hour, minute)
-                    except ValueError as e:
-                        logger.error(f"Неверная дата с автопереходом на следующий месяц: {e}")
+                            pub_dt = moscow_tz.localize(datetime(year, month, day, hour, minute))
+                    except Exception as e:
+                        logger.error(f"Ошибка в дате (без месяца): {e}")
                         pub_dt = None
             
                 if pub_dt:
-                    # Сохраняем в формате "дд.мм, чч:мм"
                     time = pub_dt.strftime("%d.%m, %H:%M")
-                    logger.info(f"Найдена отложенная дата публикации: {time}")
-            
-                    # Удаляем ((...)) из author_line
                     author_line = re.sub(time_pattern, "", author_line).strip()
+                    logger.info(f"Найдена отложенная дата публикации: {time}")
                 else:
                     time = None
-                    logger.warning("Не удалось определить корректную дату публикации")
+                    logger.warning("Не удалось сформировать дату публикации")
             else:
                 time = None
             # Создание статьи в Telegra.ph
