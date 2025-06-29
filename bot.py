@@ -9821,17 +9821,65 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 else:
                     author_line = f"{author_name_final}"
             logger.info(f"author_line: {author_line}")
+
+            
+            moscow_tz = pytz.timezone('Europe/Moscow')
+            now = datetime.now(moscow_tz)
+            
             # Проверяем наличие даты и времени в ((дата, время))
             # Проверяем наличие даты и времени в формате ((дд.мм, чч:мм))
-            time_pattern = r"\(\((\d{2}\.\d{2}),\s*(\d{2}:\d{2})\)\)"
+            time_pattern = r"\(\((\d{1,2}(?:\.\d{1,2})?),\s*(\d{1,2}:\d{2})\)\)"
             time_match = re.search(time_pattern, author_line)
-            logger.info(f"time_match: {time_match}")          
+            logger.info(f"time_match: {time_match}")       
             if time_match:
-                # Извлекаем время в нужном формате
-                time = f"{time_match.group(1)}, {time_match.group(2)}"
-                # Удаляем этот фрагмент из строки
-                author_line = re.sub(time_pattern, "", author_line).strip()
-                logger.info(f"Найдена отложенная дата публикации: {time}")
+                date_part = time_match.group(1)   # "30.06" или "18"
+                time_part = time_match.group(2)   # "10:35"
+            
+                hour, minute = map(int, time_part.split(":"))
+            
+                if "." in date_part:
+                    day_str, month_str = date_part.split(".")
+                    day = int(day_str)
+                    month = int(month_str)
+                    year = now.year
+            
+                    try:
+                        pub_dt = datetime(year, month, day, hour, minute)
+                        if pub_dt < now:
+                            pub_dt = datetime(year + 1, month, day, hour, minute)
+                    except ValueError as e:
+                        logger.error(f"Неверная дата: {e}")
+                        pub_dt = None
+                else:
+                    # только день указан
+                    day = int(date_part)
+                    month = now.month
+                    year = now.year
+            
+                    try:
+                        pub_dt = datetime(year, month, day, hour, minute)
+                        if pub_dt < now:
+                            # пробуем следующий месяц
+                            if month == 12:
+                                year += 1
+                                month = 1
+                            else:
+                                month += 1
+                            pub_dt = datetime(year, month, day, hour, minute)
+                    except ValueError as e:
+                        logger.error(f"Неверная дата с автопереходом на следующий месяц: {e}")
+                        pub_dt = None
+            
+                if pub_dt:
+                    # Сохраняем в формате "дд.мм, чч:мм"
+                    time = pub_dt.strftime("%d.%m, %H:%M")
+                    logger.info(f"Найдена отложенная дата публикации: {time}")
+            
+                    # Удаляем ((...)) из author_line
+                    author_line = re.sub(time_pattern, "", author_line).strip()
+                else:
+                    time = None
+                    logger.warning("Не удалось определить корректную дату публикации")
             else:
                 time = None
             # Создание статьи в Telegra.ph
