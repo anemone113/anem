@@ -11077,27 +11077,37 @@ def reschedule_publications_on_startup(context: CallbackContext):
     """
     logging.info("Запуск восстановления отложенных публикаций при старте...")
     moscow_tz = pytz.timezone('Europe/Moscow')
-    now = datetime.now(moscow_tz)
-    publications = load_publications_from_firebase() # Ваша функция загрузки
+    now = datetime.now(moscow_tz)  # aware datetime
+
+    publications = load_publications_from_firebase()
 
     for user_id, user_pubs in publications.items():
-        if user_id in ['channels', 'vk_keys']: continue
+        if user_id in ['channels', 'vk_keys']:
+            continue
 
         for message_id_key, pub_data in user_pubs.items():
             if isinstance(pub_data, dict) and 'time' in pub_data and pub_data['time']:
                 time_str = pub_data['time']
                 try:
-                    # Ваша логика парсинга времени остается прежней
+                    # Парсим без года, добавим его позже
                     pub_dt_naive = datetime.strptime(time_str, "%d.%m, %H:%M")
+
+                    # Добавляем текущий год
                     pub_dt_with_year = pub_dt_naive.replace(year=now.year)
-                    if pub_dt_with_year < now:
-                        pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
+
+                    # Делаем aware из naive, указываем зону
                     pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
-                    
+
+                    # Если время уже прошло — переносим на следующий год
+                    if pub_dt_aware < now:
+                        pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
+                        pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
+
+                    # Преобразование ID
                     user_id_int = int(user_id)
                     message_id_int = int(message_id_key.split('_')[-1])
 
-                    # Используем нашу новую универсальную функцию
+                    # Планируем задачу
                     schedule_publication_job(
                         job_queue=context.job_queue,
                         user_id=user_id_int,
@@ -11106,8 +11116,11 @@ def reschedule_publications_on_startup(context: CallbackContext):
                         pub_dt_aware=pub_dt_aware
                     )
 
-                except (ValueError, TypeError) as e:
-                    logging.error(f"Ошибка парсинга времени '{time_str}' для {message_id_key} при восстановлении: {e}")
+                except Exception as e:
+                    logging.error(
+                        f"Ошибка при обработке времени '{time_str}' для {message_id_key}: {e}"
+                    )
+
     logging.info("Восстановление отложенных публикаций завершено.")
 
 
