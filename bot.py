@@ -10088,7 +10088,23 @@ async def publish(update: Update, context: CallbackContext) -> None:
                         disable_web_page_preview=True
                     )
 
-
+                # --- РЕКОМЕНДУЕМЫЙ ВАРИАНТ ---
+                # ЭТОТ КОД нужно поместить в самый конец блока if response_json.get('ok'):, 
+                # ПОСЛЕ всех обработок image_count и ПОЛУЧЕНИЯ message_id.
+                
+                # Немедленное планирование задачи, если было указано время
+                if time and 'message_id' in locals() and message_id:
+                    key_for_job = f"{user_id}_{message_id}"
+                    # 'pub_dt' - это объект datetime, который был вычислен в начале функции
+                    schedule_publication_job(
+                        job_queue=context.job_queue,
+                        user_id=user_id,
+                        message_id=message_id,
+                        key=key_for_job,
+                        pub_dt_aware=pub_dt
+                    )
+                    # Опционально: уведомить пользователя о точном времени
+                    await message_to_reply.reply_text(f"✅ Публикация запланирована на {time}.")
 
                 image_text = (
                     "изображение" if image_count % 10 == 1 and image_count % 100 != 11
@@ -11054,14 +11070,15 @@ async def publish_to_vk_scheduled(context: CallbackContext):
 
 
 
-def scan_and_schedule_publications(context: CallbackContext):
+def reschedule_publications_on_startup(context: CallbackContext):
     """
-    Сканирует все публикации и планирует их запуск.
-    Эта версия надежна и переживает перезапуски бота.
+    Сканирует все публикации при запуске бота и восстанавливает
+    запланированные задачи, если они были утеряны из-за перезапуска.
     """
+    logging.info("Запуск восстановления отложенных публикаций при старте...")
     moscow_tz = pytz.timezone('Europe/Moscow')
     now = datetime.now(moscow_tz)
-    publications = load_publications_from_firebase()
+    publications = load_publications_from_firebase() # Ваша функция загрузки
 
     for user_id, user_pubs in publications.items():
         if user_id in ['channels', 'vk_keys']: continue
@@ -11070,6 +11087,7 @@ def scan_and_schedule_publications(context: CallbackContext):
             if isinstance(pub_data, dict) and 'time' in pub_data and pub_data['time']:
                 time_str = pub_data['time']
                 try:
+                    # Ваша логика парсинга времени остается прежней
                     pub_dt_naive = datetime.strptime(time_str, "%d.%m, %H:%M")
                     pub_dt_with_year = pub_dt_naive.replace(year=now.year)
                     if pub_dt_with_year < now:
@@ -11078,29 +11096,44 @@ def scan_and_schedule_publications(context: CallbackContext):
                     
                     user_id_int = int(user_id)
                     message_id_int = int(message_id_key.split('_')[-1])
-                    job_data = {'user_id': user_id_int, 'message_id': message_id_int, 'key': message_id_key}
 
-                    # НОВОЕ: Создаем уникальные имена для задач
-                    tg_job_name = f"tg_pub_{message_id_key}"
-                    vk_job_name = f"vk_pub_{message_id_key}"
-
-                    # НОВОЕ: Проверяем, существуют ли уже задачи с такими именами
-                    existing_tg_jobs = context.job_queue.get_jobs_by_name(tg_job_name)
-                    existing_vk_jobs = context.job_queue.get_jobs_by_name(vk_job_name)
-                    
-                    # Планируем, только если задач еще нет в очереди
-                    if not existing_tg_jobs:
-                        context.job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
-                        logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
-
-                    if not existing_vk_jobs:
-                        context.job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
-                        logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
-
-                    # !!! КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Мы больше НЕ удаляем ключ 'time' здесь !!!
+                    # Используем нашу новую универсальную функцию
+                    schedule_publication_job(
+                        job_queue=context.job_queue,
+                        user_id=user_id_int,
+                        message_id=message_id_int,
+                        key=message_id_key,
+                        pub_dt_aware=pub_dt_aware
+                    )
 
                 except (ValueError, TypeError) as e:
-                    logging.error(f"Ошибка парсинга времени '{time_str}' для {message_id_key}: {e}")
+                    logging.error(f"Ошибка парсинга времени '{time_str}' для {message_id_key} при восстановлении: {e}")
+    logging.info("Восстановление отложенных публикаций завершено.")
+
+
+def schedule_publication_job(job_queue: JobQueue, user_id: int, message_id: int, key: str, pub_dt_aware: datetime):
+    """
+    Планирует задачи для публикации в TG и VK для одного конкретного поста.
+    Эта функция проверяет существование задач перед их добавлением.
+    """
+    job_data = {'user_id': user_id, 'message_id': message_id, 'key': key}
+    
+    # Создаем уникальные имена для задач
+    tg_job_name = f"tg_pub_{key}"
+    vk_job_name = f"vk_pub_{key}"
+
+    # Проверяем, существуют ли уже задачи с такими именами
+    if not job_queue.get_jobs_by_name(tg_job_name):
+        job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
+        logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
+    else:
+        logging.info(f"Задача TG {tg_job_name} уже существует в очереди. Пропускаем.")
+
+    if not job_queue.get_jobs_by_name(vk_job_name):
+        job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
+        logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
+    else:
+        logging.info(f"Задача VK {vk_job_name} уже существует в очереди. Пропускаем.")
 
 
 
@@ -14840,8 +14873,8 @@ def main() -> None:
 
     # Новая задача для сканирования публикаций
     # Запускаем каждый час, первая проверка сразу после запуска бота
-    job_queue.run_repeating(scan_and_schedule_publications, interval=3600, first=0)
-    logging.info("Задача scan_and_schedule_publications зарегистрирована на ежечасный запуск.")
+    job_queue.run_once(reschedule_publications_on_startup, when=0)
+    logging.info("Задача reschedule_publications_on_startup зарегистрирована для однократного запуска при старте.")
 
 
     
