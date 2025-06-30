@@ -10451,7 +10451,7 @@ def create_schedule_keyboard(user_id: int, message_id: int, selections: dict) ->
 
     # --- Кнопки управления ---
     keyboard.append([InlineKeyboardButton("✅ Подтвердить выбор", callback_data=f"schedule_confirm_{user_id}_{message_id}")])
-    keyboard.append([InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')])
+    keyboard.append([InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")])
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -11431,20 +11431,17 @@ async def publish_to_vk_scheduled(context: CallbackContext):
         logging.error(f"Ошибка при публикации поста {key} в VK: {e}")
 
 
-
-def reschedule_publications_on_startup(context: CallbackContext):
+async def reschedule_publications_on_startup(context: CallbackContext):
     """
     Сканирует все публикации при запуске бота и восстанавливает
-    запланированные задачи. Если время прошло менее недели назад — публикации
-    создаются немедленно с интервалом 30 секунд. Если больше — переносятся
-    на следующий год.
+    запланированные задачи. Если время прошло менее недели назад —
+    переносятся на сегодня/завтра в то же время. Иначе — на следующий год.
     """
     logging.info("Запуск восстановления отложенных публикаций при старте...")
     moscow_tz = pytz.timezone('Europe/Moscow')
     now = datetime.now(moscow_tz)  # aware datetime
 
     publications = load_publications_from_firebase()
-    delay_seconds = 0  # для публикаций, опоздавших менее чем на неделю
 
     for user_id, user_pubs in publications.items():
         if user_id in ['channels', 'vk_keys']:
@@ -11454,20 +11451,37 @@ def reschedule_publications_on_startup(context: CallbackContext):
             if isinstance(pub_data, dict) and 'time' in pub_data and pub_data['time']:
                 time_str = pub_data['time']
                 try:
-                    # Парсим без года, добавим его позже
                     pub_dt_naive = datetime.strptime(time_str, "%d.%m, %H:%M")
                     pub_dt_with_year = pub_dt_naive.replace(year=now.year)
                     pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
-
                     time_diff = now - pub_dt_aware
 
                     if pub_dt_aware < now:
                         if time_diff <= timedelta(weeks=1):
-                            # Время прошло менее недели назад — публикация сейчас с интервалом
-                            pub_dt_aware = now + timedelta(seconds=delay_seconds)
-                            delay_seconds += 30
+                            # Переносим на сегодня или завтра в то же время
+                            today_pub_dt = now.replace(hour=pub_dt_aware.hour,
+                                                       minute=pub_dt_aware.minute,
+                                                       second=0, microsecond=0)
+
+                            if today_pub_dt > now:
+                                pub_dt_aware = today_pub_dt
+                            else:
+                                pub_dt_aware = today_pub_dt + timedelta(days=1)
+
+                            # Здесь можно отправить уведомление пользователю
+                            try:
+                                user_id_int = int(user_id)
+                                await context.bot.send_message(
+                                    chat_id=user_id_int,
+                                    text=(
+                                        f"Публикация '{message_id_key}' была просрочена из-за ошибки бота или сервера, "
+                                        f"поэтому она будет выполнена {pub_dt_aware.strftime('%d.%m в %H:%M')}."
+                                    )
+                                )
+                            except Exception as notify_err:
+                                logging.warning(f"Не удалось уведомить пользователя {user_id}: {notify_err}")
                         else:
-                            # Перенос на следующий год
+                            # Переносим на следующий год
                             pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
                             pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
 
