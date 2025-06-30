@@ -97,7 +97,8 @@ from huggingface_hub import AsyncInferenceClient
 import os
 from dotenv import load_dotenv
 import html
-from datetime import datetime, timezone, time as dt_time
+from datetime import datetime, timezone, timedelta, time as dt_time
+import calendar
 import time
 import uuid
 # Укажите ваши токены и ключ для imgbb
@@ -10153,6 +10154,293 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
 
 
+async def schedule_post_handler(update: Update, context: CallbackContext) -> None:
+    """
+    Показывает начальную клавиатуру для планирования.
+    Загружает существующие значения из Firebase, если они есть.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    _, user_id_str, message_id_str = query.data.split('_')
+    user_id = int(user_id_str)
+    message_id = int(message_id_str)
+    
+    # Ключ для хранения выбора в user_data, уникальный для каждого поста
+    selection_key = f'schedule_{user_id}_{message_id}'
+    
+    # Загружаем данные из Firebase
+    key = f"{user_id}_{message_id}"
+    try:
+        ref = db.reference(f'users_publications/{user_id}/{key}')
+        post_data = ref.get() or {}
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке поста из Firebase: {e}")
+        post_data = {}
+        
+    selections = {}
+    now = datetime.now()
+
+    # Если есть ключ 'time', парсим его
+    if 'time' in post_data and post_data['time']:
+        try:
+            # Формат "день.месяц, час:минута"
+            time_str = post_data['time']
+            day_month, hour_minute = time_str.split(',')
+            day = int(day_month.split('.')[0])
+            month = int(day_month.split('.')[1])
+            hour = int(hour_minute.split(':')[0].strip())
+            minute = int(hour_minute.split(':')[1])
+            
+            selections['day'] = day
+            selections['hour'] = hour
+            selections['minute'] = minute
+            
+            if month == now.month:
+                selections['month'] = 'current'
+            # Проверяем, является ли месяц следующим (учитывая переход через год)
+            elif month == (now.month % 12) + 1:
+                selections['month'] = 'next'
+                
+        except (ValueError, IndexError) as e:
+            logging.warning(f"Не удалось распарсить 'time': {post_data.get('time')}. Ошибка: {e}")
+
+    # Проверяем ключи onlyvk/onlytg
+    if post_data.get('onlytg'):
+        selections['platform'] = 'tg'
+    elif post_data.get('onlyvk'):
+        selections['platform'] = 'vk'
+    else:
+        # Если ни один ключ не установлен, считаем что это "в оба"
+        selections['platform'] = 'both'
+        
+    # Сохраняем начальные/загруженные выборы в user_data
+    context.user_data[selection_key] = selections
+    
+    keyboard = create_schedule_keyboard(user_id, message_id, selections)
+    chat_id = query.message.chat_id  # ID чата, откуда пришёл callback
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Выберите дату, время и место для отложенной публикации:",
+        reply_markup=keyboard
+    )
+
+
+async def schedule_update_handler(update: Update, context: CallbackContext) -> None:
+    """
+    Обновляет клавиатуру при выборе опции.
+    """
+    query = update.callback_query
+    
+    parts = query.data.split('_')
+    # schedule_update_user_id_message_id_type_value
+    user_id = int(parts[2])
+    message_id = int(parts[3])
+    selection_type = parts[4]
+    selection_value = parts[5]
+
+    # Преобразуем числовые значения
+    if selection_value.isdigit():
+        selection_value = int(selection_value)
+
+    selection_key = f'schedule_{user_id}_{message_id}'
+    
+    # Получаем или создаем словарь выборов
+    selections = context.user_data.get(selection_key, {})
+    
+    # Обновляем выбор
+    selections[selection_type] = selection_value
+    context.user_data[selection_key] = selections
+    
+    # Перерисовываем клавиатуру
+    keyboard = create_schedule_keyboard(user_id, message_id, selections)
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+    await query.answer() # Ответ без текста, просто чтобы убрать "часики"
+
+async def schedule_confirm_handler(update: Update, context: CallbackContext) -> None:
+    """
+    Подтверждает выбор, валидирует дату и сохраняет в Firebase.
+    """
+    query = update.callback_query
+    
+    _, _, user_id_str, message_id_str = query.data.split('_')
+    user_id = int(user_id_str)
+    message_id = int(message_id_str)
+    
+    selection_key = f'schedule_{user_id}_{message_id}'
+    selections = context.user_data.get(selection_key, {})
+    
+    # --- Валидация ---
+    required_keys = ['month', 'day', 'hour', 'minute', 'platform']
+    if not all(key in selections for key in required_keys):
+        await query.answer("Пожалуйста, выберите все параметры: месяц, день, час, минуту и куда публиковать.", show_alert=True)
+        return
+
+    now = datetime.now()
+    year = now.year
+    
+    if selections['month'] == 'current':
+        month = now.month
+    else: # 'next'
+        month = now.month + 1
+        if month > 12:
+            month = 1
+            year += 1
+            
+    day = selections['day']
+    
+    # Проверка на корректность даты (например, 31 февраля)
+    try:
+        # calendar.monthrange(year, month) возвращает (день недели первого дня, кол-во дней в месяце)
+        num_days_in_month = calendar.monthrange(year, month)[1]
+        if day > num_days_in_month:
+            await query.answer(f"Выбрана неверная дата: в {calendar.month_name[month].lower()} {year} года всего {num_days_in_month} дней.", show_alert=True)
+            return
+        
+        # Полная проверка, что выбранное время не в прошлом
+        scheduled_dt = datetime(year, month, day, selections['hour'], selections['minute'])
+        if scheduled_dt < now:
+            await query.answer("Выбранное время уже прошло. Пожалуйста, выберите будущее время.", show_alert=True)
+            return
+
+    except ValueError: # На случай, если month некорректен (хотя наша логика это исключает)
+        await query.answer("Произошла ошибка с выбором месяца. Попробуйте еще раз.", show_alert=True)
+        return
+        
+    # --- Сохранение в Firebase ---
+    time_string = f"{selections['day']:02d}.{month:02d}, {selections['hour']:02d}:{selections['minute']:02d}"
+    
+    updates = {
+        'time': time_string,
+        'scheduled': True,
+        'onlyvk': None, # Сначала сбрасываем оба ключа
+        'onlytg': None
+    }
+    
+    if selections['platform'] == 'tg':
+        updates['onlytg'] = True
+    elif selections['platform'] == 'vk':
+        updates['onlyvk'] = True
+    # Если 'both', то оба ключа остаются None (т.е. будут удалены из Firebase)
+
+    try:
+        key = f"{user_id}_{message_id}"
+        ref = db.reference(f'users_publications/{user_id}/{key}')
+        ref.update(updates)
+        
+
+        pub_dt_aware = scheduled_dt.astimezone()  # если ваш datetime не aware — приведите
+
+        schedule_publication_job(
+            job_queue=context.job_queue,
+            user_id=user_id,
+            message_id=message_id,
+            key=key,
+            pub_dt_aware=pub_dt_aware,
+            only_tg=selections['platform'] == 'tg',
+            only_vk=selections['platform'] == 'vk'
+        )
+        
+        # Очистка временных данных
+        if selection_key in context.user_data:
+            del context.user_data[selection_key]
+            
+        await query.answer("✅ Настройки сохранены!", show_alert=False)
+        await query.message.edit_text(f"✅ Публикация запланирована на: *{time_string}*", parse_mode='Markdown')
+
+    except Exception as e:
+        logging.error(f"Ошибка при обновлении Firebase: {e}")
+        await query.answer(f"🚫 Ошибка при сохранении: {e}", show_alert=True)
+
+
+def create_schedule_keyboard(user_id: int, message_id: int, selections: dict) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру для выбора даты и времени публикации.
+    
+    :param user_id: ID пользователя
+    :param message_id: ID сообщения с постом
+    :param selections: Словарь с текущими выборами пользователя (например, {'month': 'current', 'day': 15})
+    :return: Объект InlineKeyboardMarkup
+    """
+    keyboard = []
+    
+    # --- Секция выбора месяца ---
+    keyboard.append([InlineKeyboardButton("Выберите месяц:", callback_data='noop')])
+    now = datetime.now()
+    current_month_text = "Текущий"
+    next_month_text = "Следующий"
+    if selections.get('month') == 'current':
+        current_month_text = "✅ Текущий"
+    elif selections.get('month') == 'next':
+        next_month_text = "✅ Следующий"
+    keyboard.append([
+        InlineKeyboardButton(current_month_text, callback_data=f"schedule_update_{user_id}_{message_id}_month_current"),
+        InlineKeyboardButton(next_month_text, callback_data=f"schedule_update_{user_id}_{message_id}_month_next"),
+    ])
+
+    # --- Секция выбора дня ---
+    keyboard.append([InlineKeyboardButton("Выберите день:", callback_data='noop')])
+    day_buttons = []
+    for day in range(1, 32):
+        day_text = str(day)
+        if selections.get('day') == day:
+            day_text = f"✅ {day}"
+        day_buttons.append(InlineKeyboardButton(day_text, callback_data=f"schedule_update_{user_id}_{message_id}_day_{day}"))
+        if len(day_buttons) == 6:
+            keyboard.append(day_buttons)
+            day_buttons = []
+    if day_buttons:
+        keyboard.append(day_buttons)
+
+    # --- Секция выбора часа ---
+    keyboard.append([InlineKeyboardButton("Выберите час:", callback_data='noop')])
+    hour_buttons = []
+    for hour in range(24):
+        hour_text = f"{hour:02d}"
+        if selections.get('hour') == hour:
+            hour_text = f"✅ {hour:02d}"
+        hour_buttons.append(InlineKeyboardButton(hour_text, callback_data=f"schedule_update_{user_id}_{message_id}_hour_{hour}"))
+        if len(hour_buttons) == 6:
+            keyboard.append(hour_buttons)
+            hour_buttons = []
+    if hour_buttons:
+        keyboard.append(hour_buttons)
+        
+    # --- Секция выбора минуты ---
+    keyboard.append([InlineKeyboardButton("Выберите минуту:", callback_data='noop')])
+    minute_buttons = []
+    for minute in range(0, 60, 5):
+        minute_text = f"{minute:02d}"
+        if selections.get('minute') == minute:
+            minute_text = f"✅ {minute:02d}"
+        minute_buttons.append(InlineKeyboardButton(minute_text, callback_data=f"schedule_update_{user_id}_{message_id}_minute_{minute}"))
+        if len(minute_buttons) == 6:
+            keyboard.append(minute_buttons)
+            minute_buttons = []
+    if minute_buttons:
+        keyboard.append(minute_buttons)
+
+    # --- Секция выбора платформы ---
+    keyboard.append([InlineKeyboardButton("Выберите куда опубликовать:", callback_data='noop')])
+    tg_text, vk_text, both_text = "Телеграм", "ВК", "В оба"
+    if selections.get('platform') == 'tg':
+        tg_text = "✅ Телеграм"
+    elif selections.get('platform') == 'vk':
+        vk_text = "✅ ВК"
+    elif selections.get('platform') == 'both':
+        both_text = "✅ В оба"
+    keyboard.append([
+        InlineKeyboardButton(tg_text, callback_data=f"schedule_update_{user_id}_{message_id}_platform_tg"),
+        InlineKeyboardButton(vk_text, callback_data=f"schedule_update_{user_id}_{message_id}_platform_vk"),
+        InlineKeyboardButton(both_text, callback_data=f"schedule_update_{user_id}_{message_id}_platform_both"),
+    ])
+
+    # --- Кнопки управления ---
+    keyboard.append([InlineKeyboardButton("✅ Подтвердить выбор", callback_data=f"schedule_confirm_{user_id}_{message_id}")])
+    keyboard.append([InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')])
+    
+    return InlineKeyboardMarkup(keyboard)
+
 
 
 def create_publish_button(user_id, message_id):
@@ -10167,6 +10455,9 @@ def create_publish_button(user_id, message_id):
         [
             InlineKeyboardButton("Пост в X.com", callback_data=f"twitterpub_{user_id}_{message_id}")
         ],   
+        [
+            InlineKeyboardButton("🗓️ Отложить 🗓️", callback_data=f"schedulepost_{user_id}_{message_id}")
+        ],
         [
             InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{user_id}_{message_id}")
         ],
@@ -11181,29 +11472,37 @@ def reschedule_publications_on_startup(context: CallbackContext):
     logging.info("Восстановление отложенных публикаций завершено.")
 
 
-def schedule_publication_job(job_queue: JobQueue, user_id: int, message_id: int, key: str, pub_dt_aware: datetime):
+def schedule_publication_job(
+    job_queue: JobQueue,
+    user_id: int,
+    message_id: int,
+    key: str,
+    pub_dt_aware: datetime,
+    only_tg: bool = False,
+    only_vk: bool = False
+):
     """
-    Планирует задачи для публикации в TG и VK для одного конкретного поста.
-    Эта функция проверяет существование задач перед их добавлением.
+    Планирует задачи публикации в TG и VK.
+    Учитывает платформы: только TG, только VK, обе.
     """
     job_data = {'user_id': user_id, 'message_id': message_id, 'key': key}
-    
-    # Создаем уникальные имена для задач
-    tg_job_name = f"tg_pub_{key}"
-    vk_job_name = f"vk_pub_{key}"
 
-    # Проверяем, существуют ли уже задачи с такими именами
-    if not job_queue.get_jobs_by_name(tg_job_name):
-        job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
-        logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
-    else:
-        logging.info(f"Задача TG {tg_job_name} уже существует в очереди. Пропускаем.")
+    if not only_vk:
+        tg_job_name = f"tg_pub_{key}"
+        if not job_queue.get_jobs_by_name(tg_job_name):
+            job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
+            logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
+        else:
+            logging.info(f"Задача TG {tg_job_name} уже существует. Пропускаем.")
 
-    if not job_queue.get_jobs_by_name(vk_job_name):
-        job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
-        logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
-    else:
-        logging.info(f"Задача VK {vk_job_name} уже существует в очереди. Пропускаем.")
+    if not only_tg:
+        vk_job_name = f"vk_pub_{key}"
+        if not job_queue.get_jobs_by_name(vk_job_name):
+            job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
+            logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
+        else:
+            logging.info(f"Задача VK {vk_job_name} уже существует. Пропускаем.")
+
 
 
 
@@ -14890,7 +15189,17 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(ozon_change_threshold_callback, pattern=r"^changenotif_"))
     application.add_handler(CallbackQueryHandler(ozon_update_threshold_callback, pattern=r"^ozon_update_thresh_"))    
 
+    # Обработчик для кнопки "Отложить 🗓️"
+    application.add_handler(CallbackQueryHandler(schedule_post_handler, pattern=r'^schedulepost_'))
+    
+    # Обработчик для обновления выбора на клавиатуре
+    application.add_handler(CallbackQueryHandler(schedule_update_handler, pattern=r'^schedule_update_'))
 
+    # Обработчик для кнопки "Подтвердить выбор"
+    application.add_handler(CallbackQueryHandler(schedule_confirm_handler, pattern=r'^schedule_confirm_'))
+
+    # Добавляем обработчик для кнопок-заглушек, чтобы они ничего не делали, но убирали "часики"
+    application.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern=r'^noop$'))
     
     # Обработчик для просмотра конкретной отложенной записи
     application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$')) 
