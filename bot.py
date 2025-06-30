@@ -10400,13 +10400,29 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
         user_publications = media_group_storage[current_user_id]
         for message_id, data in user_publications.items():
             if isinstance(data, dict):
-                record_tag = data.get('scheduled', '')
+                
+                # --- НАЧАЛО ИЗМЕНЕНИЙ ---
+                
+                # Флаг, который определяет, нужно ли добавлять запись в список
+                record_matches = False
 
-                # Пропускаем записи с 'scheduled' == null
-                if record_tag is None:
-                    continue
+                # 1. Особая логика, если запрошен тег 'time'
+                if tag == 'time':
+                    # Ищем все записи, у которых просто есть ключ 'time'
+                    if 'time' in data and data.get('time') is not None:
+                        record_matches = True
+                
+                # 2. Стандартная логика для всех остальных тегов
+                else:
+                    record_tag = data.get('scheduled')
+                    if record_tag == tag:
+                        record_matches = True
 
-                elif record_tag == tag:  # Если метка совпадает
+                # Если запись подошла по одному из условий выше, обрабатываем её
+                if record_matches:
+                    
+                # --- КОНЕЦ ИЗМЕНЕНИЙ ---
+
                     # Проверяем, что 'media' — это список
                     if 'media' in data and isinstance(data['media'], list):
                         media_list = data['media']
@@ -10423,26 +10439,28 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
                             # Получаем очищенный текст
                             cleaned_caption = soup.get_text()
 
-                            # Логика определения финального текста
+                            # Логика определения финального текста (ваша логика остается без изменений)
                             if "автор: " in cleaned_caption.lower():
-                                # Если есть "автор: ", берём текст после него до конца строки или первой ссылки
                                 match = re.search(r'автор:\s*([^•<\n]+)', cleaned_caption, re.IGNORECASE)
                                 caption = match.group(1).strip() if match else ''
                             else:
-                                # Если "автор: " нет, берём первые 3 слова очищенного текста
                                 caption = ' '.join(cleaned_caption.split()[:3])
                             logging.info(f"cleaned_caption {cleaned_caption}")                                
                             if cleaned_caption.startswith("Модель: Imagen3"):
                                 match = re.search(r"Ваш запрос:\s*(.+)", cleaned_caption, re.DOTALL)
                                 if match:
                                     caption = match.group(1).strip()
-                            logging.info(f"cleaned_caption2 {cleaned_caption}")                                     
+                            logging.info(f"cleaned_caption2 {cleaned_caption}")
+
                             # Добавляем в список с подписью
                             time_str = ''
-                            if tag == 'time':
-                                time_value = data.get('time')
-                                if time_value:
-                                    time_str = f"({time_value}) "  # Например: (12:30)
+                            # Теперь время будет добавляться к подписи для любой записи, где оно есть
+                            time_value = data.get('time')
+                            if time_value:
+                                time_str = f"({time_value}) "
+                            
+                            # При добавлении в итоговый список мы используем исходный 'tag',
+                            # чтобы кнопка и заголовок отображались корректно (например, "Записи из папки time")
                             scheduled.append((message_id, f"{time_str}{caption}", tag))
 
 
