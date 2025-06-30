@@ -3415,7 +3415,7 @@ async def generate_image(update, context, user_id, prompt, query_message=None):
 
     for i, HF_API_KEY in enumerate(token_order):
         logger.info(f"Пробуем API-ключ {i+1}/{len(token_order)}: {HF_API_KEY}")
-        client_image = AsyncInferenceClient(provider="fal-ai", api_key=HF_API_KEY, timeout=300)
+        client_image = AsyncInferenceClient(provider="hf-inference", api_key=HF_API_KEY, timeout=300)
 
         try:
             start_time = time.time()  # Фиксируем начальное время
