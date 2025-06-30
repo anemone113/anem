@@ -10327,8 +10327,21 @@ async def schedule_confirm_handler(update: Update, context: CallbackContext) -> 
         ref = db.reference(f'users_publications/{user_id}/{key}')
         ref.update(updates)
         
+        # Парсим без года, добавим его позже
+        pub_dt_naive = datetime.strptime(time_string, "%d.%m, %H:%M")
 
-        pub_dt_aware = scheduled_dt.astimezone()  # если ваш datetime не aware — приведите
+        # Добавляем текущий год
+        pub_dt_with_year = pub_dt_naive.replace(year=now.year)
+
+        # Делаем aware из naive, указываем зону
+        pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
+
+        # Если время уже прошло — переносим на следующий год
+        if pub_dt_aware < now:
+            pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
+            pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
+
+
 
         schedule_publication_job(
             job_queue=context.job_queue,
@@ -10339,7 +10352,7 @@ async def schedule_confirm_handler(update: Update, context: CallbackContext) -> 
             only_tg=selections['platform'] == 'tg',
             only_vk=selections['platform'] == 'vk'
         )
-        
+
         # Очистка временных данных
         if selection_key in context.user_data:
             del context.user_data[selection_key]
