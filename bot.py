@@ -11435,13 +11435,16 @@ async def publish_to_vk_scheduled(context: CallbackContext):
 def reschedule_publications_on_startup(context: CallbackContext):
     """
     Сканирует все публикации при запуске бота и восстанавливает
-    запланированные задачи, если они были утеряны из-за перезапуска.
+    запланированные задачи. Если время прошло менее недели назад — публикации
+    создаются немедленно с интервалом 30 секунд. Если больше — переносятся
+    на следующий год.
     """
     logging.info("Запуск восстановления отложенных публикаций при старте...")
     moscow_tz = pytz.timezone('Europe/Moscow')
     now = datetime.now(moscow_tz)  # aware datetime
 
     publications = load_publications_from_firebase()
+    delay_seconds = 0  # для публикаций, опоздавших менее чем на неделю
 
     for user_id, user_pubs in publications.items():
         if user_id in ['channels', 'vk_keys']:
@@ -11453,23 +11456,24 @@ def reschedule_publications_on_startup(context: CallbackContext):
                 try:
                     # Парсим без года, добавим его позже
                     pub_dt_naive = datetime.strptime(time_str, "%d.%m, %H:%M")
-
-                    # Добавляем текущий год
                     pub_dt_with_year = pub_dt_naive.replace(year=now.year)
-
-                    # Делаем aware из naive, указываем зону
                     pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
 
-                    # Если время уже прошло — переносим на следующий год
-                    if pub_dt_aware < now:
-                        pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
-                        pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
+                    time_diff = now - pub_dt_aware
 
-                    # Преобразование ID
+                    if pub_dt_aware < now:
+                        if time_diff <= timedelta(weeks=1):
+                            # Время прошло менее недели назад — публикация сейчас с интервалом
+                            pub_dt_aware = now + timedelta(seconds=delay_seconds)
+                            delay_seconds += 30
+                        else:
+                            # Перенос на следующий год
+                            pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
+                            pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
+
                     user_id_int = int(user_id)
                     message_id_int = int(message_id_key.split('_')[-1])
 
-                    # Планируем задачу
                     schedule_publication_job(
                         job_queue=context.job_queue,
                         user_id=user_id_int,
