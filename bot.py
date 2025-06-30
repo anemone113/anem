@@ -10438,7 +10438,12 @@ async def show_scheduled_by_tag(update: Update, context: CallbackContext) -> Non
                                     caption = match.group(1).strip()
                             logging.info(f"cleaned_caption2 {cleaned_caption}")                                     
                             # Добавляем в список с подписью
-                            scheduled.append((message_id, caption, tag))
+                            time_str = ''
+                            if tag == 'time':
+                                time_value = data.get('time')
+                                if time_value:
+                                    time_str = f"({time_value}) "  # Например: (12:30)
+                            scheduled.append((message_id, f"{time_str}{caption}", tag))
 
 
 
@@ -10683,15 +10688,21 @@ async def handle_scheduled_tags(update: Update, context: CallbackContext) -> Non
     user_publications = media_group_storage[user_id]
 
     # Подсчёт количества записей для каждой метки
+    scheduled_time_count = 0  # Счётчик записей с ключом 'time'
+
+    # Подсчёт количества записей для каждой метки
     for message_id, data in user_publications.items():
-        if isinstance(data, dict) and 'scheduled' in data:
-            tag = data['scheduled']
-            
-            # Пропускаем записи с scheduled == null
+        if isinstance(data, dict):
+            tag = data.get('scheduled')
+
+            # Считаем отложенные публикации
+            if 'time' in data:
+                scheduled_time_count += 1
+
+            # Пропускаем записи с scheduled == None
             if tag is None:
                 continue
-            
-            # Увеличиваем счётчик для записей без метки
+
             if tag == "Отсутствует":
                 no_folder_count += 1
                 continue
@@ -10708,21 +10719,26 @@ async def handle_scheduled_tags(update: Update, context: CallbackContext) -> Non
     row = []
     for tag, count in sorted(tag_counts.items()):
         row.append(InlineKeyboardButton(f"{tag} ({count})", callback_data=f"filter_tag_{tag}"))
-        if len(row) == 4:  # Максимум 4 кнопки в строке
+        if len(row) == 4:
             keyboard.append(row)
             row = []
-    if row:  # Добавляем оставшиеся кнопки
+
+    if row:
         keyboard.append(row)
 
-    # Добавляем кнопку "Прочее", если есть временные метки
+    # Добавляем кнопку "Отложенные публикации"
+    if scheduled_time_count > 0:
+        keyboard.append([InlineKeyboardButton(f"Отложенные публикации ({scheduled_time_count})", callback_data='filter_tag_time')])
+
+    # Добавляем кнопку "Нет метки", если есть временные метки
     if other_count > 0:
         keyboard.append([InlineKeyboardButton(f"Нет метки ({other_count})", callback_data="filter_tag_other")])
 
-    # Добавляем кнопку "Записи без папки", если есть записи с меткой "Отсутствует"
+    # Добавляем кнопку "Записи без папки", если есть такие
     if no_folder_count > 0:
         keyboard.append([InlineKeyboardButton(f"Записи без папки ({no_folder_count})", callback_data="filter_tag_nofolder")])
 
-    # Добавляем кнопку "🌌В главное меню🌌" в отдельную строку
+    # Кнопка возврата в главное меню
     keyboard.append([InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')])
 
     total_count = sum(tag_counts.values()) + other_count + no_folder_count
@@ -11040,7 +11056,7 @@ async def publish_to_vk_scheduled(context: CallbackContext):
     if not media_group_data:
         logging.error(f"Данные для публикации {key} не найдены.")
         return
-
+    bot = context.bot
     # ... (Остальная логика из handle_vkpub_button, адаптированная)
     
     try:
