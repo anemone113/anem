@@ -10312,7 +10312,6 @@ async def schedule_confirm_handler(update: Update, context: CallbackContext) -> 
     
     updates = {
         'time': time_string,
-        'scheduled': True,
         'onlyvk': None, # Сначала сбрасываем оба ключа
         'onlytg': None
     }
