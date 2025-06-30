@@ -10326,7 +10326,9 @@ async def schedule_confirm_handler(update: Update, context: CallbackContext) -> 
         key = f"{user_id}_{message_id}"
         ref = db.reference(f'users_publications/{user_id}/{key}')
         ref.update(updates)
-        
+
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        now = datetime.now(moscow_tz)  # aware datetime           
         # Парсим без года, добавим его позже
         pub_dt_naive = datetime.strptime(time_string, "%d.%m, %H:%M")
 
