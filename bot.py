@@ -11515,25 +11515,29 @@ def schedule_publication_job(
 ):
     """
     Планирует задачи публикации в TG и VK.
-    Учитывает платформы: только TG, только VK, обе.
+    Если задача с таким именем уже есть — удаляет её и создаёт заново.
     """
     job_data = {'user_id': user_id, 'message_id': message_id, 'key': key}
 
     if not only_vk:
         tg_job_name = f"tg_pub_{key}"
-        if not job_queue.get_jobs_by_name(tg_job_name):
-            job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
-            logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
-        else:
-            logging.info(f"Задача TG {tg_job_name} уже существует. Пропускаем.")
+        existing_jobs = job_queue.get_jobs_by_name(tg_job_name)
+        if existing_jobs:
+            for job in existing_jobs:
+                job.schedule_removal()
+            logging.info(f"Старая TG задача {tg_job_name} удалена.")
+        job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
+        logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
 
     if not only_tg:
         vk_job_name = f"vk_pub_{key}"
-        if not job_queue.get_jobs_by_name(vk_job_name):
-            job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
-            logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
-        else:
-            logging.info(f"Задача VK {vk_job_name} уже существует. Пропускаем.")
+        existing_jobs = job_queue.get_jobs_by_name(vk_job_name)
+        if existing_jobs:
+            for job in existing_jobs:
+                job.schedule_removal()
+            logging.info(f"Старая VK задача {vk_job_name} удалена.")
+        job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
+        logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
 
 
 
@@ -12382,6 +12386,9 @@ async def send_scheduled_post_buttons(query, key, data):
                 InlineKeyboardButton("В X.com", callback_data=f"twitterpub_{key}"),
                 InlineKeyboardButton("Удалить", callback_data=f"yrrasetag_{key}"),  
             ],
+            [
+                InlineKeyboardButton("🗓️ Отложить 🗓️", callback_data=f"schedulepost_{key}")
+            ],             
             [
                 InlineKeyboardButton("🌠 Предложить этот пост в Анемон 🌠", callback_data=f"share_{key}")
             ],
