@@ -10205,6 +10205,10 @@ async def schedule_post_handler(update: Update, context: CallbackContext) -> Non
         except (ValueError, IndexError) as e:
             logging.warning(f"Не удалось распарсить 'time': {post_data.get('time')}. Ошибка: {e}")
 
+    # 👇 ВСТАВЬ ЭТО СЮДА:
+    if 'month' not in selections:
+        selections['month'] = 'current'
+    
     # Проверяем ключи onlyvk/onlytg
     if post_data.get('onlytg'):
         selections['platform'] = 'tg'
