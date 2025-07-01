@@ -10381,16 +10381,33 @@ def create_schedule_keyboard(user_id: int, message_id: int, selections: dict) ->
     # --- Секция выбора месяца ---
     keyboard.append([InlineKeyboardButton("Выберите месяц:", callback_data='noop')])
     now = datetime.now()
-    current_month_text = "Текущий"
-    next_month_text = "Следующий"
-    if selections.get('month') == 'current':
-        current_month_text = "✅ Текущий"
-    elif selections.get('month') == 'next':
-        next_month_text = "✅ Следующий"
-    keyboard.append([
-        InlineKeyboardButton(current_month_text, callback_data=f"schedule_update_{user_id}_{message_id}_month_current"),
-        InlineKeyboardButton(next_month_text, callback_data=f"schedule_update_{user_id}_{message_id}_month_next"),
-    ])
+
+    # Получаем текущий, следующий и через один месяц
+    month_options = {
+        'current': now.month,
+        'next': (now.month % 12) + 1,
+        'plus2': ((now.month + 1) % 12) + 1,
+    }
+
+    # Если месяц ещё не выбран — по умолчанию выбирается текущий
+    selected_month_key = selections.get('month', 'current')
+
+    month_texts = {
+        'current': "Текущий",
+        'next': "Следующий",
+        'plus2': "Через один",
+    }
+
+    month_buttons = []
+    for key, name in month_texts.items():
+        text = f"✅ {name}" if selected_month_key == key else name
+        month_buttons.append(
+            InlineKeyboardButton(
+                text,
+                callback_data=f"schedule_update_{user_id}_{message_id}_month_{key}"
+            )
+        )
+    keyboard.append(month_buttons)
 
     # --- Секция выбора дня ---
     keyboard.append([InlineKeyboardButton("Выберите день:", callback_data='noop')])
@@ -10451,10 +10468,53 @@ def create_schedule_keyboard(user_id: int, message_id: int, selections: dict) ->
 
     # --- Кнопки управления ---
     keyboard.append([InlineKeyboardButton("✅ Подтвердить выбор", callback_data=f"schedule_confirm_{user_id}_{message_id}")])
+    keyboard.append([
+        InlineKeyboardButton("🗑 Удалить из отложенных", callback_data=f"otloj_delete_{user_id}_{message_id}")
+    ])      
     keyboard.append([InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")])
     
     return InlineKeyboardMarkup(keyboard)
 
+async def delete_scheduled_time_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, _, user_id_str, message_id_str = query.data.split('_')
+        user_id = int(user_id_str)
+        message_id = int(message_id_str)
+        key = f"{user_id}_{message_id}"
+
+        # Удаляем ключ 'time' из Firebase
+        ref = db.reference(f'users_publications/{user_id}/{key}')
+        ref.child('time').delete()
+
+        # Удаляем связанные задачи из JobQueue
+        tg_job_name = f"tg_pub_{key}"
+        vk_job_name = f"vk_pub_{key}"
+
+        tg_jobs = context.job_queue.get_jobs_by_name(tg_job_name)
+        vk_jobs = context.job_queue.get_jobs_by_name(vk_job_name)
+
+        for job in tg_jobs + vk_jobs:
+            job.schedule_removal()
+            logging.info(f"Удалена задача: {job.name}")
+
+        # Удаляем сообщение с клавиатурой
+        await query.message.delete()
+
+        # Подтверждение пользователю
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="✅ Публикация удалена из отложенных и задача отменена."
+        )
+
+    except Exception as e:
+        logging.error(f"Ошибка при удалении из отложенных: {e}")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="❌ Не удалось удалить из отложенных. Попробуйте позже."
+        )
 
 
 def create_publish_button(user_id, message_id):
@@ -11431,6 +11491,302 @@ async def publish_to_vk_scheduled(context: CallbackContext):
         logging.error(f"Ошибка при публикации поста {key} в VK: {e}")
 
 
+
+
+# Новая асинхронная функция для получения краткого содержания поста
+async def get_post_caption(post_key: str) -> str:
+    """
+    Асинхронно получает и обрабатывает заголовок поста по его ключу.
+    Ключ имеет формат 'user_id_message_id'.
+    """
+    try:
+        user_id, full_key = post_key.split('_')[0], post_key  # Используем весь post_key как вложенный ключ
+    except ValueError:
+        return "Неверный ключ"
+
+    logging.info(f"user_id: {user_id}, full_key: {full_key}")
+    
+    # Загружаем все публикации
+    media_group_storage = load_publications_from_firebase()
+
+    
+    # Ищем нужную публикацию
+    post_data = media_group_storage.get(user_id, {}).get(full_key)
+
+    
+    if not post_data or 'media' not in post_data or not post_data['media']:
+        return "Пост не найден"
+
+    raw_caption = post_data['media'][0].get('caption', '')
+    if not raw_caption:
+        return "Без текста"
+
+    # Используем BeautifulSoup для очистки от HTML
+    soup = BeautifulSoup(raw_caption, 'html.parser')
+    for a in soup.find_all('a'):
+        a.replace_with(a.get_text())
+    cleaned_caption = soup.get_text()
+
+    # Логика определения финального текста
+    caption = ""
+    if "Модель: Imagen3" in cleaned_caption:
+        match = re.search(r"Ваш запрос:\s*(.+)", cleaned_caption, re.DOTALL)
+        if match:
+            caption = match.group(1).strip().replace('\n', ' ')
+    elif "автор: " in cleaned_caption.lower():
+        match = re.search(r'автор:\s*([^•<\n]+)', cleaned_caption, re.IGNORECASE)
+        if match:
+            caption = match.group(1).strip()
+    
+    if not caption:
+        caption = ' '.join(cleaned_caption.split()[:5])  # Берем первые 5 слов, если ничего не подошло
+
+    # Обрезаем для краткости
+    return (caption[:30] + '…') if len(caption) > 30 else caption
+
+# --- Основная, обновленная функция ---
+
+
+async def list_scheduled_jobs(update: Update, context: CallbackContext):
+    """
+    Показывает все активные задачи публикаций в виде клавиатуры.
+    Отображает имя автора с платформой в скобках и сортирует по ближайшей дате.
+    """
+    jobs = context.job_queue.jobs()
+    logging.info(f"jobs: {jobs}")    
+
+    scheduled_posts = {}
+
+    for job in jobs:
+        if not job.name or not job.name.startswith(('tg_pub_', 'vk_pub_')):
+            continue
+
+        try:
+            parts = job.name.split('_')
+            platform = parts[0]
+            author_id = parts[2]
+            message_id = parts[3]
+            post_key = f"{author_id}_{message_id}"
+        except IndexError:
+            logging.warning(f"Не удалось распарсить имя задачи: {job.name}")
+            continue
+
+        scheduled_time = job.next_t
+        if not scheduled_time:
+            continue
+
+        if post_key not in scheduled_posts:
+            scheduled_posts[post_key] = {
+                'author_id': author_id,
+                'platforms': set(),
+                'scheduled_time': scheduled_time
+            }
+        else:
+            scheduled_posts[post_key]['scheduled_time'] = min(
+                scheduled_posts[post_key]['scheduled_time'], scheduled_time
+            )
+
+        scheduled_posts[post_key]['platforms'].add(platform)
+
+    if not scheduled_posts:
+        await update.message.reply_text("Сейчас нет запланированных публикаций.")
+        return
+
+    # Сортируем по дате
+    sorted_posts = sorted(scheduled_posts.items(), key=lambda x: x[1]['scheduled_time'])
+
+    keyboard = [
+        [
+            InlineKeyboardButton("👤 Автор (платформа)", callback_data="noop_header"),
+            InlineKeyboardButton("📝 Пост", callback_data="noop_header"),
+            InlineKeyboardButton("🕓 Время", callback_data="noop_header")
+        ]
+    ]
+
+    for post_key, data in sorted_posts:
+        author_id = data['author_id']
+        scheduled_time = data['scheduled_time'].astimezone(pytz.timezone("Europe/Moscow"))  # или нужный вам часовой пояс
+
+        time_str = scheduled_time.strftime('%d.%m, %H:%M')
+
+        if author_id == '6217936347':
+            author_name = "Артем"
+        elif author_id == '419817885':
+            author_name = "Нова"
+        else:
+            author_name = "Другой"
+
+        platforms = sorted(data['platforms'])
+        platform_str = ", ".join(platforms)
+
+        # имя + платформа
+        full_author = f"{author_name} ({platform_str})"
+
+        post_caption = await get_post_caption(post_key)
+
+        row = [
+            InlineKeyboardButton(full_author, callback_data=f"otlview_{post_key}"),
+            InlineKeyboardButton(post_caption, callback_data=f"otlview_{post_key}"),
+            InlineKeyboardButton(time_str, callback_data=f"schedulepost_{post_key}")
+        ]
+        keyboard.append(row)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🔧 Активные публикации:", reply_markup=reply_markup)
+
+
+async def send_otl_post_buttons(query, key, data):
+    """Отправляет сообщение с кнопками управления публикацией."""
+    await query.message.reply_text(
+        text=f"Папка: {data.get('scheduled', 'Не указана')}\n\nКоличество медиа в посте: {len(data.get('media', []))}\n\nПри нажатии кнопки \"Редактировать пост\" вы можете отсортировать или удалить изображения, а так же поменять подпись. ",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🗓️ Изменить время 🗓️", callback_data=f"schedulepost_{key}")
+            ],             
+            [
+                InlineKeyboardButton("📝 Редактировать пост 📝", callback_data=f"editpost_{key}")
+            ],                
+            [
+                InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')
+            ],  
+            [
+                InlineKeyboardButton("❌ Удалить пост❌", callback_data=f"yrrasetag_{key}")  
+            ],                      
+        ])
+    )
+
+
+
+
+async def handle_otloj_scheduled(update: Update, context: CallbackContext) -> None:
+    """
+    Обрабатывает просмотр запланированной публикации.
+    Извлекает ID пользователя из ключа callback'а для получения нужных данных.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    MAX_CAPTION_LENGTH = 1024
+
+    # 1. Разделяем callback_data, чтобы получить ключ (key)
+    if '_' in query.data:
+        _, key = query.data.split('_', 1)
+    else:
+        await query.message.reply_text("🚫 Ошибка: Некорректный формат данных.")
+        return
+
+    # 2. ИЗМЕНЕНИЕ: Извлекаем ID пользователя из самого ключа
+    # Ключ имеет формат "user_id_post_id", например "419817885_26678"
+    try:
+        current_user_id = key.split('_')[0]
+    except IndexError:
+        await query.message.reply_text("🚫 Ошибка: Некорректный формат ключа.")
+        return
+
+    global media_group_storage
+    # Загружаем данные из хранилища (например, Firebase)
+    media_group_storage = load_publications_from_firebase()
+
+    # 3. Проверяем, что публикации для этого пользователя существуют
+    if current_user_id in media_group_storage:
+        user_publications = media_group_storage[current_user_id]
+        
+        # 4. Используем ПОЛНЫЙ ключ для получения конкретной публикации
+        data = user_publications.get(key)
+        
+        if data:
+            try:
+                # Если данные - это строка JSON, преобразуем в словарь
+                if isinstance(data, str):
+                    data = json.loads(data)
+
+                if isinstance(data, dict) and 'media' in data:
+                    media = data['media']
+                    media_group = []
+                    captions_only = []
+
+                    # Определяем, является ли media списком или словарем
+                    media_items = media if isinstance(media, list) else media.values()
+
+                    for media_data in media_items:
+                        if 'file_id' not in media_data:
+                            continue
+
+                        file_id = media_data['file_id']
+                        caption = media_data.get('caption', '')
+                        parse_mode = media_data.get('parse_mode', None)
+
+                        # Если подпись слишком длинная, она будет отправлена отдельно
+                        caption_to_send = caption if len(caption) <= MAX_CAPTION_LENGTH else ''
+
+                        file_id_lower = file_id.lower()
+                        
+                        # Обработка GIF/MP4
+                        if file_id_lower.endswith(('.gif', '.mp4')):
+                            try:
+                                await query.message.reply_text("Видео/GIF обрабатывается, ожидайте...")
+                                processed_media, _ = await process_image(file_id)
+                                if not processed_media:
+                                    raise Exception("Не удалось обработать медиафайл.")
+                                
+                                await query.message.reply_animation(
+                                    animation=processed_media,
+                                    caption=caption,
+                                    parse_mode=parse_mode
+                                )
+                            except Exception as e:
+                                # logger.error(f"Ошибка при отправке gif/mp4: {e}")
+                                await query.message.reply_text(f"🚫 Ошибка при отправке анимации: {e}")
+
+                        # Обработка изображений
+                        elif file_id_lower.endswith(('.jpg', '.jpeg', '.png')) or not file_id.startswith("http"):
+                            media_group.append(
+                                InputMediaPhoto(
+                                    media=file_id,
+                                    caption=caption_to_send,
+                                    parse_mode=parse_mode
+                                )
+                            )
+                        # Обработка остальных типов как документов
+                        else:
+                            media_group.append(
+                                InputMediaDocument(
+                                    media=file_id,
+                                    caption=caption_to_send,
+                                    parse_mode=parse_mode
+                                )
+                            )
+                        
+                        # Отправка длинных подписей отдельным сообщением
+                        if len(caption) > MAX_CAPTION_LENGTH:
+                            await query.message.reply_text(
+                                text=caption,
+                                parse_mode=parse_mode
+                            )
+
+                    # Отправка медиа-группы, если она была сформирована
+                    if media_group:
+                        await context.bot.send_media_group(
+                            chat_id=query.message.chat_id,
+                            media=media_group
+                        )
+
+                    # Отправка информации о записи с кнопками управления
+                    await send_otl_post_buttons(query, key, data)
+
+                else:
+                    await query.message.reply_text("🚫 Ошибка: Некорректный формат данных в записи.")
+            except json.JSONDecodeError as e:
+                await query.message.reply_text(f"🚫 Ошибка чтения данных: {e}")
+        else:
+            await query.message.reply_text("🚫 Запись не найдена.")
+    else:
+        await query.message.reply_text("🚫 Публикации для данного пользователя не найдены.")
+
+
+
+
+
 async def reschedule_publications_on_startup(context: CallbackContext):
     """
     Сканирует все публикации при запуске бота и восстанавливает
@@ -11439,7 +11795,7 @@ async def reschedule_publications_on_startup(context: CallbackContext):
     """
     logging.info("Запуск восстановления отложенных публикаций при старте...")
     moscow_tz = pytz.timezone('Europe/Moscow')
-    now = datetime.now(moscow_tz)  # aware datetime
+    now = datetime.now(moscow_tz)
 
     publications = load_publications_from_firebase()
 
@@ -11458,17 +11814,14 @@ async def reschedule_publications_on_startup(context: CallbackContext):
 
                     if pub_dt_aware < now:
                         if time_diff <= timedelta(weeks=1):
-                            # Переносим на сегодня или завтра в то же время
                             today_pub_dt = now.replace(hour=pub_dt_aware.hour,
                                                        minute=pub_dt_aware.minute,
                                                        second=0, microsecond=0)
-
                             if today_pub_dt > now:
                                 pub_dt_aware = today_pub_dt
                             else:
                                 pub_dt_aware = today_pub_dt + timedelta(days=1)
 
-                            # Здесь можно отправить уведомление пользователю
                             try:
                                 user_id_int = int(user_id)
                                 await context.bot.send_message(
@@ -11481,19 +11834,25 @@ async def reschedule_publications_on_startup(context: CallbackContext):
                             except Exception as notify_err:
                                 logging.warning(f"Не удалось уведомить пользователя {user_id}: {notify_err}")
                         else:
-                            # Переносим на следующий год
                             pub_dt_with_year = pub_dt_with_year.replace(year=now.year + 1)
                             pub_dt_aware = moscow_tz.localize(pub_dt_with_year)
 
                     user_id_int = int(user_id)
                     message_id_int = int(message_id_key.split('_')[-1])
 
+                    # Получаем платформы
+                    only_tg = pub_data.get('onlytg') is True
+                    only_vk = pub_data.get('onlyvk') is True
+
+                    # Планируем публикацию
                     schedule_publication_job(
                         job_queue=context.job_queue,
                         user_id=user_id_int,
                         message_id=message_id_int,
                         key=message_id_key,
-                        pub_dt_aware=pub_dt_aware
+                        pub_dt_aware=pub_dt_aware,
+                        only_tg=only_tg,
+                        only_vk=only_vk
                     )
 
                 except Exception as e:
@@ -11502,7 +11861,6 @@ async def reschedule_publications_on_startup(context: CallbackContext):
                     )
 
     logging.info("Восстановление отложенных публикаций завершено.")
-
 
 def schedule_publication_job(
     job_queue: JobQueue,
@@ -11516,29 +11874,46 @@ def schedule_publication_job(
     """
     Планирует задачи публикации в TG и VK.
     Если задача с таким именем уже есть — удаляет её и создаёт заново.
+    Если передан only_tg или only_vk, противоположная задача также удаляется.
     """
     job_data = {'user_id': user_id, 'message_id': message_id, 'key': key}
+    logging.info(f"only_tg {only_tg}")
+    logging.info(f"only_vk {only_vk}")
 
+    tg_job_name = f"tg_pub_{key}"
+    vk_job_name = f"vk_pub_{key}"
+
+    # === Удаление TG задачи, если only_vk ===
+    if only_vk:
+        existing_tg_jobs = job_queue.get_jobs_by_name(tg_job_name)
+        for job in existing_tg_jobs:
+            job.schedule_removal()
+            logging.info(f"Удалена TG задача {tg_job_name}, так как only_vk=True")
+
+    # === Удаление VK задачи, если only_tg ===
+    if only_tg:
+        existing_vk_jobs = job_queue.get_jobs_by_name(vk_job_name)
+        for job in existing_vk_jobs:
+            job.schedule_removal()
+            logging.info(f"Удалена VK задача {vk_job_name}, так как only_tg=True")
+
+    # === Создание TG задачи ===
     if not only_vk:
-        tg_job_name = f"tg_pub_{key}"
-        existing_jobs = job_queue.get_jobs_by_name(tg_job_name)
-        if existing_jobs:
-            for job in existing_jobs:
-                job.schedule_removal()
+        existing_tg_jobs = job_queue.get_jobs_by_name(tg_job_name)
+        for job in existing_tg_jobs:
+            job.schedule_removal()
             logging.info(f"Старая TG задача {tg_job_name} удалена.")
         job_queue.run_once(publish_to_telegram_scheduled, when=pub_dt_aware, data=job_data, name=tg_job_name)
         logging.info(f"Запланирована TG публикация {tg_job_name} на {pub_dt_aware}")
 
+    # === Создание VK задачи ===
     if not only_tg:
-        vk_job_name = f"vk_pub_{key}"
-        existing_jobs = job_queue.get_jobs_by_name(vk_job_name)
-        if existing_jobs:
-            for job in existing_jobs:
-                job.schedule_removal()
+        existing_vk_jobs = job_queue.get_jobs_by_name(vk_job_name)
+        for job in existing_vk_jobs:
+            job.schedule_removal()
             logging.info(f"Старая VK задача {vk_job_name} удалена.")
         job_queue.run_once(publish_to_vk_scheduled, when=pub_dt_aware, data=job_data, name=vk_job_name)
         logging.info(f"Запланирована VK публикация {vk_job_name} на {pub_dt_aware}")
-
 
 
 
@@ -15242,6 +15617,10 @@ def main() -> None:
     
     # Обработчик для просмотра конкретной отложенной записи
     application.add_handler(CallbackQueryHandler(handle_view_scheduled, pattern=r'^view_[\w_]+$')) 
+    application.add_handler(CallbackQueryHandler(handle_otloj_scheduled, pattern=r'^otlview_[\w_]+$')) 
+    application.add_handler(CallbackQueryHandler(delete_scheduled_time_handler, pattern=r"^otloj_delete_\d+_\d+$")) 
+
+    
     application.add_handler(CommandHandler("token", token_set))       
     application.add_handler(CommandHandler('webapp', webapp_command))    
     application.add_handler(CommandHandler("sendall", sendall))    
@@ -15256,6 +15635,7 @@ def main() -> None:
     application.add_handler(CommandHandler('publish', publish))
     application.add_handler(CommandHandler('preview', preview_article))  # Добавляем обработчик для /preview
     application.add_handler(CommandHandler('delete', delete_last))
+    
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений
 
 
@@ -15270,7 +15650,7 @@ def main() -> None:
     # Добавляем обработчики для команд /gpt и /fin_gpt
     application.add_handler(gpt_handler)
     application.add_handler(CommandHandler('fin_gpt', stop_gpt))     
-
+    application.add_handler(CommandHandler("otl", list_scheduled_jobs))
     # Добавляем основной conversation_handler
     application.add_handler(conversation_handler)
 
