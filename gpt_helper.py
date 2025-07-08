@@ -846,7 +846,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
 
         # Генерация ответа от модели Gemini
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -954,7 +954,7 @@ async def generate_gemini_inline_response(query: str) -> str:
             google_search=GoogleSearch()
         )        
         response = await client.aio.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-lite-preview-06-17',
             contents=context,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -1054,7 +1054,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
             google_search=GoogleSearch()
         )        
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -1186,7 +1186,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
             google_search=GoogleSearch()
         )        
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -1295,7 +1295,7 @@ async def generate_document_response(document_path, user_id, query=None):
 
         google_search_tool = Tool(google_search=GoogleSearch())
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -1408,7 +1408,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
             google_search=GoogleSearch()
         )      
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -1735,7 +1735,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                 google_search=GoogleSearch()
             )
             response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-04-17',
+                model='gemini-2.5-flash-preview-05-20',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,                
@@ -1833,7 +1833,7 @@ async def generate_mushrooms_response(user_id, image, query):
 
         # Генерация ответа от модели Gemini
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -1930,7 +1930,7 @@ async def generate_mapplants_response(user_id, image):
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -1996,7 +1996,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-04-17',
+                model='gemini-2.5-flash-preview-05-20',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(               
                     temperature=1.4,
@@ -2075,7 +2075,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch())        
             response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-04-17',
+                model='gemini-2.5-flash-preview-05-20',
                 contents=[
                     types.Content(
                         role="user",
@@ -2165,7 +2165,7 @@ async def generate_plant_issue_response(user_id, image):
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -2247,7 +2247,7 @@ async def generate_barcode_response(user_id, image=None, query=None):
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=[
                 types.Content(
                     role="user",
@@ -2313,7 +2313,7 @@ async def generate_barcode_analysis(user_id, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-04-17',
+                model='gemini-2.5-flash-preview-05-20',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig( 
                     system_instruction=system_instruction,                              
@@ -2375,7 +2375,7 @@ async def generate_barcode_otzyvy(user_id, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-04-17',
+                model='gemini-2.5-flash-preview-05-20',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(                             
                     temperature=1.4,
@@ -2436,7 +2436,7 @@ async def generate_plant_help_response(user_id, query=None):
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
             response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-04-17',
+                model='gemini-2.5-flash-preview-05-20',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(               
                     temperature=1.4,
@@ -2511,7 +2511,7 @@ async def translate_promt_with_gemini(user_id, query=None):
                 client = genai.Client(api_key=GOOGLE_API_KEY)
                 google_search_tool = Tool(google_search=GoogleSearch()) 
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash-preview-04-17',
+                    model='gemini-2.5-flash-preview-05-20',
                     contents=context,  # Здесь передаётся переменная context
                     config=types.GenerateContentConfig(               
                         temperature=1.4,
@@ -2575,7 +2575,7 @@ async def generate_word(chat_id):
     try:
         # Создаём клиент с правильным ключом
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-04-17',
+            model='gemini-2.5-flash-preview-05-20',
             contents=context,  # Здесь передаётся переменная context
             config=types.GenerateContentConfig(
                 temperature=1.7,
