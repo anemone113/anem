@@ -11423,8 +11423,11 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         logging.error(f"Ошибка при публикации поста {key} в Telegram: {e}")
 
 
-
-def handle_testid_command(message_text: str, user_id_to_manage: int = 6217936347) -> str:
+async def handle_testid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message_text = update.message.text  # <-- это строка
+    response_text = handle_testid_command_logic(message_text)  # переименовали, чтобы не пересекалось
+    await update.message.reply_text(response_text)
+def handle_testid_command_logic(message_text: str, user_id_to_manage: int = 6217936347) -> str:
     """
     Обрабатывает команду /testid для управления тестовыми конфигурациями в Firebase.
 
