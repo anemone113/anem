@@ -11479,8 +11479,7 @@ async def publish_to_vk_scheduled(context: CallbackContext):
             from_group=1,
             message=cleaned_caption,
             attachments=",".join(uploaded_photos),
-            random_id=get_random_id(),
-            primary_attachments="grid"
+            primary_attachments_mode="grid"
         )
         logging.info(f"Пост {key} успешно опубликован в VK группу {owner_id}.")
 
