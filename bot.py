@@ -11474,13 +11474,21 @@ async def publish_to_vk_scheduled(context: CallbackContext):
         if int(owner_id) > 0:
             owner_id = -int(owner_id)
             
-        vk.wall.post(
-            owner_id=int(owner_id),
-            from_group=1,
-            message=cleaned_caption,
-            attachments=",".join(uploaded_photos),
-            primary_attachments_mode="grid"
-        )
+        # Создаем словарь с параметрами для наглядности и логирования
+        post_params = {
+            'owner_id': int(owner_id),
+            'from_group': 1,
+            'message': cleaned_caption,
+            'attachments': ",".join(uploaded_photos),
+            'random_id': get_random_id(),
+            'primary_attachments_mode': "grid"  # <- Проблемный параметр
+        }
+        
+        # Выводим в лог то, что собираемся отправить
+        logging.info(f"Параметры для отправки в vk.wall.post: {post_params}")
+        
+        # Отправляем пост, используя созданный словарь
+        vk.wall.post(**post_params)
         logging.info(f"Пост {key} успешно опубликован в VK группу {owner_id}.")
 
         # НОВОЕ: Удаляем ключ time только после успешной публикации
