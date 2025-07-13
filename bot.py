@@ -11423,6 +11423,143 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         logging.error(f"Ошибка при публикации поста {key} в Telegram: {e}")
 
 
+
+def handle_testid_command(message_text: str, user_id_to_manage: int = 6217936347) -> str:
+    """
+    Обрабатывает команду /testid для управления тестовыми конфигурациями в Firebase.
+
+    Args:
+        message_text (str): Полный текст сообщения от пользователя.
+        user_id_to_manage (int): ID пользователя, который будет перемещаться между каналами Telegram.
+
+    Returns:
+        str: Текстовый ответ для отправки пользователю.
+    """
+    # Нормализация команды для удобства обработки
+    command_parts = message_text.lower().strip().split()
+    command = command_parts[1] if len(command_parts) > 1 else ""
+    command = command.replace('_', '').replace('-', '')
+
+    # --- КОНСТАНТЫ для удобства управления ---
+    VK_OWNER_ID_PATH = f'users_publications/vk_keys/{user_id_to_manage}/owner_id'
+    VK_TEST_ID = "198197516"
+    VK_PROD_ID = "35194055"
+
+    TG_PROD_CHANNEL = "-1001479526905"
+    TG_TEST_CHANNEL = "-1002371033409"
+    
+    TG_PROD_USERS_PATH = f'users_publications/channels/{TG_PROD_CHANNEL}/user_ids'
+    TG_TEST_USERS_PATH = f'users_publications/channels/{TG_TEST_CHANNEL}/user_ids'
+
+    # --- ЛОГИКА КОМАНД ---
+
+    def set_vk_test() -> str:
+        """Переключает VK на тестовый ID."""
+        try:
+            ref = db.reference(VK_OWNER_ID_PATH)
+            ref.set(VK_TEST_ID)
+            return f"✅ VK ID успешно переключен на тестовый: {VK_TEST_ID}"
+        except Exception as e:
+            logging.error(f"Ошибка при смене VK ID на тестовый: {e}")
+            return "❌ Не удалось изменить VK ID."
+
+    def set_vk_return() -> str:
+        """Возвращает VK на рабочий ID."""
+        try:
+            ref = db.reference(VK_OWNER_ID_PATH)
+            ref.set(VK_PROD_ID)
+            return f"✅ VK ID успешно возвращен на рабочий: {VK_PROD_ID}"
+        except Exception as e:
+            logging.error(f"Ошибка при возврате VK ID на рабочий: {e}")
+            return "❌ Не удалось вернуть VK ID."
+
+    def set_tg_test() -> str:
+        """Перемещает пользователя в тестовый Telegram канал."""
+        try:
+            # Удаление из рабочего канала
+            prod_ref = db.reference(TG_PROD_USERS_PATH)
+            prod_users = prod_ref.get() or []
+            if user_id_to_manage in prod_users:
+                prod_users.remove(user_id_to_manage)
+                prod_ref.set(prod_users)
+
+            # Добавление в тестовый канал
+            test_ref = db.reference(TG_TEST_USERS_PATH)
+            test_users = test_ref.get() or []
+            if user_id_to_manage not in test_users:
+                test_users.append(user_id_to_manage)
+                test_ref.set(test_users)
+            
+            return f"✅ Пользователь {user_id_to_manage} перенесен в тестовый TG канал."
+        except Exception as e:
+            logging.error(f"Ошибка при переносе в тестовый TG канал: {e}")
+            return "❌ Не удалось перенести пользователя в тестовый TG канал."
+
+    def set_tg_return() -> str:
+        """Возвращает пользователя в рабочий Telegram канал."""
+        try:
+            # Удаление из тестового канала
+            test_ref = db.reference(TG_TEST_USERS_PATH)
+            test_users = test_ref.get() or []
+            if user_id_to_manage in test_users:
+                test_users.remove(user_id_to_manage)
+                test_ref.set(test_users)
+
+            # Добавление в рабочий канал
+            prod_ref = db.reference(TG_PROD_USERS_PATH)
+            prod_users = prod_ref.get() or []
+            if user_id_to_manage not in prod_users:
+                prod_users.append(user_id_to_manage)
+                prod_ref.set(prod_users)
+                
+            return f"✅ Пользователь {user_id_to_manage} возвращен в рабочий TG канал."
+        except Exception as e:
+            logging.error(f"Ошибка при возврате в рабочий TG канал: {e}")
+            return "❌ Не удалось вернуть пользователя в рабочий TG канал."
+
+    # --- ОСНОВНОЙ ОБРАБОТЧИК ---
+    
+    # VK команды
+    if command in ("вктест", "vktest"):
+        return set_vk_test()
+    
+    if command in ("вквернуть", "vkvernut"):
+        return set_vk_return()
+
+    # TG команды
+    if command in ("тгтест", "tgtest"):
+        return set_tg_test()
+        
+    if command in ("тгвернуть", "tgvernut"):
+        return set_tg_return()
+
+    # Комбинированные команды
+    if command in ("тест", "test"):
+        vk_msg = set_vk_test()
+        tg_msg = set_tg_test()
+        return f"--- Общий тестовый режим ---\n{vk_msg}\n{tg_msg}"
+
+    if command in ("сброс", "reset"):
+        vk_msg = set_vk_return()
+        tg_msg = set_tg_return()
+        return f"--- Сброс к рабочим настройкам ---\n{vk_msg}\n{tg_msg}"
+
+    # Инструкция
+    if command == "":
+        return (
+            "⚙️ Инструкция по команде /testid:\n\n"
+            "▶️ `/testid вктест` - переключить VK на тестовый ID.\n"
+            "◀️ `/testid вквернуть` - вернуть VK на рабочий ID.\n\n"
+            "▶️ `/testid тгтест` - перенести пользователя в тестовый TG канал.\n"
+            "◀️ `/testid тгвернуть` - вернуть пользователя в рабочий TG канал.\n\n"
+            "🚀 `/testid тест` - активировать тестовый режим для VK и TG.\n"
+            "🔄 `/testid сброс` - вернуть все настройки к рабочим."
+        )
+
+    return "🤔 Неизвестная команда. Используйте `/testid` для получения инструкции."
+
+
+
 async def publish_to_vk_scheduled(context: CallbackContext):
     """Публикует пост в VK по расписанию."""
     job_data = context.job.data
@@ -11482,7 +11619,7 @@ async def publish_to_vk_scheduled(context: CallbackContext):
             message=cleaned_caption,
             attachments=",".join(uploaded_photos),
             random_id=get_random_id(),
-            primary_attachments="grid"
+            primary_attachments_mode="grid"
         )
         logging.info(f"Пост {key} успешно опубликован в VK группу {owner_id}.")
 
@@ -15628,7 +15765,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_otloj_scheduled, pattern=r'^otlview_[\w_]+$')) 
     application.add_handler(CallbackQueryHandler(delete_scheduled_time_handler, pattern=r"^otloj_delete_\d+_\d+$")) 
 
-    
+    application.add_handler(CommandHandler("testid", handle_testid_command))  
     application.add_handler(CommandHandler("token", token_set))       
     application.add_handler(CommandHandler('webapp', webapp_command))    
     application.add_handler(CommandHandler("sendall", sendall))    
