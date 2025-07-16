@@ -1720,8 +1720,9 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
 
     # Формируем контекст с текущим запросом
     context = (
+        f"Текущий запрос:\n{query}"   
+        f"Сосредоточь особенное внимание именно на текущем запросе, контекст используй только по необходимости, когда это уместно"         
         f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}. "        
-        f"Текущий запрос:\n{query}"     
     )
 
     logger.info(f"context {context}")
