@@ -5610,7 +5610,9 @@ def sync_post_image(api_url, image_bytes: BytesIO):
 async def recognize_plant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.callback_query.from_user.id
     image_bytes = context.user_data.get('image_bytes')
-    logger.info(f"image_bytes {image_bytes}")
+    buffer = BytesIO(image_bytes)
+    buffer.seek(0)
+    encoded_image = base64.b64encode(buffer.read()).decode('utf-8')
     if not image_bytes:
         await update.callback_query.answer("Сначала загрузите изображение.")
         return
@@ -5637,7 +5639,13 @@ async def recognize_plant(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     try:
         # Отправка изображения
-        response = await asyncio.to_thread(sync_post_image, api_url, image_bytes)
+        payload = {'image': encoded_image}
+
+        # Отправка JSON-объекта на ваш Google Apps Script
+        response = requests.post(
+            'https://script.google.com/macros/s/AKfycbxsLoPIT3xgg2NrR6q212abtI32pstNrG0v9-OPv7IsdT0Ky-MJqAULed1xM6A2uYwhfw/exec',
+            json=payload
+        )
 
         if response.status_code == 200:
             prediction = response.json()
