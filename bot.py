@@ -5610,7 +5610,7 @@ def sync_post_image(api_url, image_bytes: BytesIO):
 async def recognize_plant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.callback_query.from_user.id
     image_bytes = context.user_data.get('image_bytes')
-
+    logger.info(f"image_bytes {image_bytes}")
     if not image_bytes:
         await update.callback_query.answer("Сначала загрузите изображение.")
         return
