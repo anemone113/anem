@@ -5524,7 +5524,27 @@ async def button_ocr(update, context):
 
 
 
-async def recognize_plant(update: Update, context: CallbackContext) -> None:
+from pathlib import Path
+
+def sync_download_image(url, file_path):
+    response = requests.get(url)
+    response.raise_for_status()
+    with open(file_path, 'wb') as f:
+        f.write(response.content)
+
+def sync_post_image(api_url, file_path):
+    with open(file_path, 'rb') as f:
+        image_bytes = BytesIO(f.read())
+    files = {
+        'images': ('image.jpg', image_bytes, 'image/jpeg')
+    }
+    data = {
+        'organs': 'auto'
+    }
+    response = requests.post(api_url, files=files, data=data)
+    return response
+
+async def recognize_plant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.callback_query.from_user.id
     img_url = context.user_data.get('img_url')
 
@@ -5532,78 +5552,132 @@ async def recognize_plant(update: Update, context: CallbackContext) -> None:
         await update.callback_query.answer("Сначала загрузите изображение.")
         return
 
-
+    await update.callback_query.message.reply_text("Распознаю растение...")
 
     api_key = "2b10C744schFhHigMMjMsDmV"
-    project = "all"  
-    lang = "ru"   
-    include_related_images = "true"  
+    project = "all"
+    lang = "ru"
+    include_related_images = "true"
+    no_reject = "false"
+    nb_results = 3
+    type_param = "kt"
 
-    # URL-кодирование для изображения
-    encoded_image_url = aiohttp.helpers.quote(img_url)
-
-    # Формирование URL для запроса
     api_url = (
-        f"https://my-api.plantnet.org/v2/identify/{project}?"
-        f"images={encoded_image_url}&"
-        f"organs=auto&"
-        f"lang={lang}&"
-        f"include-related-images={include_related_images}&"
-        f"api-key={api_key}"
+        f"https://my-api.plantnet.org/v2/identify/{project}"
+        f"?include-related-images={include_related_images}"
+        f"&no-reject={no_reject}"
+        f"&nb-results={nb_results}"
+        f"&lang={lang}"
+        f"&type={type_param}"
+        f"&api-key={api_key}"
     )
-    
-    # Отправляем сообщение с начальным текстом
-    initial_message = await update.callback_query.message.reply_text("Запрос принят...")
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(api_url) as response:
-            status = response.status
+    tmp_dir = Path(__file__).parent / "tmpfile"
+    tmp_dir.mkdir(exist_ok=True)
+    tmp_file_path = tmp_dir / f"user_{user_id}_plant.jpg"
 
+    try:
+        # Скачиваем изображение в отдельном потоке
+        await asyncio.to_thread(sync_download_image, img_url, tmp_file_path)
 
-            if status == 200:
-                prediction = await response.json()
+        # Делаем POST-запрос к API тоже в отдельном потоке
+        response = await asyncio.to_thread(sync_post_image, api_url, tmp_file_path)
 
+        if response.status_code == 200:
+            prediction = response.json()
 
-                if prediction.get('results'):
-                    keyboard = []
-                    for idx, plant in enumerate(prediction['results'][:3]):
-                        species = plant.get('species', {})
-                        scientific_name = species.get('scientificNameWithoutAuthor', 'Неизвестное растение')
-                        common_names = species.get('commonNames', [])
-                        common_name_str = ', '.join(common_names) if common_names else 'Название отсутствует'
-                        
-                        # Извлекаем процент сходства
-                        similarity_score = plant.get('score', 0) * 100  # Предполагаем, что значение score от 0 до 1
-                        similarity_text = f"{similarity_score:.2f}%"  # Форматируем до двух знаков после запятой
-                        
-                        # Сохраняем данные о растениях в context.user_data для обработки нажатий
-                        images = plant.get('images', [])
-                        context.user_data[f"plant_{idx}"] = {
-                            "scientific_name": scientific_name,
-                            "common_names": common_name_str,
-                            "images": images
-                        }
+            if prediction.get('results'):
+                keyboard = []
+                for idx, plant in enumerate(prediction['results'][:3]):
+                    species = plant.get('species', {})
+                    scientific_name = species.get('scientificNameWithoutAuthor', 'Неизвестное растение')
+                    common_names = species.get('commonNames', [])
+                    common_name_str = ', '.join(common_names) if common_names else 'Название отсутствует'
+                    similarity_score = plant.get('score', 0) * 100
+                    similarity_text = f"{similarity_score:.2f}%"
 
+                    images = plant.get('images', [])
+                    context.user_data[f"plant_{idx}"] = {
+                        "scientific_name": scientific_name,
+                        "common_names": common_name_str,
+                        "images": images
+                    }
 
-                        # Создаем кнопку для каждого растения с процентом сходства в начале
-                        keyboard.append([InlineKeyboardButton(
-                            text=f"{similarity_text} - {scientific_name} ({common_name_str})",
-                            callback_data=f"plant_{idx}"
-                        )])
+                    keyboard.append([InlineKeyboardButton(
+                        text=f"{similarity_text} - {scientific_name} ({common_name_str})",
+                        callback_data=f"plant_{idx}"
+                    )])
 
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await initial_message.edit_text(
-                        "Выберите одно из предложенных растений:",
-                        reply_markup=reply_markup
-                    )
-                else:
-                    await initial_message.edit_text("Растение не найдено.")
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.callback_query.message.reply_text(
+                    "Выберите одно из предложенных растений:",
+                    reply_markup=reply_markup
+                )
             else:
-                error_message = await response.text()
+                await update.callback_query.message.reply_text("Растение не найдено.")
+        else:
+            await update.callback_query.message.reply_text(
+                "Ошибка при распознавании растения. Возможно, это не растение, или попробуйте другое фото."
+            )
 
-                await initial_message.edit_text("Ошибка при распознавании растения. Данное растение в базе не обнаружено, убедитесь что это именно растение, цветок, фрукт или овощь а не что-то иное. Так же можете попробовать сфотографировать под иным ракурсом")
+    except requests.RequestException:
+        await update.callback_query.message.reply_text("Не удалось загрузить изображение или ошибка API.")
+    except Exception as e:
+        await update.callback_query.message.reply_text(f"Произошла ошибка: {str(e)}")
+    finally:
+        if tmp_file_path.exists():
+            try:
+                tmp_file_path.unlink()
+            except Exception as e:
+                print(f"Ошибка при удалении временного файла: {e}")
 
+API_Pl_KEY = "2b10C744schFhHigMMjMsDmV"
+PROJECT = "all"
+API_ENDPOINT = f"https://my-api.plantnet.org/v2/identify/{PROJECT}?api-key={API_Pl_KEY}"
 
+async def recognize_test_plant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверка, что команда пришла в ответ на сообщение
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Пожалуйста, используйте команду в ответ на сообщение с изображением.")
+        return
+
+    # Получение файла из сообщения
+    photo = update.message.reply_to_message.photo
+    doc = update.message.reply_to_message.document
+
+    if photo:
+        # Берем наибольшее изображение
+        file = await photo[-1].get_file()
+    elif doc and doc.mime_type and doc.mime_type.startswith("image/"):
+        file = await doc.get_file()
+    else:
+        await update.message.reply_text("Ответьте на изображение (фото или документ) для распознавания.")
+        return
+
+    logger.info("Загружаю изображение...")
+    image_bytes = BytesIO()
+    await file.download_to_memory(out=image_bytes)
+    image_bytes.seek(0)
+
+    # Подготовка запроса к PlantNet
+    files = [
+        ('images', ('image.jpg', image_bytes, 'image/jpeg')),
+    ]
+    data = {
+        'organs': ['leaf']  # Можно изменить на flower, fruit и т.п.
+    }
+
+    try:
+        logger.info("Отправка изображения в PlantNet...")
+        response = requests.post(API_ENDPOINT, files=files, data=data)
+        response.raise_for_status()
+        json_result = response.json()
+
+        logger.info("Ответ получен. Отправка пользователю...")
+        await update.message.reply_text(json.dumps(json_result, indent=2)[:4000])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Ошибка при запросе: {e}")
+        await update.message.reply_text("Ошибка при отправке запроса к PlantNet.")
 
 
 
@@ -5615,45 +5689,49 @@ wiki_wiki = wikipediaapi.Wikipedia(language='ru', user_agent=user_agent)
 
 wikipedia.set_lang('ru')  # Установите язык на русский
 
+wikipedia.set_lang('ru')  # Установите язык на русский
 async def get_wikipedia_link(scientific_name: str, common_names: list) -> tuple:
+    return await asyncio.to_thread(_sync_get_wikipedia_link, scientific_name, common_names)
+
+def _sync_get_wikipedia_link(scientific_name: str, common_names: list) -> tuple:
     try:
         # Выполняем поиск по научному названию
         search_results = wikipedia.search(scientific_name)
 
-
-        # Проверяем, есть ли результаты поиска
         if search_results:
             for article_title in search_results:
-                # Проверяем, относится ли статья к категории "растения"
                 page = wiki_wiki.page(article_title)
                 if page.exists():
                     categories = page.categories
-                    # Проверяем наличие ключевых категорий
                     if any('растения' in cat.lower() for cat in categories):
-
-                        # Формируем и возвращаем ссылку на статью
                         return (f"https://ru.wikipedia.org/wiki/{article_title.replace(' ', '_')}", article_title)
 
-        # Если результаты по научному названию не найдены, ищем по общим названиям
+        # Ищем по общим названиям
         for name in common_names:
             search_results = wikipedia.search(name)
-
             if search_results:
                 for article_title in search_results:
-                    # Проверяем, относится ли статья к категории "растения"
                     page = wiki_wiki.page(article_title)
                     if page.exists():
                         categories = page.categories
                         if any('растения' in cat.lower() for cat in categories):
-
-                            # Формируем и возвращаем ссылку на статью
                             return (f"https://ru.wikipedia.org/wiki/{article_title.replace(' ', '_')}", article_title)
-    
+
     except Exception as e:
         logger.error(f"Error fetching Wikipedia link: {e}")
 
-    # Если ничего не найдено или статья не относится к растениям, возвращаем None
     return (None, None)
+
+import functools
+
+async def get_wikipedia_summary(article_title: str) -> str:
+    try:
+        summary = await asyncio.to_thread(functools.partial(wikipedia.summary, article_title, sentences=12))
+        return summary
+    except Exception as e:
+        logger.error(f"Error fetching summary for {article_title}: {e}")
+        return "Краткое описание недоступно\n\n"    
+
 
 
 
@@ -6782,26 +6860,37 @@ async def recognize_plant_automatically(update: Update, context: CallbackContext
     api_key = "2b10C744schFhHigMMjMsDmV"
     project = "all"  
     lang = "ru"   
-    include_related_images = "true"  
+    include_related_images = "true"
 
-    encoded_image_url = aiohttp.helpers.quote(img_url)
+    user_id = update.effective_user.id
     api_url = (
-        f"https://my-api.plantnet.org/v2/identify/{project}?"
-        f"images={encoded_image_url}&"
-        f"organs=auto&"
-        f"lang={lang}&"
-        f"include-related-images={include_related_images}&"
-        f"api-key={api_key}"
+        f"https://my-api.plantnet.org/v2/identify/{project}"
+        f"?include-related-images={include_related_images}"
+        f"&lang={lang}"
+        f"&api-key={api_key}"
     )
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(api_url) as response:
-            if response.status == 200:
-                prediction = await response.json()
-                return prediction.get('results', [])
-            else:
-                return []    
+    tmp_dir = Path(__file__).parent / "tmpfile"
+    tmp_dir.mkdir(exist_ok=True)
+    tmp_file_path = tmp_dir / f"user_{user_id}_plant.jpg"
 
+    try:
+        await asyncio.to_thread(sync_download_image, img_url, tmp_file_path)
+        response = await asyncio.to_thread(sync_post_image, api_url, tmp_file_path)
+
+        if response.status_code == 200:
+            prediction = response.json()
+            return prediction.get('results', [])
+        else:
+            return []
+    except Exception:
+        return []
+    finally:
+        if tmp_file_path.exists():
+            try:
+                tmp_file_path.unlink()
+            except Exception as e:
+                print(f"Ошибка при удалении временного файла: {e}")
 
 async def send_buttons_after_media(query):
     keyboard = [
@@ -6817,14 +6906,14 @@ async def send_buttons_after_media(query):
         "Для занесения этого растения в список ваших растений, добавления на карту, либо для получения более подробной информации об этом растении и уходе за ним, воспользуйтесь кнопками ниже. Либо отправьте следующее изображение",
         reply_markup=reply_markup
     )
+def sync_get_image_file(url):
+    response = requests.get(url)
+    if response.status_code == 200:
+        return BytesIO(response.content)
+    return None
 
 async def get_image_file(url):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                return BytesIO(await response.read())
-            else:
-                return None
+    return await asyncio.to_thread(sync_get_image_file, url)
 
 
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
@@ -6845,8 +6934,8 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         description = ""
         if wikipedia_link:
             try:
-                summary = wikipedia.summary(article_title, sentences=12)
-                description += f"{(summary)}\n\n"
+                summary = await get_wikipedia_summary(article_title)
+                description += f"{summary}\n\n"
             except Exception as e:
                 logger.error(f"Error fetching summary for {article_title}: {e}")
                 description += "Краткое описание недоступно\n\n"
@@ -15768,6 +15857,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_otloj_scheduled, pattern=r'^otlview_[\w_]+$')) 
     application.add_handler(CallbackQueryHandler(delete_scheduled_time_handler, pattern=r"^otloj_delete_\d+_\d+$")) 
 
+    application.add_handler(CommandHandler("rec", recognize_test_plant))
     application.add_handler(CommandHandler("testid", handle_testid_command))  
     application.add_handler(CommandHandler("token", token_set))       
     application.add_handler(CommandHandler('webapp', webapp_command))    
