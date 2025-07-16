@@ -814,7 +814,13 @@ async def start(update: Update, context: CallbackContext) -> int:
         await loading_message.edit_text("Изображение загружается, подождите немного...")
         img_url = await plants_upload_image(image_path)
         inat_url = "https://www.inaturalist.org/computer_vision_demo"
+        bio = BytesIO()
+        await file.download_to_memory(out=bio)
+        bio.seek(0)
 
+
+        # Сохраняем в context.user_data
+        context.user_data['image_bytes'] = bio.getvalue()
         context.user_data['img_url'] = img_url
         context.user_data['img_caption'] = caption
 
@@ -1183,6 +1189,14 @@ async def fast_rec(update, context):
         await loading_message.edit_text(f"Ошибка при загрузке изображения: {e}")
         return
 
+    # Сохраняем в user_data
+    bio = BytesIO()
+    await file.download_to_memory(out=bio)
+    bio.seek(0)
+
+
+    # Сохраняем в context.user_data
+    context.user_data['image_bytes'] = bio.getvalue()
     # Сохраняем в user_data
     context.user_data['img_url'] = img_url
     context.user_data['img_caption'] = caption
@@ -2263,22 +2277,50 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 
             logger.info(f"query_text: {query}")  
 
-            response_text = await generate_gemini_response(user_id, query=query)
-            add_to_context(user_id, f"{prefix}: \"{quoted_text if quoted_text else original_message.text}\" И написал: \"{user_message}\"", message_type="user_reply_text")
+            waiting_message = await update.message.reply_text("Генерирую ответ, пожалуйста, подождите...")
 
-            if response_text:
-                text_parts = await send_reply_with_limit(response_text)
+            async def process():
+                try:
+                    response_text = await generate_gemini_response(user_id, query=query)
+                    add_to_context(
+                        user_id,
+                        f"{prefix}: \"{quoted_text if quoted_text else original_message.text}\" И написал: \"{user_message}\"",
+                        message_type="user_reply_text"
+                    )
 
-                for i, part in enumerate(text_parts):
-                    if i == len(text_parts) - 1:  # Последняя часть
-                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
 
+                    if response_text:
+                        text_parts = await send_reply_with_limit(response_text)
+
+                        if len(text_parts) == 1:
+                            # Один ответ — сразу редактируем сообщение и добавляем кнопки
+                            await waiting_message.edit_text(
+                                text_parts[0],
+                                parse_mode='MarkdownV2',
+                                reply_markup=collapsed_menu
+                            )
+                        else:
+                            # Редактируем сообщение ожидания первой частью ответа
+                            await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+
+                            # Остальные части отправляем новыми сообщениями
+                            for i, part in enumerate(text_parts[1:], start=1):
+                                is_last = (i == len(text_parts) - 1)
+                                await update.message.reply_text(
+                                    part,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=collapsed_menu if is_last else None
+                                )
+
+                        add_to_context(user_id, response_text, message_type="bot_response")
+                        save_context_to_firebase(user_id)
                     else:
-                        await update.message.reply_text(part, parse_mode='MarkdownV2')
-                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
-                    save_context_to_firebase(user_id)
-            else:
-                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+                        await waiting_message.edit_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+
+                except Exception as e:
+                    await waiting_message.edit_text(f"Ошибка: {e}")
+
+            asyncio.create_task(process())
         elif original_message.photo:
 
             # Проверяем, начинается ли caption с "Дорисуй:", "дорисуй:", "Дорисуй раскрась этот рисунок", "дорисуй раскрась этот рисунок"
@@ -2576,21 +2618,43 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             return await limited_image_generation(update, context, user_id, prompt_text)
 
         else:
-            response_text = await generate_gemini_response(user_id, query=user_message)
-            add_to_context(user_id, user_message, message_type="user_send_text")            
-            if response_text:
-                text_parts = await send_reply_with_limit(response_text)
+            waiting_message = await update.message.reply_text("Генерирую ответ, пожалуйста, подождите...")
 
-                for i, part in enumerate(text_parts):
-                    if i == len(text_parts) - 1:  # Последняя часть
-                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
-                        
+            async def process():
+                try:
+                    response_text = await generate_gemini_response(user_id, query=user_message)
+                    add_to_context(user_id, user_message, message_type="user_send_text")
+
+                    if response_text:
+                        text_parts = await send_reply_with_limit(response_text)
+
+                        if len(text_parts) == 1:
+                            # Только одно сообщение — добавим кнопки сразу
+                            await waiting_message.edit_text(
+                                text_parts[0],
+                                parse_mode='MarkdownV2',
+                                reply_markup=collapsed_menu
+                            )
+                        else:
+                            # Много частей — первая без кнопок
+                            await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+
+                            for i, part in enumerate(text_parts[1:], start=1):
+                                is_last = (i == len(text_parts) - 1)
+                                await update.message.reply_text(
+                                    part,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=collapsed_menu if is_last else None
+                                )
+                        add_to_context(user_id, response_text, message_type="bot_text_response")
+                        save_context_to_firebase(user_id)
                     else:
-                        await update.message.reply_text(part, parse_mode='MarkdownV2')
-                    add_to_context(user_id, response_text, message_type="bot_text_response")    
-                    save_context_to_firebase(user_id)    
-            else:
-                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+                        await waiting_message.edit_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+
+                except Exception as e:
+                    await waiting_message.edit_text(f"Ошибка: {e}")
+
+            asyncio.create_task(process())
 
         return RUNNING_GPT_MODE
 
@@ -5532,9 +5596,7 @@ def sync_download_image(url, file_path):
     with open(file_path, 'wb') as f:
         f.write(response.content)
 
-def sync_post_image(api_url, file_path):
-    with open(file_path, 'rb') as f:
-        image_bytes = BytesIO(f.read())
+def sync_post_image(api_url, image_bytes: BytesIO):
     files = {
         'images': ('image.jpg', image_bytes, 'image/jpeg')
     }
@@ -5546,9 +5608,9 @@ def sync_post_image(api_url, file_path):
 
 async def recognize_plant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.callback_query.from_user.id
-    img_url = context.user_data.get('img_url')
+    image_bytes = context.user_data.get('image_bytes')
 
-    if not img_url:
+    if not image_bytes:
         await update.callback_query.answer("Сначала загрузите изображение.")
         return
 
@@ -5572,16 +5634,9 @@ async def recognize_plant(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"&api-key={api_key}"
     )
 
-    tmp_dir = Path(__file__).parent / "tmpfile"
-    tmp_dir.mkdir(exist_ok=True)
-    tmp_file_path = tmp_dir / f"user_{user_id}_plant.jpg"
-
     try:
-        # Скачиваем изображение в отдельном потоке
-        await asyncio.to_thread(sync_download_image, img_url, tmp_file_path)
-
-        # Делаем POST-запрос к API тоже в отдельном потоке
-        response = await asyncio.to_thread(sync_post_image, api_url, tmp_file_path)
+        # Отправка изображения
+        response = await asyncio.to_thread(sync_post_image, api_url, image_bytes)
 
         if response.status_code == 200:
             prediction = response.json()
@@ -5621,15 +5676,12 @@ async def recognize_plant(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
 
     except requests.RequestException:
-        await update.callback_query.message.reply_text("Не удалось загрузить изображение или ошибка API.")
+        await update.callback_query.message.reply_text("Не удалось отправить изображение или ошибка API.")
     except Exception as e:
         await update.callback_query.message.reply_text(f"Произошла ошибка: {str(e)}")
     finally:
-        if tmp_file_path.exists():
-            try:
-                tmp_file_path.unlink()
-            except Exception as e:
-                print(f"Ошибка при удалении временного файла: {e}")
+        # Очистка изображения из user_data
+        context.user_data.pop('image_bytes', None)
 
 API_Pl_KEY = "2b10C744schFhHigMMjMsDmV"
 PROJECT = "all"
@@ -6856,13 +6908,15 @@ async def save_to_my_plants(update: Update, context: CallbackContext) -> None:
 
 
 async def recognize_plant_automatically(update: Update, context: CallbackContext):
-    img_url = context.user_data.get('img_url')
+    image_bytes = context.user_data.get('image_bytes')
+    if not image_bytes:
+        return []
+
     api_key = "2b10C744schFhHigMMjMsDmV"
     project = "all"  
     lang = "ru"   
     include_related_images = "true"
 
-    user_id = update.effective_user.id
     api_url = (
         f"https://my-api.plantnet.org/v2/identify/{project}"
         f"?include-related-images={include_related_images}"
@@ -6870,28 +6924,21 @@ async def recognize_plant_automatically(update: Update, context: CallbackContext
         f"&api-key={api_key}"
     )
 
-    tmp_dir = Path(__file__).parent / "tmpfile"
-    tmp_dir.mkdir(exist_ok=True)
-    tmp_file_path = tmp_dir / f"user_{user_id}_plant.jpg"
-
     try:
-        await asyncio.to_thread(sync_download_image, img_url, tmp_file_path)
-        response = await asyncio.to_thread(sync_post_image, api_url, tmp_file_path)
+        response = await asyncio.to_thread(sync_post_image, api_url, image_bytes)
 
         if response.status_code == 200:
             prediction = response.json()
             return prediction.get('results', [])
         else:
             return []
-    except Exception:
+    except Exception as e:
+        print(f"Ошибка при распознавании: {e}")
         return []
     finally:
-        if tmp_file_path.exists():
-            try:
-                tmp_file_path.unlink()
-            except Exception as e:
-                print(f"Ошибка при удалении временного файла: {e}")
-
+        # Можно очистить изображение после использования, если нужно
+        context.user_data.pop('image_bytes', None)
+        
 async def send_buttons_after_media(query):
     keyboard = [
         [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='scientific_gpt')],
