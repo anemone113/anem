@@ -6917,36 +6917,39 @@ async def save_to_my_plants(update: Update, context: CallbackContext) -> None:
 
 
 async def recognize_plant_automatically(update: Update, context: CallbackContext):
-    image_bytes = context.user_data.get('image_bytes')
-    if not image_bytes:
+    """
+    Распознает растение, отправляя изображение через прокси Google Apps Script.
+    """
+    image_bytes_io = context.user_data.get('image_bytes')
+    if not image_bytes_io:
         return []
 
-    api_key = "2b10C744schFhHigMMjMsDmV"
-    project = "all"  
-    lang = "ru"   
-    include_related_images = "true"
-
-    api_url = (
-        f"https://my-api.plantnet.org/v2/identify/{project}"
-        f"?include-related-images={include_related_images}"
-        f"&lang={lang}"
-        f"&api-key={api_key}"
-    )
+    # Кодируем изображение в base64
+    image_bytes_io.seek(0) # Возвращаем курсор в начало файла
+    encoded_image = base64.b64encode(image_bytes_io.read()).decode('utf-8')
+    
+    payload = {'image': encoded_image}
 
     try:
-        response = await asyncio.to_thread(sync_post_image, api_url, image_bytes)
-
-        if response.status_code == 200:
-            prediction = response.json()
-            return prediction.get('results', [])
-        else:
-            return []
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GAS_URL, json=payload) as response:
+                if response.status == 200:
+                    prediction = await response.json()
+                    # Проверяем, не вернул ли GAS ошибку
+                    if 'error' in prediction:
+                         logger.error(f"Ошибка от GAS при распознавании: {prediction['error']}")
+                         return []
+                    return prediction.get('results', [])
+                else:
+                    logger.error(f"Ошибка HTTP {response.status} при распознавании через прокси.")
+                    return []
     except Exception as e:
-        print(f"Ошибка при распознавании: {e}")
+        logger.error(f"Исключение при распознавании через прокси: {e}")
         return []
     finally:
-        # Можно очистить изображение после использования, если нужно
+        # Очищаем изображение после использования
         context.user_data.pop('image_bytes', None)
+
         
 async def send_buttons_after_media(query):
     keyboard = [
@@ -6962,14 +6965,34 @@ async def send_buttons_after_media(query):
         "Для занесения этого растения в список ваших растений, добавления на карту, либо для получения более подробной информации об этом растении и уходе за ним, воспользуйтесь кнопками ниже. Либо отправьте следующее изображение",
         reply_markup=reply_markup
     )
-def sync_get_image_file(url):
-    response = requests.get(url)
-    if response.status_code == 200:
-        return BytesIO(response.content)
-    return None
+from urllib.parse import urlencode
+# URL вашего Google Apps Script
+GAS_URL = 'https://script.google.com/macros/s/AKfycbxsLoPIT3xgg2NrR6q212abtI32pstNrG0v9-OPv7IsdT0Ky-MJqAULed1xM6A2uYwhfw/exec'
 
-async def get_image_file(url):
-    return await asyncio.to_thread(sync_get_image_file, url)
+async def get_image_file(url: str) -> BytesIO | None:
+    """
+    Асинхронно получает файл изображения через прокси Google Apps Script.
+    """
+    if not url:
+        return None
+        
+    # Формируем URL с параметром для doGet
+    params = {'url': url}
+    proxy_url = f"{GAS_URL}?{urlencode(params)}"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(proxy_url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if 'image_b64' in data:
+                        # Декодируем base64 строку обратно в байты
+                        image_bytes = base64.b64decode(data['image_b64'])
+                        return BytesIO(image_bytes)
+    except Exception as e:
+        logger.error(f"Ошибка при получении изображения через прокси: {e}")
+        return None
+    return None
 
 
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
