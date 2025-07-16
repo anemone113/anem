@@ -101,6 +101,7 @@ from datetime import datetime, timezone, timedelta, time as dt_time
 import calendar
 import time
 import uuid
+from io import BytesIO
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
