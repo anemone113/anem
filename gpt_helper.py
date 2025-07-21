@@ -212,20 +212,25 @@ def load_publications_from_firebase():
     except Exception as e:
         logging.error(f"Ошибка при загрузке публикаций из Firebase: {e}")
         return {}
-def save_publications_to_firebase(user_id, message_id, data):
-    """Сохраняет данные в Firebase, добавляя или обновляя записи только для текущего пользователя."""
+def save_publications_to_firebase(user_id, message_id, new_data):
+    """Загружает актуальные данные перед сохранением, чтобы избежать перезаписи."""
     try:
-        # Подготовка пути для обновления
+        # Ссылка на путь пользователя и сообщения
         path = f"users_publications/{user_id}/{message_id}"
-        updates = {path: data}
-        
-        # Обновляем только указанный путь
-        ref = db.reference()
-        ref.update(updates)  # Обновляет данные только по пути path
-        
+        ref = db.reference(path)
+
+        # Получаем актуальные данные
+        current_data = ref.get() or {}
+
+        # Объединяем с новыми, если нужно (зависит от структуры данных)
+        # Например, обновляем поля, не стирая старые
+        merged_data = {**current_data, **new_data}
+
+        # Сохраняем обновлённые данные
+        ref.set(merged_data)
+
     except Exception as e:
         logging.error(f"Ошибка при сохранении публикации {user_id}_{message_id} в Firebase: {e}")
-
 
 
 def save_inline_query_to_firebase(user_id: int, query: str, response: str):
