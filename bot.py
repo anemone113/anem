@@ -11976,7 +11976,7 @@ async def list_scheduled_jobs(update: Update, context: CallbackContext):
         keyboard.append(row)
     # --- НОВОЕ: Добавляем кнопку для календаря ---
     keyboard.append([
-        InlineKeyboardButton("🗓️ Посмотреть на календаре", callback_data="view_calendar")
+        InlineKeyboardButton("📊 Посмотреть на шкале", callback_data="view_timeline")
     ])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🔧 Активные публикации:", reply_markup=reply_markup)
