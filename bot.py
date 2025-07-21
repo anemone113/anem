@@ -10441,6 +10441,24 @@ async def schedule_confirm_handler(update: Update, context: CallbackContext) -> 
     
     selection_key = f'schedule_{user_id}_{message_id}'
     selections = context.user_data.get(selection_key, {})
+
+    # ### ИЗМЕНЕНО: Начало блока ###
+    # Устанавливаем значения по умолчанию (завтрашний день), если они не были выбраны пользователем.
+    # Это гарантирует, что даже если пользователь ничего не нажал, у нас будет корректная дата.
+    if 'day' not in selections or 'month' not in selections:
+        now = datetime.now()
+        tomorrow = now + timedelta(days=1)
+        
+        if 'day' not in selections:
+            selections['day'] = tomorrow.day
+        
+        if 'month' not in selections:
+            # Если завтрашний день в другом месяце, выбираем "Следующий" месяц
+            if now.month != tomorrow.month:
+                selections['month'] = 'next'
+            else:
+                selections['month'] = 'current'
+    # ### ИЗМЕНЕНО: Конец блока ###
     
     # --- Валидация ---
     required_keys = ['month', 'day', 'hour', 'minute', 'platform']
@@ -10553,6 +10571,13 @@ def create_schedule_keyboard(user_id: int, message_id: int, selections: dict) ->
     # --- Секция выбора месяца ---
     keyboard.append([InlineKeyboardButton("Выберите месяц:", callback_data='noop')])
     now = datetime.now()
+    # ### ИЗМЕНЕНО: Начало блока ###
+    # Вычисляем завтрашний день и месяц по умолчанию
+    tomorrow = now + timedelta(days=1)
+    default_day = tomorrow.day
+    # Определяем, находится ли завтрашний день в следующем месяце
+    default_month_key = 'next' if now.month != tomorrow.month else 'current'
+    # ### ИЗМЕНЕНО: Конец блока ###
 
     # Получаем текущий, следующий и через один месяц
     month_options = {
@@ -10583,11 +10608,15 @@ def create_schedule_keyboard(user_id: int, message_id: int, selections: dict) ->
 
     # --- Секция выбора дня ---
     keyboard.append([InlineKeyboardButton("Выберите день:", callback_data='noop')])
+    selected_day = selections.get('day', default_day)
+    
     day_buttons = []
     for day in range(1, 32):
         day_text = str(day)
-        if selections.get('day') == day:
+        # Сравниваем с `selected_day`, который теперь содержит либо выбор пользователя, либо значение по умолчанию
+        if selected_day == day:
             day_text = f"✅ {day}"
+            
         day_buttons.append(InlineKeyboardButton(day_text, callback_data=f"schedule_update_{user_id}_{message_id}_day_{day}"))
         if len(day_buttons) == 6:
             keyboard.append(day_buttons)
@@ -11787,7 +11816,7 @@ async def publish_to_vk_scheduled(context: CallbackContext):
         vk.wall.post(
             owner_id=int(owner_id),
             from_group=1,
-            message=cleaned_caption,
+            message=html.unescape(cleaned_caption),
             attachments=",".join(uploaded_photos),
             random_id=get_random_id(),
             primary_attachments_mode="grid"
@@ -11953,173 +11982,285 @@ async def list_scheduled_jobs(update: Update, context: CallbackContext):
     await update.message.reply_text("🔧 Активные публикации:", reply_markup=reply_markup)
 
 
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-from datetime import datetime, timedelta
+import logging
+import json
 import pytz
 import io
 import requests
-import textwrap
+from datetime import datetime, timedelta
 
+# Matplotlib для генерации изображения
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from PIL import Image
+from textwrap import wrap
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+## ------------------- НОВЫЙ КОД ------------------- ##
 
-async def get_post_data_for_calendar(post_key: str):
+async def _get_post_details(post_key: str, context: CallbackContext) -> dict:
     """
-    Вспомогательная функция для получения данных поста (подпись и URL/ID картинки).
-    Адаптируйте логику под ваше хранилище (Firebase).
+    Вспомогательная функция для получения деталей поста: подписи и первого изображения.
     """
-    # Эта функция должна быть похожа на логику в handle_otloj_scheduled
-    # Она должна вернуть подпись и file_id первой картинки
-    global media_group_storage
-    media_group_storage = load_publications_from_firebase() # Предполагается, что эта функция у вас есть
+    media_group_storage = load_publications_from_firebase()
+    author_id, _ = post_key.split('_', 1)
 
-    user_id = post_key.split('_')[0]
-    if user_id in media_group_storage:
-        post_data = media_group_storage[user_id].get(post_key)
-        if post_data:
-            if isinstance(post_data, str):
-                post_data = json.loads(post_data)
-            
-            media_items = post_data.get('media', [])
-            if not isinstance(media_items, list):
-                media_items = list(media_items.values())
+    user_publications = media_group_storage.get(author_id, {})
+    data = user_publications.get(post_key)
 
-            if media_items:
-                first_item = media_items[0]
-                caption = first_item.get('caption', 'Без подписи')
-                file_id = first_item.get('file_id') # Это может быть URL или Telegram file_id
-                return caption, file_id
-    return "Не найдено", None
+    if not data:
+        return {'caption': 'Не найдено', 'image_data': None, 'author': 'Неизвестен'}
+
+    if isinstance(data, str):
+        data = json.loads(data)
+
+    media = data.get('media', {})
+
+    # если media — словарь, получаем значения
+    if isinstance(media, dict):
+        media_items = list(media.values())
+    # если media — список, используем напрямую
+    elif isinstance(media, list):
+        media_items = media
+    else:
+        media_items = []
+
+    if not media_items:
+        return {'caption': 'Нет медиа', 'image_data': None, 'author': 'Неизвестен'}
 
 
-async def generate_schedule_image(posts: list) -> io.BytesIO:
+    first_media = media_items[0]
+    caption = first_media.get('caption', 'Без подписи')
+    file_id = first_media.get('file_id')
+
+    # Определяем имя автора
+    if author_id == '6217936347':
+        author_name = "Артем"
+    elif author_id == '419817885':
+        author_name = "Нова"
+    else:
+        author_name = "Другой"
+
+    image_data = None
+    if file_id:
+        try:
+            if file_id.startswith('http'):
+                response = requests.get(file_id, stream=True)
+                response.raise_for_status()
+                image_data = response.raw
+            else:
+                # Скачиваем файл из Telegram
+                tg_file = await context.bot.get_file(file_id)
+                file_bytes = await tg_file.download_as_bytearray()
+                image_data = io.BytesIO(file_bytes)
+        except Exception as e:
+            logging.error(f"Ошибка загрузки изображения для timeline {file_id}: {e}")
+            # Можно подставить картинку-заглушку
+            image_data = None
+
+    return {'caption': caption, 'image_data': image_data, 'author': author_name}
+
+
+def preprocess_caption(text: str) -> str:
     """
-    Генерирует изображение-расписание постов с помощью Matplotlib.
+    Заменяет /n на символ новой строки и удаляет HTML-теги.
     """
-    num_posts = len(posts)
-    # Задаем размеры: 2.5 дюйма в высоту на каждый пост, 10 дюймов в ширину
-    fig, ax = plt.subplots(figsize=(10, num_posts * 2.5))
-    ax.axis('off') # Убираем оcи
+    # Заменяем /n на \n
+    processed_text = text.replace('/n', '\n')
+    # Удаляем все HTML-теги
+    clean_text = re.sub(r'<[^>]+>', '', processed_text)
+    return clean_text
 
-    fig.patch.set_facecolor('#f0f0f0') # Цвет фона
-    ax.set_title("План публикаций на 30 дней", fontsize=20, pad=20, weight='bold')
+async def generate_timeline_image(context: CallbackContext, posts_data: list) -> io.BytesIO:
+    """
+    Генерирует изображение временной шкалы постов с помощью Matplotlib.
+    """
+    # 1. Настройка холста (Figure) и осей (Axes)
+    num_posts = len(posts_data)
+    # Динамически вычисляем высоту изображения. 6 дюймов на пост.
+    fig_height = max(6, 4 * num_posts)
+    fig, ax = plt.subplots(figsize=(12, fig_height))
+    fig.patch.set_facecolor('#f0f0f0') # Цвет фона всего изображения
+    ax.set_facecolor('#ffffff') # Цвет фона области для рисования
 
-    for i, (post_key, data) in enumerate(posts):
-        y_pos = 1 - (i + 0.5) / num_posts # Вертикальная позиция для текущего поста
+    # 2. Убираем лишние элементы графика
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    ax.get_xaxis().set_ticks([])
+    ax.get_yaxis().set_ticks([])
+    ax.set_ylim(0, num_posts * 10 + 3)  # было: num_posts * 10
+    ax.set_xlim(0, 10)
 
-        # --- Получаем данные поста ---
-        author_id = data['author_id']
+    # Заголовок
+    ax.text(5, num_posts * 10 + 2, 'План публикаций на 30 дней',
+            ha='center', va='center', fontsize=24, fontweight='bold', color='#333333')
+
+    # 3. Итерация по постам для их отрисовки
+    for i, (post_key, data) in enumerate(posts_data):
+        details = await _get_post_details(post_key, context)
         scheduled_time = data['scheduled_time'].astimezone(pytz.timezone("Europe/Moscow"))
-        time_str = scheduled_time.strftime('%d %b, %H:%M')
-        
-        if author_id == '6217936347':
-            author_name = "Артем"
-        elif author_id == '419817885':
-            author_name = "Нова"
-        else:
-            author_name = "Другой"
-        
-        caption, image_source = await get_post_data_for_calendar(post_key)
 
-        # --- Рисуем линию-разделитель ---
-        if i > 0:
-            ax.plot([0.05, 0.95], [y_pos + 1/(2*num_posts), y_pos + 1/(2*num_posts)], 
-                    color='gray', linestyle='--', linewidth=0.5)
+        # Вертикальная позиция блока
+        y_base = (num_posts - i - 1) * 10
 
-        # --- Рисуем дату и время ---
-        ax.text(0.05, y_pos, time_str, ha='left', va='center', fontsize=14, weight='bold')
+        # Рисуем фоновый прямоугольник для каждого поста
+        rect = patches.Rectangle((0.5, y_base + 0.5), 9, 9,
+                                 linewidth=1, edgecolor='none', facecolor='#ffffff',
+                                 zorder=1, linestyle='--',
+                                 transform=ax.transData)
+        shadow = patches.Rectangle((0.55, y_base + 0.45), 9, 9,
+                                   linewidth=0, facecolor='#cccccc', zorder=0,
+                                   transform=ax.transData)
+        ax.add_patch(shadow)
+        ax.add_patch(rect)
 
-        # --- Рисуем картинку поста ---
-        if image_source:
+
+        # 4. Отображение изображения поста
+        if details['image_data']:
             try:
-                # Пытаемся загрузить картинку (по URL или из файла)
-                if image_source.startswith(('http://', 'https://')):
-                    response = requests.get(image_source, stream=True)
-                    response.raise_for_status()
-                    img_data = response.raw
-                else: # Если это file_id или локальный путь, нужен другой способ
-                    # Для демонстрации, если это не URL, мы не будем рисовать картинку.
-                    # В реальном боте нужно использовать context.bot.get_file, чтобы скачать по file_id
-                    raise ValueError("Source is not a URL")
+                img = Image.open(details['image_data'])
+                
+                # 1. Определяем "коробку", в которую нужно вписать изображение
+                box_x, box_y = 1, y_base + 1
+                box_w, box_h = 3.5, 7.5 # Ширина = 4.5 - 1, Высота = 8.5 - 1
+                box_aspect = box_w / box_h
 
-                img = mpimg.imread(img_data, format='jpg')
-                # Позиция и размер картинки [left, bottom, width, height]
-                img_ax = fig.add_axes([0.25, y_pos - 0.15/num_posts, 0.2, 0.3/num_posts])
-                img_ax.imshow(img)
-                img_ax.axis('off')
+                # 2. Получаем пропорции самого изображения
+                img_w, img_h = img.size
+                img_aspect = img_w / img_h
+
+                # 3. Вычисляем новые размеры и позицию, чтобы сохранить пропорции
+                if img_aspect > box_aspect:
+                    # Изображение шире "коробки" -> упирается в бока
+                    new_w = box_w
+                    new_h = new_w / img_aspect
+                    # Центрируем по вертикали
+                    new_x = box_x
+                    new_y = box_y + (box_h - new_h) / 2
+                else:
+                    # Изображение выше "коробки" -> упирается в верх/низ
+                    new_h = box_h
+                    new_w = new_h * img_aspect
+                    # Центрируем по горизонтали
+                    new_y = box_y
+                    new_x = box_x + (box_w - new_w) / 2
+
+                # 4. Рисуем изображение с новыми, правильными координатами
+                # Масштабируем изображение под высоту коробки
+                zoom_factor = box_h / img_h * 2000 / fig.dpi  # dpi влияет на zoom в matplotlib
+
+                imagebox = OffsetImage(img, zoom=zoom_factor)
+                ab = AnnotationBbox(imagebox, (box_x + box_w/2, box_y + box_h/2), frameon=False, zorder=2)
+                ax.add_artist(ab)
+
             except Exception as e:
-                logging.error(f"Failed to load image {image_source}: {e}")
-                # Если не удалось загрузить, рисуем заглушку
-                ax.text(0.35, y_pos, "🖼️", ha='center', va='center', fontsize=40)
+                logging.error(f"Не удалось отрисовать изображение: {e}")
+                ax.text(2.75, y_base + 4.75, "Ошибка\nзагрузки\nизображения",
+                        ha='center', va='center', fontsize=12, color='red', zorder=2)
 
-        # --- Рисуем автора и подпись ---
-        wrapped_caption = '\n'.join(textwrap.wrap(caption, width=40)) # Перенос длинных строк
-        post_text = f"Автор: {author_name}\n\n{wrapped_caption}"
-        ax.text(0.5, y_pos, post_text, ha='left', va='center', fontsize=12)
+        # 5. Отображение текста
+        text_x_pos = 5.0
+        # Дата и время
+        date_str = scheduled_time.strftime('%d %B, %Y')
+        time_str = scheduled_time.strftime('%H:%M')
+        ax.text(text_x_pos, y_base + 8.5, f"☆ {date_str}  -  ☆ {time_str}",
+                ha='left', va='center', fontsize=16, fontweight='bold', color='#005a9c', zorder=3)
 
-    # --- Сохраняем в память ---
+        # Автор
+        ax.text(text_x_pos, y_base + 7.8, f"☆ Автор: {details['author']}",
+                ha='left', va='center', fontsize=14, color='#555555', zorder=3)
+
+        # Подпись (с переносом строк)
+        # Новый код для обработки подписи
+        caption_text = details['caption']
+        # Применяем нашу функцию для очистки и форматирования
+        clean_caption = preprocess_caption(caption_text)
+
+        # Теперь мы можем дополнительно обернуть слишком длинные строки,
+        # которые не были разделены через /n.
+        # textwrap.wrap работает корректно с уже существующими \n.
+        wrapped_text = '\n'.join(wrap(clean_caption, 
+                                     width=45,          # Максимальная ширина строки
+                                     replace_whitespace=False,
+                                     break_long_words=False))
+
+        ax.text(text_x_pos, y_base + 6.5, wrapped_text,
+                ha='left', va='top', fontsize=12, color='#333333', zorder=3,
+                wrap=True) # Добавляем wrap=True для лучшей обработки текста в matplotlib
+
+
+
+    # 6. Сохранение в буфер
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
     buf.seek(0)
     plt.close(fig) # Важно закрыть фигуру, чтобы освободить память
+
     return buf
 
-
-async def show_calendar_view(update: Update, context: CallbackContext):
+async def show_timeline(update: Update, context: CallbackContext) -> None:
     """
-    Отправляет изображение с расписанием постов на ближайшие 30 дней.
+    Обработчик нажатия на кнопку "Посмотреть на шкале".
     """
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text("⏳ Генерирую календарь, подождите...")
+
+    # Отправляем временное сообщение и сохраняем его
+    loading_msg = await query.message.reply_text("⏳ Генерирую шкалу, это может занять несколько секунд...")
 
     jobs = context.job_queue.jobs()
-    now = datetime.now(pytz.utc)
-    thirty_days_later = now + timedelta(days=30)
-    
+    moscow_tz = pytz.timezone("Europe/Moscow")
+    now = datetime.now(moscow_tz)
+    limit_date = now + timedelta(days=30)
+
     scheduled_posts = {}
     for job in jobs:
         if not job.name or not job.name.startswith(('tg_pub_', 'vk_pub_')):
             continue
-
-        # Фильтруем посты, которые будут опубликованы в ближайшие 30 дней
-        if not job.next_t or not (now <= job.next_t <= thirty_days_later):
+        if not job.next_t or job.next_t.astimezone(moscow_tz) > limit_date:
             continue
-
         try:
             parts = job.name.split('_')
+            platform = parts[0]
             author_id = parts[2]
             message_id = parts[3]
             post_key = f"{author_id}_{message_id}"
+            if post_key not in scheduled_posts:
+                scheduled_posts[post_key] = {'platforms': set(), 'scheduled_time': job.next_t}
+            scheduled_posts[post_key]['platforms'].add(platform)
         except IndexError:
             continue
 
-        scheduled_time = job.next_t
-        
-        # Собираем данные аналогично list_scheduled_jobs
-        if post_key not in scheduled_posts:
-            scheduled_posts[post_key] = {
-                'author_id': author_id,
-                'scheduled_time': scheduled_time
-            }
-        else:
-             scheduled_posts[post_key]['scheduled_time'] = min(
-                scheduled_posts[post_key]['scheduled_time'], scheduled_time
-            )
-
     if not scheduled_posts:
-        await query.message.reply_text("Нет запланированных публикаций на ближайшие 30 дней.")
+        await loading_msg.edit_text("Нет запланированных публикаций на ближайшие 30 дней.")
         return
 
     sorted_posts = sorted(scheduled_posts.items(), key=lambda x: x[1]['scheduled_time'])
 
     try:
-        # Генерируем изображение
-        image_buffer = await generate_schedule_image(sorted_posts)
-        # Отправляем картинку
-        await query.message.reply_photo(photo=image_buffer, caption="Вот ваш план публикаций.")
+        # Генерация изображения
+        image_buffer = await generate_timeline_image(context, sorted_posts)
+
+        # Кнопка "Закрыть окно"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+        ])
+
+        # Заменяем текстовое сообщение на фото с кнопкой
+        await context.bot.edit_message_media(
+            media=InputMediaPhoto(
+                media=image_buffer,
+                caption="Вот ваш план публикаций на ближайшие 30 дней."
+            ),
+            chat_id=loading_msg.chat_id,
+            message_id=loading_msg.message_id,
+            reply_markup=keyboard
+        )
     except Exception as e:
-        logging.error(f"Failed to generate or send schedule image: {e}")
-        await query.message.reply_text(f"🚫 Произошла ошибка при создании календаря: {e}")
+        logging.error(f"Ошибка при генерации шкалы: {e}", exc_info=True)
+        await loading_msg.edit_text(f"❌ Произошла ошибка при создании шкалы: {e}")
+
 
 
 
@@ -14547,7 +14688,7 @@ async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
         vk.wall.post(
             owner_id=int(owner_id),  # ID группы
             from_group=1,
-            message=cleaned_caption,
+            message=html.unescape(cleaned_caption),
             attachments=",".join(uploaded_photos),
             random_id=get_random_id(),
             primary_attachments_mode="grid"
@@ -16057,7 +16198,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(plant_close_callback, pattern="^plantclose$"))
 
     # --- ДОБАВЬТЕ ЭТУ СТРОКУ ---
-    application.add_handler(CallbackQueryHandler(show_calendar_view, pattern="^view_calendar$"))
+    application.add_handler(CallbackQueryHandler(show_timeline, pattern='^view_timeline$'))
     # --- КОНЕЦ ---
     
     
