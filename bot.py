@@ -11232,6 +11232,21 @@ async def yrrase_scheduled(update: Update, context: CallbackContext) -> None:
                 media_group_storage.pop(current_user_id, None)
             save_media_group_data(media_group_storage, current_user_id)
 
+            # ❗️Дополнительно: Удаление задач из JobQueue
+            try:
+                tg_job_name = f"tg_pub_{key}"
+                vk_job_name = f"vk_pub_{key}"
+
+                tg_jobs = context.job_queue.get_jobs_by_name(tg_job_name)
+                vk_jobs = context.job_queue.get_jobs_by_name(vk_job_name)
+
+                for job in tg_jobs + vk_jobs:
+                    job.schedule_removal()
+                    logging.info(f"Удалена задача из JobQueue: {job.name}")
+
+            except Exception as e:
+                logging.warning(f"Не удалось удалить задачу из JobQueue: {e}")
+
             # Обновляем клавиатуру
             page = context.user_data.get('folderpage', 0)
             reply_markup = await generate_scheduled_keyboard(update, context, scheduled_tag, page)
@@ -11243,6 +11258,7 @@ async def yrrase_scheduled(update: Update, context: CallbackContext) -> None:
             return
 
     await query.message.reply_text("🚫 Указанная запись не найдена.")
+
 
 
 # Функция для обработки команды /scheduledmark
