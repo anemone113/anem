@@ -11945,9 +11945,183 @@ async def list_scheduled_jobs(update: Update, context: CallbackContext):
             InlineKeyboardButton(time_str, callback_data=f"schedulepost_{post_key}")
         ]
         keyboard.append(row)
-
+    # --- НОВОЕ: Добавляем кнопку для календаря ---
+    keyboard.append([
+        InlineKeyboardButton("🗓️ Посмотреть на календаре", callback_data="view_calendar")
+    ])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🔧 Активные публикации:", reply_markup=reply_markup)
+
+
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from datetime import datetime, timedelta
+import pytz
+import io
+import requests
+import textwrap
+
+
+async def get_post_data_for_calendar(post_key: str):
+    """
+    Вспомогательная функция для получения данных поста (подпись и URL/ID картинки).
+    Адаптируйте логику под ваше хранилище (Firebase).
+    """
+    # Эта функция должна быть похожа на логику в handle_otloj_scheduled
+    # Она должна вернуть подпись и file_id первой картинки
+    global media_group_storage
+    media_group_storage = load_publications_from_firebase() # Предполагается, что эта функция у вас есть
+
+    user_id = post_key.split('_')[0]
+    if user_id in media_group_storage:
+        post_data = media_group_storage[user_id].get(post_key)
+        if post_data:
+            if isinstance(post_data, str):
+                post_data = json.loads(post_data)
+            
+            media_items = post_data.get('media', [])
+            if not isinstance(media_items, list):
+                media_items = list(media_items.values())
+
+            if media_items:
+                first_item = media_items[0]
+                caption = first_item.get('caption', 'Без подписи')
+                file_id = first_item.get('file_id') # Это может быть URL или Telegram file_id
+                return caption, file_id
+    return "Не найдено", None
+
+
+async def generate_schedule_image(posts: list) -> io.BytesIO:
+    """
+    Генерирует изображение-расписание постов с помощью Matplotlib.
+    """
+    num_posts = len(posts)
+    # Задаем размеры: 2.5 дюйма в высоту на каждый пост, 10 дюймов в ширину
+    fig, ax = plt.subplots(figsize=(10, num_posts * 2.5))
+    ax.axis('off') # Убираем оcи
+
+    fig.patch.set_facecolor('#f0f0f0') # Цвет фона
+    ax.set_title("План публикаций на 30 дней", fontsize=20, pad=20, weight='bold')
+
+    for i, (post_key, data) in enumerate(posts):
+        y_pos = 1 - (i + 0.5) / num_posts # Вертикальная позиция для текущего поста
+
+        # --- Получаем данные поста ---
+        author_id = data['author_id']
+        scheduled_time = data['scheduled_time'].astimezone(pytz.timezone("Europe/Moscow"))
+        time_str = scheduled_time.strftime('%d %b, %H:%M')
+        
+        if author_id == '6217936347':
+            author_name = "Артем"
+        elif author_id == '419817885':
+            author_name = "Нова"
+        else:
+            author_name = "Другой"
+        
+        caption, image_source = await get_post_data_for_calendar(post_key)
+
+        # --- Рисуем линию-разделитель ---
+        if i > 0:
+            ax.plot([0.05, 0.95], [y_pos + 1/(2*num_posts), y_pos + 1/(2*num_posts)], 
+                    color='gray', linestyle='--', linewidth=0.5)
+
+        # --- Рисуем дату и время ---
+        ax.text(0.05, y_pos, time_str, ha='left', va='center', fontsize=14, weight='bold')
+
+        # --- Рисуем картинку поста ---
+        if image_source:
+            try:
+                # Пытаемся загрузить картинку (по URL или из файла)
+                if image_source.startswith(('http://', 'https://')):
+                    response = requests.get(image_source, stream=True)
+                    response.raise_for_status()
+                    img_data = response.raw
+                else: # Если это file_id или локальный путь, нужен другой способ
+                    # Для демонстрации, если это не URL, мы не будем рисовать картинку.
+                    # В реальном боте нужно использовать context.bot.get_file, чтобы скачать по file_id
+                    raise ValueError("Source is not a URL")
+
+                img = mpimg.imread(img_data, format='jpg')
+                # Позиция и размер картинки [left, bottom, width, height]
+                img_ax = fig.add_axes([0.25, y_pos - 0.15/num_posts, 0.2, 0.3/num_posts])
+                img_ax.imshow(img)
+                img_ax.axis('off')
+            except Exception as e:
+                logging.error(f"Failed to load image {image_source}: {e}")
+                # Если не удалось загрузить, рисуем заглушку
+                ax.text(0.35, y_pos, "🖼️", ha='center', va='center', fontsize=40)
+
+        # --- Рисуем автора и подпись ---
+        wrapped_caption = '\n'.join(textwrap.wrap(caption, width=40)) # Перенос длинных строк
+        post_text = f"Автор: {author_name}\n\n{wrapped_caption}"
+        ax.text(0.5, y_pos, post_text, ha='left', va='center', fontsize=12)
+
+    # --- Сохраняем в память ---
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+    buf.seek(0)
+    plt.close(fig) # Важно закрыть фигуру, чтобы освободить память
+    return buf
+
+
+async def show_calendar_view(update: Update, context: CallbackContext):
+    """
+    Отправляет изображение с расписанием постов на ближайшие 30 дней.
+    """
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("⏳ Генерирую календарь, подождите...")
+
+    jobs = context.job_queue.jobs()
+    now = datetime.now(pytz.utc)
+    thirty_days_later = now + timedelta(days=30)
+    
+    scheduled_posts = {}
+    for job in jobs:
+        if not job.name or not job.name.startswith(('tg_pub_', 'vk_pub_')):
+            continue
+
+        # Фильтруем посты, которые будут опубликованы в ближайшие 30 дней
+        if not job.next_t or not (now <= job.next_t <= thirty_days_later):
+            continue
+
+        try:
+            parts = job.name.split('_')
+            author_id = parts[2]
+            message_id = parts[3]
+            post_key = f"{author_id}_{message_id}"
+        except IndexError:
+            continue
+
+        scheduled_time = job.next_t
+        
+        # Собираем данные аналогично list_scheduled_jobs
+        if post_key not in scheduled_posts:
+            scheduled_posts[post_key] = {
+                'author_id': author_id,
+                'scheduled_time': scheduled_time
+            }
+        else:
+             scheduled_posts[post_key]['scheduled_time'] = min(
+                scheduled_posts[post_key]['scheduled_time'], scheduled_time
+            )
+
+    if not scheduled_posts:
+        await query.message.reply_text("Нет запланированных публикаций на ближайшие 30 дней.")
+        return
+
+    sorted_posts = sorted(scheduled_posts.items(), key=lambda x: x[1]['scheduled_time'])
+
+    try:
+        # Генерируем изображение
+        image_buffer = await generate_schedule_image(sorted_posts)
+        # Отправляем картинку
+        await query.message.reply_photo(photo=image_buffer, caption="Вот ваш план публикаций.")
+    except Exception as e:
+        logging.error(f"Failed to generate or send schedule image: {e}")
+        await query.message.reply_text(f"🚫 Произошла ошибка при создании календаря: {e}")
+
+
 
 
 async def send_otl_post_buttons(query, key, data):
@@ -15882,7 +16056,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(delete_plant_callback, pattern=r"^plantdelete_"))    
     application.add_handler(CallbackQueryHandler(plant_close_callback, pattern="^plantclose$"))
 
-
+    # --- ДОБАВЬТЕ ЭТУ СТРОКУ ---
+    application.add_handler(CallbackQueryHandler(show_calendar_view, pattern="^view_calendar$"))
+    # --- КОНЕЦ ---
     
     
     application.add_handler(CallbackQueryHandler(handle_snooze_with_tag_button, pattern=r"^snooze_with_tag_\d+_\d+$"))  
