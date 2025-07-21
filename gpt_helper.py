@@ -222,9 +222,11 @@ def save_publications_to_firebase(user_id, message_id, new_data):
         # Получаем актуальные данные
         current_data = ref.get() or {}
 
-        # Объединяем с новыми, если нужно (зависит от структуры данных)
-        # Например, обновляем поля, не стирая старые
-        merged_data = {**current_data, **new_data}
+        # Осторожное слияние: обновляем только те поля, где значение не None
+        merged_data = current_data.copy()
+        for k, v in new_data.items():
+            if v is not None:
+                merged_data[k] = v
 
         # Сохраняем обновлённые данные
         ref.set(merged_data)
