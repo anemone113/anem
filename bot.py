@@ -1198,8 +1198,12 @@ async def bird_rec(update, context):
     try:
         from collections import defaultdict
         analyzer = Analyzer()
+        print("Start analyze...")
+        
         recording = Recording(analyzer, audio_path)
         recording.analyze()
+        
+        print("Analyze complete.")
 
         unique_species = defaultdict(lambda: {"confidence": 0.0, "detection": None})
         for det in recording.detections:
