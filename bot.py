@@ -1146,7 +1146,10 @@ async def start(update: Update, context: CallbackContext) -> int:
             elif update.message.photo:
                 await fast_rec(update, context)
                 return ConversationHandler.END
-
+            # Проверка, если пользователь отправил аудио/музыку/голосовое
+            elif update.message.audio or update.message.voice:
+                await bird_rec(update, context)
+                return ConversationHandler.END
     # Проверка, если событие пришло от callback_query
     elif update.callback_query:
         message_to_reply = update.callback_query.message
@@ -1165,6 +1168,120 @@ async def start(update: Update, context: CallbackContext) -> int:
         await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
 
         return ConversationHandler.END
+
+from birdnetlib import Recording
+from birdnetlib.analyzer import Analyzer
+
+
+async def bird_rec(update, context):
+    message = update.message
+    user_id = update.effective_user.id
+
+    # Получаем файл аудио или голосового
+    file = None
+    if message.audio:
+        file = await message.audio.get_file()
+        ext = '.mp3'
+    elif message.voice:
+        file = await message.voice.get_file()
+        ext = '.ogg'
+    else:
+        await message.reply_text("Пожалуйста, отправьте аудио или голосовое сообщение.")
+        return
+
+    audio_path = f'temp_audio{ext}'
+    await file.download_to_drive(audio_path)
+
+    # Отправляем сообщение "Анализирую..."
+    thinking_message = await message.reply_text("Анализирую, ожидайте...")
+
+    try:
+        from collections import defaultdict
+        analyzer = Analyzer()
+        recording = Recording(analyzer, audio_path)
+        recording.analyze()
+
+        unique_species = defaultdict(lambda: {"confidence": 0.0, "detection": None})
+        for det in recording.detections:
+            species = det["common_name"]
+            score = float(det["confidence"])
+            if score >= 0.5 and score > unique_species[species]["confidence"]:
+                unique_species[species] = {"confidence": score, "detection": det}
+
+        if not unique_species:
+            result_text = "Птицы не распознаны 🐦😔"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+            ])
+            await context.bot.edit_message_text(
+                chat_id=thinking_message.chat_id,
+                message_id=thinking_message.message_id,
+                text=result_text,
+                reply_markup=keyboard
+            )
+            return
+
+        # Формируем текст результата
+        result_lines = ["🔍 Результаты распознавания:"]
+        buttons = []
+        for species, data in unique_species.items():
+            score = data["confidence"]
+            result_lines.append(f"• {species} — {score:.2%} уверенности")
+            buttons.append([InlineKeyboardButton(species, callback_data=f"bird_info:{species}")])
+
+        result_text = "\n".join(result_lines)
+        result_text += "\n\nПодробнее по кнопкам ниже:"  # ← добавляем эту строку
+
+        buttons.append([InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')])
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        await context.bot.edit_message_text(
+            chat_id=thinking_message.chat_id,
+            message_id=thinking_message.message_id,
+            text=result_text,
+            reply_markup=keyboard
+        )
+
+
+    except Exception as e:
+        await context.bot.edit_message_text(
+            chat_id=thinking_message.chat_id,
+            message_id=thinking_message.message_id,
+            text=f"Произошла ошибка при распознавании: {e}"
+        )
+    finally:
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
+async def birds_help(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data.startswith("bird_info:"):
+        bird_name = query.data.split(":", 1)[1]
+        prompt = f"Расскажи про птицу {bird_name} подробнее. Текст оформи по пунктам: 1)Русское название 2)Где обитает 3)Краткое описание, где живёт, чем питается, особеенности поведения если есть 4)Какие-то интересные факты и прочая важная или интересная информация касающаяся этой птицы. Каждый пункт пиши в новом абзаце, старайся писать лаконично, по существу и интересно."
+        user_id = query.from_user.id
+
+        # Отправляем временное сообщение
+        waiting_message = await query.message.reply_text("Думаю над ответом, подождите...")
+
+        # Получаем ответ от модели
+        response_text = await generate_plant_help_response(user_id, query=prompt)
+
+        # Кнопка закрытия окна
+        close_button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+        ])
+
+        # Редактируем предыдущее сообщение
+        await context.bot.edit_message_text(
+            chat_id=waiting_message.chat_id,
+            message_id=waiting_message.message_id,
+            text=response_text,
+            reply_markup=close_button
+        ) 
+
+
 
 import uuid
 
