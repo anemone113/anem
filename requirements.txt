@@ -19,3 +19,7 @@ python-dotenv==1.0.1
 matplotlib
 python-telegram-bot[job-queue]
 pytz
+resampy
+tensorflow
+librosa
+birdnetlib
