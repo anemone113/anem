@@ -894,10 +894,24 @@ async def start(update: Update, context: CallbackContext) -> int:
         # Проверяем состояние пользователя
         if user_data.get(user_id, {}).get('status') == 'awaiting_artist_link':
             if update.message.media_group_id:
-                await message_to_reply.reply_text(
-                    "Пожалуйста, отправьте сначала текстовую подпись для будущего поста либо \"нет\", если она не нужна"
-                )
-                return ConversationHandler.END
+                message = update.message
+            
+                # Проверка: если это фото (сжатое изображение)
+                if message.photo:
+                    await fast_group_rec(update, context)
+                    return ConversationHandler.END
+            
+                # Проверка: если это документ, но изображение (не сжатое)
+                elif message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
+                    await message_to_reply.reply_text(
+                        "Пожалуйста, отправьте сначала текстовую подпись для будущего поста либо \"нет\", если она не нужна"
+                    )
+                    return ConversationHandler.END
+            
+                # Иные типы медиа — можно отфильтровать отдельно
+                else:
+                    await message_to_reply.reply_text("Неподдерживаемый тип медиа.")
+                    return ConversationHandler.END
   
               
             # Получаем текст сообщения
@@ -1228,6 +1242,93 @@ async def fast_rec(update, context):
         "- кнопка 💬 — ищет в сети отзывы на товар с фото и выдаёт краткую выжимку, как положительных, так и негативных\n\n",
         reply_markup=reply_markup
     )
+
+
+
+
+
+
+
+# Глобальный словарь для отслеживания медиагрупп
+media_groups_buffer = {}
+
+async def fast_group_rec(update, context):
+    message = update.message
+    user_id = update.effective_user.id
+    media_group_id = message.media_group_id
+
+    # Создаем буфер для этой медиагруппы, если еще нет
+    if media_group_id not in media_groups_buffer:
+        media_groups_buffer[media_group_id] = {
+            "images": [],
+            "last_update": time.time(),
+            "task": None,
+            "notified_count": 0
+        }
+
+    buffer = media_groups_buffer[media_group_id]
+
+    # Сохраняем фото в память
+    if message.photo:
+        file = await message.photo[-1].get_file()
+        bio = BytesIO()
+        await file.download_to_memory(out=bio)
+        bio.seek(0)
+        buffer["images"].append(bio.getvalue())
+        buffer["last_update"] = time.time()
+
+        buffer["notified_count"] += 1
+        await message.reply_text(f"📸 Фото {buffer['notified_count']} добавлено для анализа...")
+
+    # Если это первый файл в группе, запускаем отслеживание завершения
+    if buffer["task"] is None:
+        buffer["task"] = asyncio.create_task(finish_group_after_delay(media_group_id, context, message))
+
+
+async def finish_group_after_delay(media_group_id, context, message):
+    await asyncio.sleep(2)  # минимальная задержка перед началом отслеживания
+
+    while True:
+        elapsed = time.time() - media_groups_buffer[media_group_id]["last_update"]
+        if elapsed >= 2:
+            break
+        await asyncio.sleep(0.5)
+
+    # Сохраняем изображения в context
+    context.user_data['group_images'] = media_groups_buffer[media_group_id]["images"]
+    context.user_data['img_caption'] = message.caption  # используем подпись с последнего сообщения
+
+    # Удаляем из буфера
+    del media_groups_buffer[media_group_id]
+
+    # Клавиатура
+    keyboard = [
+        [InlineKeyboardButton("🌿 Распознать растение 🌿", callback_data='recognize_plant')],
+        [InlineKeyboardButton("🍄‍🟫 Распознать гриб 🍄‍🟫", callback_data='mushrooms_gpt')],                                          
+        [InlineKeyboardButton("💬Найти отзывы💬", callback_data='barcode_with_gpt')],
+        [InlineKeyboardButton("📝Распознать текст📝", callback_data='text_rec_with_gpt')],           
+        [InlineKeyboardButton("🍂 Что не так с растением? 🍂", callback_data='text_plant_help_with_gpt')],       
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await message.reply_text(
+        "✅ Все изображения получены.\n\n"
+        "Если вы хотели сделать пост, а не распознать содержимое на изображении, то вернитесь в меню и действуйте в соответствии с инструкциями.\n\n"
+        "Что вы хотите сделать?\n"
+        "- кнопка 🌿 — распознаёт растения на специально обученной на растениях нейросети\n"
+        "- кнопка 🍄‍🟫 — использует более общую нейросеть и может ошибаться\n"
+        "- кнопка 💬 — ищет в сети отзывы на товар с фото и выдаёт краткую выжимку\n",
+        reply_markup=reply_markup
+    )
+
+
+
+
+
+
+
+
 
 
 
