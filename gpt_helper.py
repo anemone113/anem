@@ -1802,72 +1802,61 @@ def limit_response_length(text):
     return text[:MAX_MESSAGE_LENGTH - 3] + '...' if len(text) > MAX_MESSAGE_LENGTH else text
 
 
-async def generate_mushrooms_response(user_id, image, query):
-    """Генерирует текстовое описание гриба на основе изображения."""
-    system_instruction = "Определи что это за гриб. Кратко расскажи о нём, где растёт и чаще всего встречается, как выглядит, какие-то особенности, съедобен или нет, другую важную информацию. Если у тебя есть несколько вариантов то перечисли их. Если необходимо используй html разметку доступную в telegram. Суммарная длина текста не должна быть выше 300 слов:"
-
-    # Формируем статичный контекст для запроса
-    context = (         
-            f"Уточнение касательно гриба от пользователя: {query}"    
+async def generate_mushrooms_multi_response(user_id, images, query):
+    """Генерирует описание гриба на основе одного или нескольких изображений."""
+    system_instruction = (
+        "Определи что это за гриб (или грибы). Кратко расскажи о них, "
+        "где растут и чаще всего встречаются, как выглядят, какие-то особенности, "
+        "съедобны или нет, другую важную информацию. Если у тебя есть несколько вариантов – перечисли их. "
+        "Если необходимо, используй html-разметку, доступную в Telegram. "
+        "Суммарная длина текста не должна быть выше 300 слов."
     )
+
     try:
-        # Сохраняем изображение во временный файл
-        with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
-            image_path = temp_file.name
-            image.save(temp_file, format="JPEG")
-
-        logging.info(f"Сохранено временное изображение: {image_path}")
-
-        # Инициализация клиента Gemini
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())
 
-        # Загрузка изображения
-        try:
+        # Загружаем все изображения
+        image_parts = []
+        for image in images:
+            with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                image.save(temp_file, format="JPEG")
+                image_path = temp_file.name
+
             image_file = client.files.upload(file=pathlib.Path(image_path))
-        except Exception as e:
-            logging.error(f"Ошибка при загрузке изображения: {e}")
-            return "Не удалось загрузить изображение."
+            image_parts.append(
+                types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type)
+            )
 
-        logging.info(f"Изображение загружено: {image_file.uri}")
+            # сразу удаляем локальный файл
+            os.remove(image_path)
 
-        # Настройки безопасности
-        safety_settings = [
-            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        # Собираем запрос
+        contents = [
+            types.Content(
+                role="user",
+                parts=image_parts + [types.Part(text=f"Уточнение: {query}" if query else "")]
+            )
         ]
 
-        # Генерация ответа от модели Gemini
         response = client.models.generate_content(
             model='gemini-2.5-flash-preview-05-20',
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_uri(
-                            file_uri=image_file.uri,
-                            mime_type=image_file.mime_type
-                        ),
-                        types.Part(text=f"{context}\n"),
-                    ]
-                )
-            ],
+            contents=contents,
             config=types.GenerateContentConfig(
-                system_instruction=system_instruction,                    
+                system_instruction=system_instruction,
                 temperature=1.0,
                 top_p=0.9,
                 top_k=40,
-                #max_output_tokens=1000,
-                #presence_penalty=0.6,
-                #frequency_penalty=0.6,
                 tools=[google_search_tool],
-                safety_settings=safety_settings
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
             )
         )
 
-        # Проверяем наличие ответа
         if response.candidates and response.candidates[0].content.parts:
             response_text = "".join(
                 part.text for part in response.candidates[0].content.parts
@@ -1875,20 +1864,14 @@ async def generate_mushrooms_response(user_id, image, query):
             ).strip()
             return response_text
         else:
-            logging.warning("Gemini не вернул ответ на запрос для изображения.")
-            return "Не удалось определить проблему растения."
+            return "Не удалось определить гриб."
 
     except Exception as e:
-        logging.error(f"Ошибка при поиске гриба: {e}")
-        return "Ошибка при обработке изображения. Попробуйте снова."
-    finally:
-        # Удаляем временный файл
-        if 'image_path' in locals() and os.path.exists(image_path):
-            try:
-                os.remove(image_path)
-                logging.info(f"Временный файл удален: {image_path}")
-            except Exception as e:
-                logging.error(f"Ошибка при удалении временного файла: {e}")
+        logging.error(f"Ошибка при анализе изображений: {e}")
+        return "Ошибка при обработке изображений. Попробуйте снова."
+
+
+
 
 
 async def generate_mapplants_response(user_id, image):
