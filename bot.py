@@ -1226,20 +1226,24 @@ async def fast_rec(update, context):
     # Шаг 3: Успешная загрузка и показ клавиатуры
     keyboard = [
         [InlineKeyboardButton("🌿 Распознать растение 🌿", callback_data='recognize_plant')],
-        [InlineKeyboardButton("🍄‍🟫 Распознать гриб 🍄‍🟫", callback_data='mushrooms_gpt')],                                          
-        [InlineKeyboardButton("💬Найти отзывы💬", callback_data='barcode_with_gpt')],
-        [InlineKeyboardButton("📝Распознать текст📝", callback_data='text_rec_with_gpt')],           
-        [InlineKeyboardButton("🍂 Что не так с растением? 🍂", callback_data='text_plant_help_with_gpt')],       
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+        [InlineKeyboardButton("🍄‍🟫 Распознать гриб 🍄‍🟫", callback_data='mushrooms_gpt')],  
+        [InlineKeyboardButton("🐾 Распознать животное/насекомое 🐾", callback_data='recognize_animal_insect')],        
+        [InlineKeyboardButton("💬 Найти отзывы 💬", callback_data='barcode_with_gpt')],
+        [InlineKeyboardButton("🥑 Разобрать состав 🥑", callback_data='analyze_ingredients')],        
+        [InlineKeyboardButton("📝 Распознать текст 📝", callback_data='text_rec_with_gpt')],           
+        [InlineKeyboardButton("🍂 Что не так с растением? 🍂", callback_data='text_plant_help_with_gpt')],    
+        [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await loading_message.edit_text(
-        "ВНИМАНИЕ!!! Если вы хотели сделать пост, а не распознать содержимое на изображении, то вернитесь в меню и действуйте в соответствии с инструкциями\n\n"
+        "Если вы хотели сделать пост или предложку, а не распознать содержимое на изображении, то вернитесь в меню и действуйте в соответствии с инструкциями\n\n"
         "Что вы хотите сделать?\n"
         "- кнопка 🌿 — распознаёт растения на специально обученной на растениях нейросети, поэтому результаты с высокой степенью достоверны\n"
-        "- кнопка 🍄‍🟫 — использует более общую нейросеть и может ошибаться, будьте осторожны\n"
-        "- кнопка 💬 — ищет в сети отзывы на товар с фото и выдаёт краткую выжимку, как положительных, так и негативных\n\n",
+        "- кнопка 🍄‍🟫 — использует более общую нейросеть и может ошибаться, будьте осторожны. Вы можете добавить подпись к фото указав, например запах гриба или где он был найден - это поможет увеличить веротяность верного распознавания. ТАк же вы можете прислать несколько изображений за раз.\n"
+        "- кнопка 🐾 — попытается распознать животное или насекомое на фото\n\n"
+        "- кнопка 💬 — ищет в сети отзывы на товар с фото и выдаёт краткую выжимку, как положительных, так и негативных\n\n"
+        "- кнопка 🥑 — разберёт состав с этикетки продукта с научной точки зрения, пользу, вред, практичность.\n\n",
         reply_markup=reply_markup
     )
 
@@ -2386,7 +2390,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 
             logger.info(f"query_text: {query}")  
 
-            waiting_message = await update.message.reply_text("Генерирую ответ, пожалуйста, подождите...")
+            waiting_message = await update.message.reply_text("Думаю над ответом, пожалуйста, подождите...")
 
             async def process():
                 try:
@@ -2431,197 +2435,287 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
 
             asyncio.create_task(process())
         elif original_message.photo:
-
-            # Проверяем, начинается ли caption с "Дорисуй:", "дорисуй:", "Дорисуй раскрась этот рисунок", "дорисуй раскрась этот рисунок"
-            match = re.match(r"(?i)^(дорисуй|доделай|замени|добавь|отредактируй):?\s*(.+)", user_message)
-            if match:
-                inpaint_prompt = match.group(2).strip()
-                logging.info(f"inpaint_prompt: {inpaint_prompt}")
-
-                # Загружаем изображение
-                photo_file = await original_message.photo[-1].get_file()  # Изменено!
-                logging.info(f"photo_file: {photo_file}")
-                img_data = io.BytesIO()
-                await photo_file.download_to_memory(out=img_data)
-
-                # Определяем путь к папке temp внутри директории бота
-                base_dir = os.path.dirname(os.path.abspath(__file__))  # Путь к папке, где находится скрипт
-                temp_dir = os.path.join(base_dir, "temp")  # Путь к папке temp
-                os.makedirs(temp_dir, exist_ok=True)  # Создаём папку temp, если её нет
-
-                # Формируем путь к временному файлу
-                temp_image_path = os.path.join(temp_dir, f"inpaint_{user_id}.jpg")
-                logging.info(f"temp_image_path: {temp_image_path}")
-
-                # Сохраняем изображение во временный файл
-                with open(temp_image_path, "wb") as f:
-                    f.write(img_data.getvalue())
-
-                # Передаём в обработку
-                return await inpaint_image(update, context, temp_image_path, inpaint_prompt)
-
-            original_photo = update.message.reply_to_message.photo[-1]
-            file = await context.bot.get_file(original_photo.file_id)
-
-            # Сохраняем изображение локально
-            os.makedirs("downloads", exist_ok=True)
-            image_path = f"downloads/image_{original_photo.file_id}.jpg"
-            await file.download_to_drive(image_path)
-
-            # Передаём данные в recognize_image_with_gemini
-            response_text = await generate_image_description(
-                user_id, 
-                image_path=image_path,
-                query=user_message
-            )
-            add_to_context(user_id, f"{user_message}", message_type="user_reply_image")            
-            # Отправляем пользователю ответ от модели
-            if response_text:
-                text_parts = await send_reply_with_limit(response_text)
-
-                for i, part in enumerate(text_parts):
-                    if i == len(text_parts) - 1:  # Последняя часть
-                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+        
+            waiting_message = await update.message.reply_text("Обрабатываю изображение...")
+        
+            async def process():
+                try:
+                    # Проверяем, начинается ли caption с ключевых слов (дорисуй, доделай и т.д.)
+                    match = re.match(r"(?i)^(дорисуй|доделай|замени|добавь|отредактируй):?\s*(.+)", user_message)
+                    if match:
+                        inpaint_prompt = match.group(2).strip()
+                        logging.info(f"inpaint_prompt: {inpaint_prompt}")
+        
+                        # Загружаем изображение
+                        photo_file = await original_message.photo[-1].get_file()
+                        img_data = io.BytesIO()
+                        await photo_file.download_to_memory(out=img_data)
+        
+                        # Определяем путь к папке temp
+                        base_dir = os.path.dirname(os.path.abspath(__file__))
+                        temp_dir = os.path.join(base_dir, "temp")
+                        os.makedirs(temp_dir, exist_ok=True)
+        
+                        # Сохраняем временное изображение
+                        temp_image_path = os.path.join(temp_dir, f"inpaint_{user_id}.jpg")
+                        with open(temp_image_path, "wb") as f:
+                            f.write(img_data.getvalue())
+        
+                        # Передаём в функцию дорисовки
+                        response_text = await inpaint_image(update, context, temp_image_path, inpaint_prompt)
+        
                     else:
-                        await update.message.reply_text(part, parse_mode='MarkdownV2')
-                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
-                    save_context_to_firebase(user_id)                        
-            else:
-                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
-            т   
+                        # Если не дорисовка — просто описание изображения
+                        original_photo = update.message.reply_to_message.photo[-1]
+                        file = await context.bot.get_file(original_photo.file_id)
+        
+                        os.makedirs("downloads", exist_ok=True)
+                        image_path = f"downloads/image_{original_photo.file_id}.jpg"
+                        await file.download_to_drive(image_path)
+        
+                        response_text = await generate_image_description(
+                            user_id,
+                            image_path=image_path,
+                            query=user_message
+                        )
+        
+                        add_to_context(user_id, f"{user_message}", message_type="user_reply_image")
+        
+                    # Отправка ответа пользователю
+                    if response_text:
+                        text_parts = await send_reply_with_limit(response_text)
+        
+                        if len(text_parts) == 1:
+                            await waiting_message.edit_text(
+                                text_parts[0],
+                                parse_mode='MarkdownV2',
+                                reply_markup=collapsed_menu
+                            )
+                        else:
+                            await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+        
+                            for i, part in enumerate(text_parts[1:], start=1):
+                                is_last = (i == len(text_parts) - 1)
+                                await update.message.reply_text(
+                                    part,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=collapsed_menu if is_last else None
+                                )
+        
+                        add_to_context(user_id, response_text, message_type="bot_response")
+                        save_context_to_firebase(user_id)
+                    else:
+                        await waiting_message.edit_text("Произошла ошибка при обработке изображения. Попробуйте снова. /restart")
+        
+                except Exception as e:
+                    await waiting_message.edit_text(f"Ошибка: {e}")
+        
+            asyncio.create_task(process())
+            
         elif original_message.video:
-            original_video = update.message.reply_to_message.video
-            file = await context.bot.get_file(original_video.file_id)
+            waiting_message = await update.message.reply_text("Обрабатываю видео...")
 
-            # Сохраняем видео локально
-            os.makedirs("downloads", exist_ok=True)
-            video_file_path = f"downloads/video_{original_video.file_id}.mp4"
-            await file.download_to_drive(video_file_path)
-            # Передаём данные в recognize_video_with_gemini
-            response_text = await generate_video_response(
-                video_file_path=video_file_path,
-                user_id=user_id,                 
-                query=user_message
-            )
-            add_to_context(user_id, f"{user_message}", message_type="user_reply_video")            
-            # Отправляем пользователю ответ от модели
-            if response_text:
-                text_parts = await send_reply_with_limit(response_text)
+            async def process_video():
+                try:
+                    original_video = original_message.video
+                    file = await context.bot.get_file(original_video.file_id)
 
-                for i, part in enumerate(text_parts):
-                    if i == len(text_parts) - 1:  # Последняя часть
-                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                    os.makedirs("downloads", exist_ok=True)
+                    video_file_path = f"downloads/video_{original_video.file_id}.mp4"
+                    await file.download_to_drive(video_file_path)
+
+                    response_text = await generate_video_response(
+                        video_file_path=video_file_path,
+                        user_id=user_id,
+                        query=user_message
+                    )
+                    add_to_context(user_id, f"{user_message}", message_type="user_reply_video")
+
+                    if response_text:
+                        text_parts = await send_reply_with_limit(response_text)
+
+                        if len(text_parts) == 1:
+                            await waiting_message.edit_text(
+                                text_parts[0],
+                                parse_mode='MarkdownV2',
+                                reply_markup=collapsed_menu
+                            )
+                        else:
+                            await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+                            for i, part in enumerate(text_parts[1:], start=1):
+                                is_last = (i == len(text_parts) - 1)
+                                await update.message.reply_text(
+                                    part,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=collapsed_menu if is_last else None
+                                )
+
+                        add_to_context(user_id, response_text, message_type="bot_response")
+                        save_context_to_firebase(user_id)
                     else:
-                        await update.message.reply_text(part, parse_mode='MarkdownV2')
-                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
-                    save_context_to_firebase(user_id)                        
-            else:
-                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+                        await waiting_message.edit_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+
+                except Exception as e:
+                    await waiting_message.edit_text(f"Ошибка: {e}")
+
+            asyncio.create_task(process_video())
 
         elif original_message.audio or original_message.voice:
-            original_audio = original_message.audio or original_message.voice  # Берём, что есть
-            file = await context.bot.get_file(original_audio.file_id)
-            logger.info(f"file: {file}")
-            # Сохраняем аудио локально
-            os.makedirs("downloads", exist_ok=True)
-            audio_file_path = f"downloads/audio_{original_audio.file_id}.mp3"
-            await file.download_to_drive(audio_file_path)
+            waiting_message = await update.message.reply_text("Обрабатываю аудио...")
 
-            # Передаём данные в recognize_audio_with_gemini
-            response_text = await generate_audio_response(                
-                audio_file_path=audio_file_path,
-                user_id=user_id,                 
-                query=user_message
-            )
-            add_to_context(user_id, f"{user_message}", message_type="user_reply_audio")            
-            # Добавляем ответ бота в историю
-            # Отправляем пользователю ответ от модели
-            if response_text:
-                text_parts = await send_reply_with_limit(response_text)
+            async def process_audio():
+                try:
+                    original_audio = original_message.audio or original_message.voice
+                    file = await context.bot.get_file(original_audio.file_id)
 
-                for i, part in enumerate(text_parts):
-                    if i == len(text_parts) - 1:  # Последняя часть
-                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
-                    else:
-                        await update.message.reply_text(part, parse_mode='MarkdownV2')
-                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
-                    save_context_to_firebase(user_id)                        
-            else:
-                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
-        elif original_message.animation:  # Гифки попадают в animation
-            original_animation = update.message.reply_to_message.animation
-            file = await context.bot.get_file(original_animation.file_id)
+                    os.makedirs("downloads", exist_ok=True)
+                    audio_file_path = f"downloads/audio_{original_audio.file_id}.mp3"
+                    await file.download_to_drive(audio_file_path)
 
-            
+                    response_text = await generate_audio_response(
+                        audio_file_path=audio_file_path,
+                        user_id=user_id,
+                        query=user_message
+                    )
+                    add_to_context(user_id, f"{user_message}", message_type="user_reply_audio")
 
-            # Сохраняем анимацию локально
-            os.makedirs("downloads", exist_ok=True)
-            animation_file_path = f"downloads/animation_{original_animation.file_id}.mp4"
-            await file.download_to_drive(animation_file_path)
+                    if response_text:
+                        text_parts = await send_reply_with_limit(response_text)
 
-            # Формируем запрос для модели
-            prompt_animation = f"Пользователь процитировал анимацию и написал: \"{user_message}\". Ответь на сообщение или запрос пользователя."
-
-            # Передаём данные в обработчик видео
-            response_text = await generate_video_response(
-                video_file_path=animation_file_path,
-                user_id=user_id,
-                query=prompt_animation,
-            )
-            add_to_context(user_id, f"{user_message}", message_type="user_reply_GIF")
-            # Отправляем ответ пользователю
-            if response_text:
-                text_parts = await send_reply_with_limit(response_text)
-
-                for i, part in enumerate(text_parts):
-                    if i == len(text_parts) - 1:  # Последняя часть
-                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
-                    else:
-                        await update.message.reply_text(part, parse_mode='MarkdownV2')
-                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
-                    save_context_to_firebase(user_id)                        
-            else:
-                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
-        elif original_message.document:  # Проверяем, если сообщение содержит документ
-            original_document = update.message.reply_to_message.document
-            file = await context.bot.get_file(original_document.file_id)
-
-            # Сохраняем документ локально
-            os.makedirs("downloads", exist_ok=True)
-            document_extension = original_document.file_name.split(".")[-1].lower()
-            document_file_path = f"downloads/document_{original_document.file_id}.{document_extension}"
-            await file.download_to_drive(document_file_path)
-
-            
-
-            # Проверяем, поддерживается ли формат
-            if document_extension in ["txt", "pdf"]:
-                # Формируем запрос для обработки документа
-                prompt_document = f"Пользователь обратился к документу и написал: \"{user_message}\". Ответь на сообщение или запрос пользователя."
-
-                # Передаём данные в обработчик текста
-                response_text = await generate_document_response(
-                    document_path=document_file_path,
-                    user_id=user_id,
-                    query=prompt_document
-                )
-                add_to_context(user_id, f"{user_message}", message_type="user_reply_document")
-                # Отправляем ответ пользователю
-                if response_text:
-                    text_parts = await send_reply_with_limit(response_text)
-
-                    for i, part in enumerate(text_parts):
-                        if i == len(text_parts) - 1:  # Последняя часть
-                            await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+                        if len(text_parts) == 1:
+                            await waiting_message.edit_text(
+                                text_parts[0],
+                                parse_mode='MarkdownV2',
+                                reply_markup=collapsed_menu
+                            )
                         else:
-                            await update.message.reply_text(part, parse_mode='MarkdownV2')
-                    add_to_context(user_id, response_text, message_type="bot_response")  # Добавляем ответ в контекс
-                    save_context_to_firebase(user_id)                            
-                else:
-                    await update.message.reply_text("Произошла ошибка при обработке документа. Попробуйте снова. /restart")
-            else:
-                await update.message.reply_text("Этот формат документа не поддерживается в режиме разговора с ботом. Отправьте .txt или .pdf.")
-        return
+                            await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+                            for i, part in enumerate(text_parts[1:], start=1):
+                                is_last = (i == len(text_parts) - 1)
+                                await update.message.reply_text(
+                                    part,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=collapsed_menu if is_last else None
+                                )
+
+                        add_to_context(user_id, response_text, message_type="bot_response")
+                        save_context_to_firebase(user_id)
+                    else:
+                        await waiting_message.edit_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+
+                except Exception as e:
+                    await waiting_message.edit_text(f"Ошибка: {e}")
+
+            asyncio.create_task(process_audio())
+        elif original_message.animation:  # Гифки попадают в animation
+            waiting_message = await update.message.reply_text("Обрабатываю анимацию...")
+
+            async def process_animation():
+                try:
+                    original_animation = original_message.animation
+                    file = await context.bot.get_file(original_animation.file_id)
+
+                    os.makedirs("downloads", exist_ok=True)
+                    animation_file_path = f"downloads/animation_{original_animation.file_id}.mp4"
+                    await file.download_to_drive(animation_file_path)
+
+                    prompt_animation = (
+                        f"Пользователь процитировал анимацию и написал: \"{user_message}\". "
+                        f"Ответь на сообщение или запрос пользователя."
+                    )
+
+                    response_text = await generate_video_response(
+                        video_file_path=animation_file_path,
+                        user_id=user_id,
+                        query=prompt_animation,
+                    )
+                    add_to_context(user_id, f"{user_message}", message_type="user_reply_GIF")
+
+                    if response_text:
+                        text_parts = await send_reply_with_limit(response_text)
+
+                        if len(text_parts) == 1:
+                            await waiting_message.edit_text(
+                                text_parts[0],
+                                parse_mode='MarkdownV2',
+                                reply_markup=collapsed_menu
+                            )
+                        else:
+                            await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+                            for i, part in enumerate(text_parts[1:], start=1):
+                                is_last = (i == len(text_parts) - 1)
+                                await update.message.reply_text(
+                                    part,
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=collapsed_menu if is_last else None
+                                )
+
+                        add_to_context(user_id, response_text, message_type="bot_response")
+                        save_context_to_firebase(user_id)
+                    else:
+                        await waiting_message.edit_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+
+                except Exception as e:
+                    await waiting_message.edit_text(f"Ошибка: {e}")
+
+            asyncio.create_task(process_animation())
+
+        elif original_message.document:  # Проверяем, если сообщение содержит документ
+            waiting_message = await update.message.reply_text("Обрабатываю документ...")
+
+            async def process_document():
+                try:
+                    original_document = original_message.document
+                    file = await context.bot.get_file(original_document.file_id)
+
+                    os.makedirs("downloads", exist_ok=True)
+                    document_extension = original_document.file_name.split(".")[-1].lower()
+                    document_file_path = f"downloads/document_{original_document.file_id}.{document_extension}"
+                    await file.download_to_drive(document_file_path)
+
+                    if document_extension in ["txt", "pdf"]:
+                        prompt_document = (
+                            f"Пользователь обратился к документу и написал: \"{user_message}\". "
+                            f"Ответь на сообщение или запрос пользователя."
+                        )
+
+                        response_text = await generate_document_response(
+                            document_path=document_file_path,
+                            user_id=user_id,
+                            query=prompt_document
+                        )
+                        add_to_context(user_id, f"{user_message}", message_type="user_reply_document")
+
+                        if response_text:
+                            text_parts = await send_reply_with_limit(response_text)
+
+                            if len(text_parts) == 1:
+                                await waiting_message.edit_text(
+                                    text_parts[0],
+                                    parse_mode='MarkdownV2',
+                                    reply_markup=collapsed_menu
+                                )
+                            else:
+                                await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+                                for i, part in enumerate(text_parts[1:], start=1):
+                                    is_last = (i == len(text_parts) - 1)
+                                    await update.message.reply_text(
+                                        part,
+                                        parse_mode='MarkdownV2',
+                                        reply_markup=collapsed_menu if is_last else None
+                                    )
+
+                            add_to_context(user_id, response_text, message_type="bot_response")
+                            save_context_to_firebase(user_id)
+                        else:
+                            await waiting_message.edit_text("Произошла ошибка при обработке документа. Попробуйте снова. /restart")
+                    else:
+                        await waiting_message.edit_text("Этот формат документа не поддерживается. Отправьте .txt или .pdf.")
+
+                except Exception as e:
+                    await waiting_message.edit_text(f"Ошибка: {e}")
+
+            asyncio.create_task(process_document())
 
 
 
@@ -2645,69 +2739,78 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
     # Проверка, отправил ли пользователь изображение
     if update.message.photo:
         user_id = update.message.from_user.id
-        user_message = update.message.text        
-        try:
-            # Сохраняем изображение локально
-            original_photo = await update.message.photo[-1].get_file()
-            file = await context.bot.get_file(original_photo.file_id)
-            os.makedirs("downloads", exist_ok=True)
-            image_path = f"downloads/image_{original_photo.file_id}.jpg"
-            await file.download_to_drive(image_path)
-
-            # Получаем caption изображения
-            user_message = update.message.caption or "Распознай что на изображении"
-
-            # Проверяем, начинается ли caption с "Дорисуй:", "дорисуй:", "Дорисуй раскрась этот рисунок", "дорисуй раскрась этот рисунок"
-            match = re.match(r"(?i)^(дорисуй|доделай|замени|добавь|отредактируй):?\s*(.+)", user_message)
-            if match:
-                inpaint_prompt = match.group(2).strip()
-                logging.info(f"inpaint_prompt: {inpaint_prompt}")
-
-                # Загружаем изображение
-                photo_file = await update.message.photo[-1].get_file()
-                logging.info(f"photo_file: {photo_file}")
-                img_data = io.BytesIO()
-                await photo_file.download_to_memory(out=img_data)
-
-                # Определяем путь к папке temp внутри директории бота
-                base_dir = os.path.dirname(os.path.abspath(__file__))  # Путь к папке, где находится скрипт
-                temp_dir = os.path.join(base_dir, "temp")  # Путь к папке temp
-                os.makedirs(temp_dir, exist_ok=True)  # Создаём папку temp, если её нет
-
-                # Формируем путь к временному файлу
-                temp_image_path = os.path.join(temp_dir, f"inpaint_{user_id}.jpg")
-                logging.info(f"temp_image_path: {temp_image_path}")
-
-                # Сохраняем изображение во временный файл
-                with open(temp_image_path, "wb") as f:
-                    f.write(img_data.getvalue())
-
-                # Передаём в обработку
-                return await inpaint_image(update, context, temp_image_path, inpaint_prompt)
-
-            # Обычная генерация описания
-            
-            response_text = await generate_image_description(user_id, image_path=image_path, query=user_message)
-            add_to_context(user_id, f"[Изображение], с подписью: {user_message}", message_type="user_send_image")    
-            logging.info(f"Ответ с изображением, который пытается отправить бот: {response_text}")
-
-            if response_text:
-                text_parts = await send_reply_with_limit(response_text)
-
-                for i, part in enumerate(text_parts):
-                    if i == len(text_parts) - 1:  # Последняя часть
-                        await update.message.reply_text(part, reply_markup=collapsed_menu, parse_mode='MarkdownV2')
+        user_message = update.message.caption or "Распознай что на изображении"
+    
+        waiting_message = await update.message.reply_text("Распознаю изображение...")
+    
+        async def process_photo():
+            try:
+                # Сохраняем изображение локально
+                original_photo = await update.message.photo[-1].get_file()
+                file = await context.bot.get_file(original_photo.file_id)
+                os.makedirs("downloads", exist_ok=True)
+                image_path = f"downloads/image_{original_photo.file_id}.jpg"
+                await file.download_to_drive(image_path)
+    
+                # Проверяем, начинается ли caption с "Дорисуй:" и т.п.
+                match = re.match(r"(?i)^(дорисуй|доделай|замени|добавь|отредактируй):?\s*(.+)", user_message)
+                if match:
+                    inpaint_prompt = match.group(2).strip()
+                    logging.info(f"inpaint_prompt: {inpaint_prompt}")
+    
+                    # Загружаем изображение в память
+                    photo_file = await update.message.photo[-1].get_file()
+                    img_data = io.BytesIO()
+                    await photo_file.download_to_memory(out=img_data)
+    
+                    # Определяем путь к папке temp внутри директории бота
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    temp_dir = os.path.join(base_dir, "temp")
+                    os.makedirs(temp_dir, exist_ok=True)
+    
+                    temp_image_path = os.path.join(temp_dir, f"inpaint_{user_id}.jpg")
+                    with open(temp_image_path, "wb") as f:
+                        f.write(img_data.getvalue())
+    
+                    # Передаём в обработку
+                    return await inpaint_image(update, context, temp_image_path, inpaint_prompt)
+    
+                # --- Обычная генерация описания ---
+                response_text = await generate_image_description(user_id, image_path=image_path, query=user_message)
+                add_to_context(user_id, f"[Изображение], с подписью: {user_message}", message_type="user_send_image")
+                logging.info(f"Ответ с изображением: {response_text}")
+    
+                if response_text:
+                    text_parts = await send_reply_with_limit(response_text)
+    
+                    if len(text_parts) == 1:
+                        await waiting_message.edit_text(
+                            text_parts[0],
+                            parse_mode='MarkdownV2',
+                            reply_markup=collapsed_menu
+                        )
                     else:
-                        await update.message.reply_text(part, parse_mode='MarkdownV2')
-            else:
-                await update.message.reply_text("Произошла ошибка при генерации ответа. Попробуйте снова.")
-            add_to_context(user_id, response_text, message_type="bot_image_response")  # Добавляем ответ в контекст  
-            save_context_to_firebase(user_id)              
-            return
-        except Exception as e:
-            logging.error(f"Ошибка при загрузке изображения: {e}")
-            await update.message.reply_text("Ошибка при обработке изображения. Попробуйте снова. /restart")
-            return    
+                        # первую часть заменяем "ожидание"
+                        await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+                        # остальные части — новыми сообщениями
+                        for i, part in enumerate(text_parts[1:], start=1):
+                            is_last = (i == len(text_parts) - 1)
+                            await update.message.reply_text(
+                                part,
+                                parse_mode='MarkdownV2',
+                                reply_markup=collapsed_menu if is_last else None
+                            )
+    
+                    add_to_context(user_id, response_text, message_type="bot_image_response")
+                    save_context_to_firebase(user_id)
+                else:
+                    await waiting_message.edit_text("Произошла ошибка при генерации ответа. Попробуйте снова. /restart")
+    
+            except Exception as e:
+                logging.error(f"Ошибка при обработке изображения: {e}")
+                await waiting_message.edit_text("Ошибка при обработке изображения. Попробуйте снова. /restart")
+    
+        asyncio.create_task(process_photo())
 
 
     else:
@@ -2727,7 +2830,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
             return await limited_image_generation(update, context, user_id, prompt_text)
 
         else:
-            waiting_message = await update.message.reply_text("Генерирую ответ, пожалуйста, подождите...")
+            waiting_message = await update.message.reply_text("Думаю над ответом, пожалуйста, подождите...")
 
             async def process():
                 try:
@@ -5950,41 +6053,39 @@ def escape_markdown_v2(text: str) -> str:
 async def text_plant_help_with_gpt(update, context):
     user_id = update.effective_user.id
     img_url = context.user_data.get('img_url')
+    temp_file_path = "temp_image.jpg"
 
     # Проверяем наличие изображения в контексте
     if not img_url:
         await update.callback_query.answer("Изображение не найдено.")
         return
 
-    try:
-        # Отправляем первоначальное сообщение
-        processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
-        
-        # Открываем файл temp_image.jpg для обработки
-        with open('temp_image.jpg', 'rb') as file:
-            # Загружаем изображение как объект PIL.Image
-            image = Image.open(file)
-            image.load()  # Загружаем изображение полностью
-            
+    processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
+
+    async def process():
+        try:
+            # Открываем файл temp_image.jpg для обработки
+            with open(temp_file_path, 'rb') as file:
+                image = Image.open(file)
+                image.load()
+
             # Генерация ответа через Gemini
             response_text = await generate_plant_issue_response(user_id, image=image)
-            
+
             # Разбиваем текст с учетом HTML-тегов, игнорируя caption
             caption_part, message_parts = split_html_text(response_text, 0, 4096)
             text_parts = [caption_part] + message_parts if caption_part else message_parts
-            
-            # Создаем клавиатуру
+
+            # Клавиатура
             keyboard = [
                 [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Отправляем все части, а кнопки прикрепляем только к последней
-            # Отправляем все части, а кнопки прикрепляем только к последней
+
+            # Отправляем все части ответа
             for i, part in enumerate(text_parts):
                 if i == 0:  # Первая часть заменяет "Запрос принят..."
                     if len(text_parts) == 1:
-                        # Если это единственная часть — прикрепляем кнопку прямо сюда
                         await processing_message.edit_text(
                             part,
                             reply_markup=reply_markup,
@@ -5992,67 +6093,91 @@ async def text_plant_help_with_gpt(update, context):
                         )
                         return
                     else:
-                        await processing_message.edit_text(
-                            part,
-                            parse_mode='HTML'
-                        )
+                        await processing_message.edit_text(part, parse_mode='HTML')
                 elif i == len(text_parts) - 1:
-                    # Последняя часть, добавляем кнопку
                     await update.callback_query.message.reply_text(
                         part,
                         reply_markup=reply_markup,
                         parse_mode='HTML'
                     )
                 else:
-                    await update.callback_query.message.reply_text(
-                        part,
-                        parse_mode='HTML'
-                    )
+                    await update.callback_query.message.reply_text(part, parse_mode='HTML')
 
             await update.callback_query.answer()
 
-    except Exception as e:
-        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
-        await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+        except Exception as e:
+            logging.error(f"Ошибка при генерации описания проблемы растения: {e}")
+            try:
+                await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+            except:
+                pass
+
+        finally:
+            # Гарантированное удаление временного файла
+            if os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                    logging.info(f"Временный файл {temp_file_path} удалён.")
+                except Exception as del_e:
+                    logging.warning(f"Не удалось удалить временный файл {temp_file_path}: {del_e}")
+
+    # Запускаем фоновую задачу
+    asyncio.create_task(process())
 
 
 async def mushrooms_gpt(update, context):
     user_id = update.effective_user.id
-    img_url = context.user_data.get('img_url')
+    img_url = context.user_data.get('img_url')              # для одного фото
+    group_images = context.user_data.get('group_images')    # для нескольких фото (список bytes)
     caption = context.user_data.get('img_caption')
-    # Проверяем наличие изображения в контексте
-    if not img_url:
+
+    # Если нет ни одного изображения
+    if not img_url and not group_images:
         await update.callback_query.answer("Изображение не найдено.")
         return
 
-    try:
-        # Отправляем первоначальное сообщение
-        processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
+    processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
 
-        # Открываем файл temp_image.jpg для обработки
-        with open('temp_image.jpg', 'rb') as file:
-            # Загружаем изображение как объект PIL.Image
-            image = Image.open(file)
-            image.load()  # Загружаем изображение полностью
+    async def process():
+        temp_files = []
+        try:
+            images = []
+
+            # Если у нас группа изображений
+            if group_images:
+                for idx, img_bytes in enumerate(group_images):
+                    with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                        temp_file.write(img_bytes)
+                        temp_file.flush()
+                        temp_files.append(temp_file.name)
+                        images.append(Image.open(temp_file.name))
+            else:
+                # Одинарное изображение
+                with open("temp_image.jpg", "rb") as f:
+                    image = Image.open(f)
+                    image.load()
+                    images.append(image)
+                    temp_files.append("temp_image.jpg")
 
             # Генерация ответа через Gemini
-            response_text = await generate_mushrooms_response(user_id, image=image, query=caption)
+            response_text = await generate_mushrooms_multi_response(
+                user_id=user_id,
+                images=images,
+                query=caption
+            )
 
-            # Разбиваем текст с учетом HTML-тегов, игнорируя caption
+            # Разбиваем текст на части
             caption_part, message_parts = split_html_text(response_text, 0, 4096)
             text_parts = [caption_part] + message_parts if caption_part else message_parts
 
-            # Создаем клавиатуру
-            keyboard = [
-                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
-            ]
+            # Клавиатура
+            keyboard = [[InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # Отправляем все части, а кнопки прикрепляем только к последней
+            # Отправляем все части ответа
             for i, part in enumerate(text_parts):
-                if i == 0:  # Первая часть заменяет "Запрос принят..."
+                if i == 0:  # первая часть заменяет "Запрос принят..."
                     if len(text_parts) == 1:
-                        # Если это единственная часть — прикрепляем кнопку прямо сюда
                         await processing_message.edit_text(
                             part,
                             reply_markup=reply_markup,
@@ -6060,28 +6185,33 @@ async def mushrooms_gpt(update, context):
                         )
                         return
                     else:
-                        await processing_message.edit_text(
-                            part,
-                            parse_mode='HTML'
-                        )
+                        await processing_message.edit_text(part, parse_mode='HTML')
                 elif i == len(text_parts) - 1:
-                    # Последняя часть, добавляем кнопку
                     await update.callback_query.message.reply_text(
-                        part,
-                        reply_markup=reply_markup,
-                        parse_mode='HTML'
+                        part, reply_markup=reply_markup, parse_mode='HTML'
                     )
                 else:
-                    await update.callback_query.message.reply_text(
-                        part,
-                        parse_mode='HTML'
-                    )
+                    await update.callback_query.message.reply_text(part, parse_mode='HTML')
 
             await update.callback_query.answer()
 
-    except Exception as e:
-        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
-        await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+        except Exception as e:
+            logging.error(f"Ошибка при генерации описания гриба: {e}")
+            try:
+                await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+            except:
+                pass
+        finally:
+            # Удаляем временные файлы
+            for path in temp_files:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                        logging.info(f"Удалён временный файл {path}")
+                    except Exception as del_e:
+                        logging.warning(f"Не удалось удалить {path}: {del_e}")
+
+    asyncio.create_task(process())
 
 
 
@@ -6089,62 +6219,71 @@ async def text_rec_with_gpt(update, context):
     user_id = update.effective_user.id
     img_url = context.user_data.get('img_url')
 
-    # Проверяем наличие изображения в контексте
     if not img_url:
         await update.callback_query.answer("Изображение не найдено.")
         return
 
-    try:
-        # Открываем файл temp_image.jpg для обработки
-        with open('temp_image.jpg', 'rb') as file:
-            # Загружаем изображение как объект PIL.Image
-            image = Image.open(file)
-            image.load()  # Загружаем изображение полностью
-            
-            # Генерация ответа через Gemini
-            response = await generate_text_rec_response(user_id, image=image, query=None)
-            
-            # Сохраняем распознанный текст в context.user_data
+    waiting_message = await update.callback_query.message.reply_text("Распознаю текст на изображении, подождите...")
+
+    async def process():
+        try:
+            response = None
+            try:
+                # Работаем с временным файлом
+                with open('temp_image.jpg', 'rb') as file:
+                    image = Image.open(file)
+                    image.load()
+
+                    # Отправляем в Gemini
+                    response = await generate_text_rec_response(user_id, image=image, query=None)
+
+                # Удаляем временный файл гарантированно
+            finally:
+                if os.path.exists('temp_image.jpg'):
+                    os.remove('temp_image.jpg')
+
+            if not response:
+                response = "Ошибка при распознавании текста."
+
             context.user_data['recognized_text'] = response
 
-        # Проверяем, что ответ получен
-        if not response:
-            response = "Ошибка при распознавании текста."
+            text_parts = await send_reply_with_limit(response)
 
-        # Разделяем текст на части
-        text_parts = await send_reply_with_limit(response)
+            followup_button = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Задать уточняющий вопрос", callback_data='ask_followup')],
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+            ])
 
-        # Кнопки для уточняющего вопроса
-        followup_button = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Задать уточняющий вопрос", callback_data='ask_followup')],         
-            [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
-
-        ])
-
-        # Отправляем все части текста
-        message = update.callback_query.message
-        for i, part in enumerate(text_parts):
-            if i == len(text_parts) - 1:  # Последняя часть
-                # Прикрепляем кнопки только к последнему сообщению
-                await message.reply_text(
-                    part,
+            # Если всего одна часть — редактируем сообщение ожидания
+            if len(text_parts) == 1:
+                await waiting_message.edit_text(
+                    text_parts[0],
                     reply_markup=followup_button,
                     parse_mode='MarkdownV2'
                 )
             else:
-                # Остальные части отправляем без кнопок
-                await message.reply_text(part, parse_mode='MarkdownV2')
+                # Первую часть вставляем в waiting_message
+                await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
 
-        # Дополнительное сообщение с предложением задать уточняющий вопрос
-        await message.reply_text(
-            "Хотите задать уточняющий вопрос или дать команду касательно распознанного текста? "
-            "Так же вы можете прислать другое изображение.",
-            reply_markup=followup_button
-        )
+                # Остальные части отправляем отдельными сообщениями
+                for i, part in enumerate(text_parts[1:], start=1):
+                    is_last = (i == len(text_parts) - 1)
+                    await update.callback_query.message.reply_text(
+                        part,
+                        parse_mode='MarkdownV2',
+                        reply_markup=followup_button if is_last else None
+                    )
 
-    except Exception as e:
-        await update.callback_query.message.reply_text("Произошла ошибка при обработке изображения.")
-        print(f"Error: {e}")
+                # Дополнительное сообщение-приглашение
+                await update.callback_query.message.reply_text(
+                    "Хотите задать уточняющий вопрос или прислать другое изображение?",
+                    reply_markup=followup_button
+                )
+
+        except Exception as e:
+            await waiting_message.edit_text(f"Ошибка при обработке изображения: {e}")
+
+    asyncio.create_task(process())
 
 async def handle_followup_question(update, context):
     """Функция, обрабатывающая нажатие кнопки для уточняющего вопроса."""
@@ -6178,37 +6317,54 @@ async def receive_followup_question(update, context):
     user_id = update.message.from_user.id
     followup_question = update.message.text
 
-    # Извлекаем распознанный текст из context.user_data
     recognized_text = context.user_data.get('recognized_text', '')
 
-    # Объединяем распознанный текст с уточняющим вопросом
+    # Собираем полный запрос
     full_query = f"{recognized_text}\n\n{followup_question}"
 
-    # Отправляем вопрос с распознанным текстом в Gemini
-    response = await generate_text_rec_response(user_id, query=full_query)
+    # Сообщение ожидания
+    waiting_message = await update.message.reply_text("Обрабатываю уточняющий вопрос, подождите...")
 
-    if response:
-        # Разделяем ответ на части, если он превышает длину сообщения Telegram
-        response_chunks = split_text_into_chunks(response)
+    async def process():
+        try:
+            # Запрашиваем у Gemini
+            response = await generate_text_rec_response(user_id, query=full_query)
 
-        # Отправляем каждую часть пользователю
-        for chunk in response_chunks:
-            await update.message.reply_text(chunk)  # Добавлено await
-    else:
-        await update.message.reply_text("Ошибка при обработке уточняющего вопроса.")  # Добавлено await
+            if response:
+                response_chunks = split_text_into_chunks(response)
 
-    # Создаем клавиатуру с кнопкой "Отменить режим распознавания"
-    keyboard = [
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+                # Если ответ помещается в одно сообщение — редактируем ожидание
+                if len(response_chunks) == 1:
+                    await waiting_message.edit_text(response_chunks[0])
+                else:
+                    # Первую часть заменяем в waiting_message
+                    await waiting_message.edit_text(response_chunks[0])
 
-    # Отправляем клавиатуру после всех сообщений
-    await update.message.reply_text("Режим распознавания активен. Вы можете продолжить присылать изображения", reply_markup=reply_markup)  # Добавлено await
+                    # Остальное — отдельными сообщениями
+                    for chunk in response_chunks[1:]:
+                        await update.message.reply_text(chunk)
 
-    is_role_mode[user_id] = False
-    is_ocr_mode[user_id] = True  # Включаем режим GPT обратно
-    return ConversationHandler.END  # Завершение уточняющего вопроса
+                # Клавиатура
+                keyboard = [[InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await update.message.reply_text(
+                    "Режим распознавания активен. Вы можете продолжить присылать изображения",
+                    reply_markup=reply_markup
+                )
+            else:
+                await waiting_message.edit_text("Ошибка при обработке уточняющего вопроса.")
+
+        except Exception as e:
+            await waiting_message.edit_text(f"Ошибка: {e}")
+
+        finally:
+            # Включаем режимы обратно
+            is_role_mode[user_id] = False
+            is_ocr_mode[user_id] = True
+
+    asyncio.create_task(process())
+    return ConversationHandler.END
 
 
 
@@ -6229,14 +6385,16 @@ async def barcode_with_gpt(update, context):
         await query.answer("Изображение не найдено.", show_alert=True)
         return
 
-    try:
-        # Отправляем сообщение о начале обработки
-        processing_message = await query.message.reply_text("Запрос принят, ожидайте...")
+    # Отправляем сообщение о начале обработки
+    processing_message = await query.message.reply_text("Запрос принят, ожидайте...")
 
-        # Открываем изображение
-        with open('temp_image.jpg', 'rb') as file:
-            image = Image.open(file)
-            image.load()
+    async def process():
+        temp_file = "temp_image.jpg"
+        try:
+            # Открываем изображение
+            with open(temp_file, 'rb') as file:
+                image = Image.open(file)
+                image.load()
 
             # Запрос к модели
             response = await generate_barcode_response(user_id, image=image, query=None)
@@ -6289,9 +6447,20 @@ async def barcode_with_gpt(update, context):
 
             await query.answer()
 
-    except Exception as e:
-        logging.error(f"Ошибка при обработке изображения: {e}")
-        await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+        except Exception as e:
+            logging.error(f"Ошибка при обработке изображения: {e}")
+            await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+
+        finally:
+            # Гарантированное удаление временного файла
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception as cleanup_err:
+                logging.error(f"Не удалось удалить временный файл {temp_file}: {cleanup_err}")
+
+    # Запускаем фоновую задачу
+    asyncio.create_task(process())
 
 
 async def barcode_with_gpt_maybe(update, context):
@@ -7185,64 +7354,68 @@ async def gpt_plants_more_handler(update, context):
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
         return
-    query = update.callback_query        
-    await query.answer("Ищу информацию, подождите около 10-15 секунд.", show_alert=True)
+
+    query_alert = update.callback_query
+    await query_alert.answer("Ищу информацию, подождите около 10-15 секунд.", show_alert=True)
+
     query = (
         f"Расскажи больше про {scientific_name}, например, интересные факты, "
         "способы применения, укажи если ядовито, какие-то особенности и прочее. "
         "При этом будь лаконичной, ответ должен быть не длинее 300 слов."
     )
 
-    # Генерация ответа без контекста
-    response_text = await generate_plant_help_response(user_id, query=query)
-
-    # Разбиваем текст на части
-    caption_part, message_parts = split_html_text(response_text, 0, 4096)
-    text_parts = [caption_part] + message_parts if caption_part else message_parts
-
-    logger.info(f"text_parts {text_parts}")
-
-    keyboard = [         
-        [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],     
-        [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],        
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Отправляем все части, а кнопки прикрепляем только к последней
     message = update.callback_query.message
-    # Отправляем все части, а кнопки прикрепляем только к последней
-    for i, part in enumerate(text_parts):
-        if i == 0:  # Первая часть заменяет "Запрос принят..."
+
+    # Сообщение-заглушка
+    waiting_message = await message.edit_text("🔎 Собираю информацию, пожалуйста, подождите...")
+
+    async def process():
+        try:
+            # Генерация ответа без контекста
+            response_text = await generate_plant_help_response(user_id, query=query)
+
+            # Разбиваем текст на части
+            caption_part, message_parts = split_html_text(response_text, 0, 4096)
+            text_parts = [caption_part] + message_parts if caption_part else message_parts
+
+            logger.info(f"text_parts {text_parts}")
+
+            keyboard = [
+                [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],
+                [InlineKeyboardButton("Помощь по уходу за этим растением", callback_data='gpt_plants_help')],
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            if not text_parts:
+                await waiting_message.edit_text("К сожалению, не удалось получить информацию. Попробуйте снова позже.")
+                return
+
             if len(text_parts) == 1:
-                # Если это единственная часть — прикрепляем кнопку прямо сюда
-                await message.edit_text(
-                    part,
+                # Если единственная часть — сразу редактируем заглушку и добавляем кнопки
+                await waiting_message.edit_text(
+                    text_parts[0],
                     reply_markup=reply_markup,
                     parse_mode='HTML'
                 )
-                return  # <-- Не продолжаем, чтобы не дублировать
             else:
-                await message.edit_text(
-                    part,
-                    parse_mode='HTML'
-                )
-        elif i == len(text_parts) - 1:
-            # Последняя часть, добавляем кнопку
-            await update.callback_query.message.reply_text(
-                part,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-        else:
-            await update.callback_query.message.reply_text(
-                part,
-                parse_mode='HTML'
-            )
+                # Первая часть заменяет "ожидание"
+                await waiting_message.edit_text(text_parts[0], parse_mode='HTML')
 
-    # Добавляем кнопки только в последнем сообщении
-    await message.reply_text(text_parts[-1], reply_markup=reply_markup, parse_mode='MarkdownV2')
-    await update.callback_query.answer()
+                # Остальные отправляем новыми сообщениями
+                for i, part in enumerate(text_parts[1:], start=1):
+                    is_last = (i == len(text_parts) - 1)
+                    await update.callback_query.message.reply_text(
+                        part,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup if is_last else None
+                    )
+
+        except Exception as e:
+            await waiting_message.edit_text(f"Ошибка при получении информации: {e}")
+
+    # Запуск в фоне
+    asyncio.create_task(process())
 
 
 async def gpt_plants_help_handler(update, context):
@@ -7250,61 +7423,66 @@ async def gpt_plants_help_handler(update, context):
     user_id = update.callback_query.from_user.id
     scientific_name = context.user_data.get("scientific_name")
 
-
     if not scientific_name:
         await update.callback_query.answer("Научное название не указано. Попробуйте снова.")
         return
+
     query = update.callback_query        
     await query.answer("Ищу информацию, подождите около 10-15 секунд.", show_alert=True)
-    # Формируем запрос с научным названием
-    query = f"Как ухаживать за {scientific_name}? Ответ не длиннее 200 слов"
 
-    # Генерация ответа без контекста
-    response_text = await generate_plant_help_response(user_id, query=query)
-    caption_part, message_parts = split_html_text(response_text, 0, 4096)
-    text_parts = [caption_part] + message_parts if caption_part else message_parts
-    logger.info(f"response_text {response_text}")
-    keyboard = [
-        [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],     
-        [InlineKeyboardButton("Подробнее об этом растении", callback_data='gpt_plants_more')],         
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Первое сообщение "ожидания"
+    waiting_message = await update.callback_query.message.edit_text(
+        "Думаю над ответом, пожалуйста, подождите..."
+    )
 
-    # Отправляем все части, а кнопки прикрепляем только к последней
-    message = update.callback_query.message
-    # Отправляем все части, а кнопки прикрепляем только к последней
-    for i, part in enumerate(text_parts):
-        if i == 0:  # Первая часть заменяет "Запрос принят..."
+    async def process():
+        try:
+            # Формируем запрос
+            query_text = f"Как ухаживать за {scientific_name}? Ответ не длиннее 200 слов"
+
+            # Генерация ответа без контекста
+            response_text = await generate_plant_help_response(user_id, query=query_text)
+            logger.info(f"response_text {response_text}")
+
+            caption_part, message_parts = split_html_text(response_text, 0, 4096)
+            text_parts = [caption_part] + message_parts if caption_part else message_parts
+
+            keyboard = [
+                [InlineKeyboardButton("🪴Добавить в мои растения🪴", callback_data='gptplant_response')],
+                [InlineKeyboardButton("Подробнее об этом растении", callback_data='gpt_plants_more')],
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            if not text_parts:
+                await waiting_message.edit_text("К сожалению, не удалось получить информацию. Попробуйте снова.")
+                return
+
             if len(text_parts) == 1:
-                # Если это единственная часть — прикрепляем кнопку прямо сюда
-                await message.edit_text(
-                    part,
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
+                # Один ответ — сразу редактируем сообщение ожидания и добавляем кнопки
+                await waiting_message.edit_text(
+                    text_parts[0],
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
-                return  # <-- Не продолжаем, чтобы не дублировать
             else:
-                await message.edit_text(
-                    part,
-                    parse_mode='HTML'
-                )
-        elif i == len(text_parts) - 1:
-            # Последняя часть, добавляем кнопку
-            await update.callback_query.message.reply_text(
-                part,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-        else:
-            await update.callback_query.message.reply_text(
-                part,
-                parse_mode='HTML'
-            )
+                # Первая часть заменяет "ожидание"
+                await waiting_message.edit_text(text_parts[0], parse_mode='HTML')
 
-    # Добавляем кнопки только в последнем сообщении
-    await message.reply_text(text_parts[-1], reply_markup=reply_markup, parse_mode='MarkdownV2')
-    await update.callback_query.answer()
+                # Остальные части отправляем отдельными сообщениями
+                for i, part in enumerate(text_parts[1:], start=1):
+                    is_last = (i == len(text_parts) - 1)
+                    await update.callback_query.message.reply_text(
+                        part,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup if is_last else None
+                    )
+
+        except Exception as e:
+            await waiting_message.edit_text(f"Ошибка: {e}")
+
+    # Запуск фоновой задачи
+    asyncio.create_task(process())
 
 def extract_rus_name(response_text):
     match = re.search(r"0\)Русские названия:(.*?)1\)Общая информация", response_text, re.DOTALL)
