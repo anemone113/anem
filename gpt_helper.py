@@ -274,6 +274,16 @@ def load_shared_publications():
         logging.error(f"Ошибка при загрузке общих публикаций: {e}")
         return {}
 
+
+def load_entire_database():
+    """Загружает всю базу данных из Firebase."""
+    try:
+        ref = db.reference('/')
+        return ref.get() or {}
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке базы данных: {e}")
+        return {}
+
 def save_to_shared_publications(user_id: int, key: str, data: dict) -> None:
     ref = db.reference(f"shared_publications/{user_id}/{key}")
     ref.set(data)
