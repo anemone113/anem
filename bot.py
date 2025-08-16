@@ -38,7 +38,7 @@ from gpt_helper import (
     reset_firebase_dialog,
     generate_video_response,
     generate_animation_response,
-    generate_mushrooms_response,
+    generate_mushrooms_multi_response,
     translate_promt_with_gemini,
     get_user_model,
     set_user_model,
