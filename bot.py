@@ -6060,7 +6060,9 @@ async def text_plant_help_with_gpt(update, context):
         return
 
     processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
-    await query.answer()
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
     async def process():
         try:
             # Открываем файл temp_image.jpg для обработки
@@ -6135,7 +6137,9 @@ async def mushrooms_gpt(update, context):
         return
 
     processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
-    await query.answer()
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
     async def process():
         temp_files = []
         try:
@@ -6222,7 +6226,9 @@ async def text_rec_with_gpt(update, context):
         return
 
     waiting_message = await update.callback_query.message.reply_text("Распознаю текст на изображении, подождите...")
-    await query.answer()
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
 
     async def process():
         try:
@@ -6382,7 +6388,9 @@ async def barcode_with_gpt(update, context):
 
     # Отправляем сообщение о начале обработки
     processing_message = await query.message.reply_text("Запрос принят, ожидайте...")
-    await query.answer()
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
     async def process():
         try:
             # Открываем изображение
@@ -6641,7 +6649,8 @@ async def plantmap_gpt(update, context):
 async def scientific_gpt(update, context):
     user_id = update.effective_user.id
     query = update.callback_query
-    await query.answer()
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
     
     # Получаем scientific_name из контекста
     scientific_name = context.user_data.get('scientific_name')
