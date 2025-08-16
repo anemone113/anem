@@ -77,7 +77,8 @@ from gpt_helper import (
     delete_ozon_product_firebase,
     update_ozon_tracking_item,
     response_ingredients,
-    response_animal
+    response_animal,
+    load_entire_database
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -170,6 +171,32 @@ async def data_command(update: Update, context: CallbackContext) -> None:
         await update.message.reply_document(document="user_data.json", filename="user_data.json")
     else:
         await update.message.reply_text("Ваши данные пусты.")
+
+
+async def userid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает команду /userid и выводит все найденные telegram user_id (7-12 цифр)."""
+    try:
+        # Загружаем всю базу
+        data = load_entire_database()
+
+        # Превращаем в строку для поиска цифр
+        data_str = str(data)
+
+        # Ищем все последовательности из 7–12 цифр
+        matches = re.findall(r'(?<!\d)\d{7,12}(?!\d)', data_str)
+        # Убираем дубли
+        unique_ids = sorted(set(matches))
+
+        if unique_ids:
+            result = ", ".join(unique_ids)
+        else:
+            result = "Не найдено user_id."
+
+        await update.message.reply_text(result)
+
+    except Exception as e:
+        logging.error(f"Ошибка при выполнении /userid: {e}")
+        await update.message.reply_text("Произошла ошибка при обработке команды.")
 
 USER_IDS = [19029917, 20618514, 25377082, 35194055, 57673989, 68017381, 69314002, 92703779, 92852789, 93192260, 104865552, 130502292, 146351163, 147351371, 190945533, 205900446, 223677807, 242283851, 257112890, 262262816, 264003592, 290031541, 298066779, 300025675, 302379214, 306469709, 326611724, 381379786, 385928103, 393126119, 394159899, 396838917, 419817885, 439506900, 442646559, 459261734, 474195974, 516232486, 577681862, 586787646, 596973027, 611704867, 624317946, 626558159, 631224997, 666993239, 668328654, 676271492, 704874880, 707549030, 739162690, 745120986, 754607983, 775345852, 780334362, 781580201, 789688948, 801586478, 814924951, 815610820, 818026781, 842797437, 860705945, 866648983, 873360980, 873413482, 874134295, 915612655, 919008054, 937801646, 960294998, 972481587, 988873023, 989325372, 1046743582, 1096125853, 1107964479, 1126225257, 1149574816, 1203287768, 1214476327, 1219361456, 1220271061, 1221533002, 1222227099, 1225705380, 1240550482, 1247773844, 1293084893, 1314221656, 1351826504, 1366051623, 1440150049, 1454145687, 1465628473, 1469390426, 1471915085, 1519572343, 1521709699, 1543028708, 1609905164, 1613196589, 1659632043, 1668374416, 1676664165, 1742524654, 1774870861, 1789124483, 1809652677, 1813042277, 1824130766, 1824742804, 1841170415, 1848215295, 1915179934, 1976720451, 2016643148, 2030763957, 2047583108, 2057806777, 2100503597, 2104266399, 2469483415, 5027345967, 5106034281, 5204148826, 5234665650, 5256952624, 5325900170, 5346582203, 5629330385, 5806164256, 5972422679, 6033575010, 6217936347, 6307808189, 6333902342, 6442774124, 6519046474, 6546556436, 6702495691, 7208124838, 7372529001, 7474302646, 7815486514, 11723743486]
 
@@ -16764,6 +16791,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_otloj_scheduled, pattern=r'^otlview_[\w_]+$')) 
     application.add_handler(CallbackQueryHandler(delete_scheduled_time_handler, pattern=r"^otloj_delete_\d+_\d+$")) 
 
+    
+    application.add_handler(CommandHandler("userid", userid_command))
     application.add_handler(CommandHandler("rec", recognize_test_plant))
     application.add_handler(CommandHandler("testid", handle_testid_command))  
     application.add_handler(CommandHandler("token", token_set))       
