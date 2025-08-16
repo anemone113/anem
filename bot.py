@@ -6223,27 +6223,20 @@ async def text_rec_with_gpt(update, context):
 
     waiting_message = await update.callback_query.message.reply_text("Распознаю текст на изображении, подождите...")
 
+
     async def process():
         try:
-            response = None
-            try:
-                # Работаем с временным файлом
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(img_url) as resp:
-                        if resp.status != 200:
-                            raise Exception("Не удалось скачать изображение")
-                        img_bytes = await resp.read()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(img_url) as resp:
+                    if resp.status != 200:
+                        raise Exception("Не удалось скачать изображение")
+                    img_bytes = await resp.read()
     
-                # Открываем картинку напрямую из памяти
-                image = Image.open(BytesIO(img_bytes))
-                image.load()
-
-                # Отправляем в Gemini
-                response = await generate_text_rec_response(user_id, image=image, query=None)
-
-                # Удаляем временный файл гарантированно
-
-
+            image = Image.open(BytesIO(img_bytes))
+            image.load()
+    
+            response = await generate_text_rec_response(user_id, image=image, query=None)
+    
             if not response:
                 response = "Ошибка при распознавании текста."
 
