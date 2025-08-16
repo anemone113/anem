@@ -6122,7 +6122,7 @@ async def text_plant_help_with_gpt(update, context):
     # Запускаем фоновую задачу
     asyncio.create_task(process())
 
-
+from tempfile import NamedTemporaryFile
 async def mushrooms_gpt(update, context):
     user_id = update.effective_user.id
     img_url = context.user_data.get('img_url')              # для одного фото
@@ -6444,8 +6444,6 @@ async def barcode_with_gpt(update, context):
                     await query.message.reply_text(part, reply_markup=reply_markup, parse_mode="HTML")
                 else:
                     await query.message.reply_text(part, parse_mode="HTML")
-
-            await query.answer()
 
         except Exception as e:
             logging.error(f"Ошибка при обработке изображения: {e}")
