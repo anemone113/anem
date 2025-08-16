@@ -6130,6 +6130,27 @@ async def text_plant_help_with_gpt(update, context):
     # Запускаем фоновую задачу
     asyncio.create_task(process())
 
+ALLOWED_TAGS = {
+    "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+    "tg-spoiler", "code", "pre", "a", "blockquote"
+}
+
+def sanitize_html(text: str) -> str:
+    # Заменяем <br> на перенос строки
+    text = text.replace("<br>", "\n")
+
+    # Фильтруем теги
+    def repl_tag(match):
+        tag = match.group(1).lower()
+        if tag.startswith("/"):
+            tag = tag[1:]
+        if tag in ALLOWED_TAGS:
+            return match.group(0)  # оставляем как есть
+        return html.escape(match.group(0))  # экранируем, чтобы не ломало парсинг
+    
+    return re.sub(r"</?([a-zA-Z0-9\-]+)(\s+[^>]*)?>", repl_tag, text)
+
+
 from tempfile import NamedTemporaryFile
 async def mushrooms_gpt(update, context):
     user_id = update.effective_user.id
@@ -6184,7 +6205,8 @@ async def mushrooms_gpt(update, context):
 
             # Отправляем все части ответа
             for i, part in enumerate(text_parts):
-                if i == 0:  # первая часть заменяет "Запрос принят..."
+                part = sanitize_html(part)  # очистка текста перед отправкой
+                if i == 0:
                     if len(text_parts) == 1:
                         await processing_message.edit_text(
                             part,
