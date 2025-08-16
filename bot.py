@@ -215,7 +215,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def send(update: Update, context: CallbackContext) -> None:
+async def sendall(update: Update, context: CallbackContext) -> None:
     """
     Отправляет сообщение (копируя его) указанным пользователям.
     Список пользователей указывается прямо в команде: /send id1,id2,id3
