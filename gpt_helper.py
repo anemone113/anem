@@ -1835,7 +1835,7 @@ async def generate_mushrooms_multi_response(user_id, images, query):
         contents = [
             types.Content(
                 role="user",
-                parts=image_parts + [types.Part(text=f"Уточнение: {query}" if query else "")]
+                parts=image_parts + [types.Part(text=f"Уточнение от пользователя касательно гриба: {query}" if query else "")]
             )
         ]
 
