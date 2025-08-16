@@ -75,7 +75,9 @@ from gpt_helper import (
     load_ozon_tracking_from_firebase,
     load_ozon_product_firebase,
     delete_ozon_product_firebase,
-    update_ozon_tracking_item
+    update_ozon_tracking_item,
+    response_ingredients,
+    response_animal
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -1325,8 +1327,6 @@ async def finish_group_after_delay(media_group_id, context, message):
     await message.reply_text(
         "✅ Все изображения получены.\n\n"
         "Если вы хотели сделать пост или предложку, а не распознать содержимое на изображении, то вернитесь в меню и действуйте в соответствии с инструкциями.\n\n"
-        "В данный момент для групового анализа изображений доступно только распознавание гриба. В среднем запрос занимает 15-50 сек в зависимости от числа фото \n\n"
-        "В будущем возможно будет добавлено групповое распознавание текста с изображений\n\n"
         "Так же вы при загрузке фото вы можете указывать подпись к ним, например о запахе гриба или каких-то иных особенностях, это поможет нейросети."
         f"{caption_text}",
         reply_markup=reply_markup
@@ -6056,9 +6056,182 @@ def escape_markdown_v2(text: str) -> str:
 
 
 
+
+
+
+
+async def analyze_ingredients(update, context):
+    """
+    Обрабатывает запрос на анализ состава по изображению.
+    Функция скачивает изображение, отправляет его в Gemini для анализа
+    и возвращает результат пользователю.
+    """
+    user_id = update.effective_user.id
+    img_url = context.user_data.get('img_url')
+
+    # Проверяем наличие изображения в контексте
+    if not img_url:
+        await update.callback_query.answer("Изображение не найдено.")
+        return
+
+    # Отправляем предварительное сообщение
+    processing_message = await update.callback_query.message.reply_text("Анализирую состав, ожидайте...")
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
+
+    async def process():
+        try:
+            # Скачиваем изображение
+            async with aiohttp.ClientSession() as session:
+                async with session.get(img_url) as resp:
+                    if resp.status != 200:
+                        raise Exception("Не удалось скачать изображение")
+                    img_bytes = await resp.read()
+
+            # Открываем картинку напрямую из памяти
+            image = Image.open(BytesIO(img_bytes))
+            image.load()
+
+            # Генерация ответа через Gemini для анализа состава
+            response_text = await response_ingredients(
+                user_id,
+                image=image
+            )
+            
+            # Разбиваем текст с учетом HTML-тегов.
+            # Так как caption не используется, первый аргумент-смещение равен 0.
+            _, message_parts = split_html_text(response_text, 0, 4096)
+            text_parts = message_parts
+
+            # Клавиатура для возврата в главное меню
+            keyboard = [
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            # Отправляем все части ответа
+            for i, part in enumerate(text_parts):
+                safe_part = sanitize_html(part)  # Фильтрация HTML
+
+                if i == 0:  # Первая часть ответа заменяет сообщение "Анализирую состав..."
+                    if len(text_parts) == 1:
+                        # Если ответ состоит из одной части, сразу добавляем клавиатуру
+                        await processing_message.edit_text(
+                            safe_part,
+                            reply_markup=reply_markup,
+                            parse_mode='HTML'
+                        )
+                        return  # Завершаем, так как все отправлено
+                    else:
+                        await processing_message.edit_text(safe_part, parse_mode='HTML')
+                
+                elif i == len(text_parts) - 1: # Последняя часть получает клавиатуру
+                    await update.callback_query.message.reply_text(
+                        safe_part,
+                        reply_markup=reply_markup,
+                        parse_mode='HTML'
+                    )
+                else: # Промежуточные части отправляются без клавиатуры
+                    await update.callback_query.message.reply_text(safe_part, parse_mode='HTML')
+
+        except Exception as e:
+            logging.error(f"Ошибка при анализе состава: {e}")
+            try:
+                await processing_message.edit_text("Произошла ошибка при обработке вашего запроса.")
+            except Exception as edit_error:
+                logging.error(f"Не удалось изменить сообщение об ошибке: {edit_error}")
+
+    # Запускаем обработку в фоновой задаче, чтобы не блокировать основной поток
+    asyncio.create_task(process())
+
+
+
+async def recognize_animal_insect(update, context):
+    user_id = update.effective_user.id
+    img_url = context.user_data.get('img_url')
+    caption = context.user_data.get('img_caption')  # <-- подпись, если есть
+
+    # Проверяем наличие изображения
+    if not img_url:
+        await update.callback_query.answer("Изображение не найдено.")
+        return
+
+    processing_message = await update.callback_query.message.reply_text("Распознаю животное/насекомое, ожидайте...")
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
+
+    async def process():
+        try:
+            # Скачиваем изображение
+            async with aiohttp.ClientSession() as session:
+                async with session.get(img_url) as resp:
+                    if resp.status != 200:
+                        raise Exception("Не удалось скачать изображение")
+                    img_bytes = await resp.read()
+
+            # Открываем картинку из памяти
+            image = Image.open(BytesIO(img_bytes))
+            image.load()
+
+            # Вызов генерации ответа через нейросеть
+            response_text = await response_animal(
+                user_id,
+                image=image,
+                caption=caption if caption else None
+            )
+
+            # Разбиваем текст по кускам
+            caption_part, message_parts = split_html_text(response_text, 0, 4096)
+            text_parts = [caption_part] + message_parts if caption_part else message_parts
+
+            # Клавиатура
+            keyboard = [
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            # Отправляем все части
+            for i, part in enumerate(text_parts):
+                safe_part = sanitize_html(part)
+
+                if i == 0:  # первая часть заменяет "Распознаю..."
+                    if len(text_parts) == 1:
+                        await processing_message.edit_text(
+                            safe_part,
+                            reply_markup=reply_markup,
+                            parse_mode='HTML'
+                        )
+                        return
+                    else:
+                        await processing_message.edit_text(safe_part, parse_mode='HTML')
+                elif i == len(text_parts) - 1:
+                    await update.callback_query.message.reply_text(
+                        safe_part,
+                        reply_markup=reply_markup,
+                        parse_mode='HTML'
+                    )
+                else:
+                    await update.callback_query.message.reply_text(safe_part, parse_mode='HTML')
+
+            await update.callback_query.answer()
+
+        except Exception as e:
+            logging.error(f"Ошибка при распознавании животного/насекомого: {e}")
+            try:
+                await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+            except:
+                pass
+
+    # Запускаем как фоновую задачу
+    asyncio.create_task(process())
+
+
 async def text_plant_help_with_gpt(update, context):
     user_id = update.effective_user.id
     img_url = context.user_data.get('img_url')
+    caption = context.user_data.get('img_caption')  # <-- достаём подпись
 
     # Проверяем наличие изображения в контексте
     if not img_url:
@@ -6083,8 +6256,11 @@ async def text_plant_help_with_gpt(update, context):
             image.load()
 
             # Генерация ответа через Gemini
-            response_text = await generate_plant_issue_response(user_id, image=image)
-
+            response_text = await generate_plant_issue_response(
+                user_id, 
+                image=image, 
+                caption=caption if caption else None
+            )
             # Разбиваем текст с учетом HTML-тегов, игнорируя caption
             caption_part, message_parts = split_html_text(response_text, 0, 4096)
             text_parts = [caption_part] + message_parts if caption_part else message_parts
@@ -6095,27 +6271,29 @@ async def text_plant_help_with_gpt(update, context):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
+
             # Отправляем все части ответа
             for i, part in enumerate(text_parts):
+                safe_part = sanitize_html(part)  # <-- фильтрация
+                
                 if i == 0:  # Первая часть заменяет "Запрос принят..."
                     if len(text_parts) == 1:
                         await processing_message.edit_text(
-                            part,
+                            safe_part,
                             reply_markup=reply_markup,
                             parse_mode='HTML'
                         )
                         return
                     else:
-                        await processing_message.edit_text(part, parse_mode='HTML')
+                        await processing_message.edit_text(safe_part, parse_mode='HTML')
                 elif i == len(text_parts) - 1:
                     await update.callback_query.message.reply_text(
-                        part,
+                        safe_part,
                         reply_markup=reply_markup,
                         parse_mode='HTML'
                     )
                 else:
-                    await update.callback_query.message.reply_text(part, parse_mode='HTML')
-
+                    await update.callback_query.message.reply_text(safe_part, parse_mode='HTML')
             await update.callback_query.answer()
 
         except Exception as e:
@@ -16457,6 +16635,8 @@ def main() -> None:
     
     application.add_handler(CallbackQueryHandler(text_rec_with_gpt, pattern='text_rec_with_gpt$'))
     application.add_handler(CallbackQueryHandler(text_plant_help_with_gpt, pattern='text_plant_help_with_gpt$'))    
+    application.add_handler(CallbackQueryHandler(analyze_ingredients, pattern='analyze_ingredients$'))   
+    application.add_handler(CallbackQueryHandler(recognize_animal_insect, pattern='recognize_animal_insect$'))      
     application.add_handler(CallbackQueryHandler(mushrooms_gpt, pattern='mushrooms_gpt$'))    
     application.add_handler(CallbackQueryHandler(regenerate_image, pattern=r"^regenerate_"))
     application.add_handler(CallbackQueryHandler(examples_table_handler, pattern='^examples_table$'))
