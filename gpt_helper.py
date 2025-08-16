@@ -852,8 +852,8 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
         ]
 
         # Генерация ответа от модели Gemini
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -1060,8 +1060,8 @@ async def generate_animation_response(video_file_path, user_id, query=None):
         google_search_tool = Tool(
             google_search=GoogleSearch()
         )        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -1192,8 +1192,8 @@ async def generate_video_response(video_file_path, user_id, query=None):
         google_search_tool = Tool(
             google_search=GoogleSearch()
         )        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -1301,8 +1301,8 @@ async def generate_document_response(document_path, user_id, query=None):
             return None
 
         google_search_tool = Tool(google_search=GoogleSearch())
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -1414,8 +1414,8 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
         google_search_tool = Tool(
             google_search=GoogleSearch()
         )      
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -1742,8 +1742,8 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
             google_search_tool = Tool(
                 google_search=GoogleSearch()
             )
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
+            response = await client.aio.models.generate_content(
+                model='gemini-2.5-flash',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,                
@@ -1839,8 +1839,8 @@ async def generate_mushrooms_multi_response(user_id, images, query):
             )
         ]
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -1920,8 +1920,8 @@ async def generate_mapplants_response(user_id, image):
         # Создание клиента и генерация ответа от модели
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -1986,8 +1986,8 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             # Создаём клиент с правильным ключом
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
+            response = await client.aio.models.generate_content(
+                model='gemini-2.5-flash',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(               
                     temperature=1.4,
@@ -2065,8 +2065,8 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             # Создание клиента и генерация ответа от модели
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch())        
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
+            response = await client.aio.models.generate_content(
+                model='gemini-2.5-flash',
                 contents=[
                     types.Content(
                         role="user",
@@ -2118,12 +2118,14 @@ async def generate_text_rec_response(user_id, image=None, query=None):
         return "Неверный запрос. Укажите изображение или текст для обработки."
 
 
-async def generate_plant_issue_response(user_id, image):
+async def generate_plant_issue_response(user_id, image, caption=None):
     """Генерирует текстовое описание проблемы с растением на основе изображения."""
 
     # Формируем статичный контекст для запроса
     context = ("Определи, что за проблема с растением (болезнь, вредители и т.д.) и предложи решение, ответ напиши на русском. Если необходимо используй html разметку доступную в telegram.")
-
+    # Если есть подпись, добавляем её в запрос
+    if caption:
+        context += f"\n\nПользователь уточнил: {caption}"
 
     try:
         # Сохраняем изображение во временный файл
@@ -2155,8 +2157,8 @@ async def generate_plant_issue_response(user_id, image):
         # Создание клиента и генерация ответа от модели
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -2206,6 +2208,191 @@ async def generate_plant_issue_response(user_id, image):
                 logging.error(f"Ошибка при удалении временного файла: {e}")
 
 
+async def response_animal(user_id, image, caption=None):
+    """Определяет животное по фото и выдает краткую справку о нём."""
+
+    # Формируем статичный контекст для запроса
+    context = (
+        "Определи, какое это животное (включая птиц, насекомых и иных живых существ) по изображению. "
+        "Дай краткое описание на русском языке: его отличительные черты, среду обитания, чем питается, "
+        "и интересные факты. Ответ сделай информативным, но кратким. "
+        "Если необходимо, используй html-разметку, доступную в Telegram (например <b>, <i>, <u>, <a>)."
+    )
+    # Если есть подпись, добавляем её в запрос
+    if caption:
+        context += f"\n\nПользователь уточнил: {caption}"
+
+    try:
+        # Сохраняем изображение во временный файл
+        with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+            image_path = temp_file.name
+            image.save(temp_file, format="JPEG")
+
+        logging.info(f"Сохранено временное изображение: {image_path}")
+
+        # Инициализация клиента Gemini
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())
+
+        # Загрузка изображения
+        try:
+            image_file = client.files.upload(file=pathlib.Path(image_path))
+        except Exception as e:
+            logging.error(f"Ошибка при загрузке изображения: {e}")
+            return "Не удалось загрузить изображение."
+
+        # Настройки безопасности
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+
+        # Создание клиента и генерация ответа от модели
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=image_file.uri,
+                            mime_type=image_file.mime_type
+                        ),
+                        types.Part(text=f"{context}\n"),
+                    ]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                temperature=1.0,
+                top_p=0.9,
+                top_k=40,
+                tools=[google_search_tool],
+                safety_settings=safety_settings
+            )
+        )
+
+        # Проверяем наличие ответа
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
+
+            return response_text
+        else:
+            logging.warning("Gemini не вернул ответ на запрос для изображения животного.")
+            return "Не удалось определить животное."
+
+    except Exception as e:
+        logging.info(f"Ошибка при генерации описания животного: {e}")
+        return "Ошибка при обработке изображения. Попробуйте снова."
+    finally:
+        # Удаляем временный файл
+        if 'image_path' in locals() and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+                logging.info(f"Временный файл удален: {image_path}")
+            except Exception as e:
+                logging.error(f"Ошибка при удалении временного файла: {e}")
+
+
+
+async def response_ingredients(user_id, image):
+    """Анализирует состав продукта или изделия по фото и выдает структурированный отчет."""
+
+    # Формируем статичный контекст для запроса
+    context = (
+        "Проанализируй состав продукта или изделия по изображению с научной и обоснованной точки зрения. "
+        "Используй актуальные научные данные и заслуживающие доверия источники. "
+        "Твой ответ должен быть четко структурирован по следующим пунктам. "
+        "Если какой-то пункт неприменим (например, продукт несъедобен), укажи это.\n\n"
+        "<b>1. Общая краткая характеристика:</b> Что это за продукт или изделие?\n"
+        "<b>2. Анализ состава:</b> Разбери каждый компонент. Укажи его функцию (например, консервант, краситель, эмульгатор). Если компонент может быть вреден, вызывать аллергию или имеет другие важные особенности, отметь это.\n"
+        "<b>3. Потенциальная польза:</b> Если продукт съедобен, опиши его возможную пользу для здоровья, основываясь на компонентах.\n"
+        "<b>4. Потенциальный вред:</b> Если продукт съедобен, опиши возможные риски и вред при чрезмерном употреблении или для определенных групп людей.\n"
+        "<b>5. Рекомендации по употреблению:</b> Если продукт съедобен, дай конкретные рекомендации (например, суточная норма, кому стоит ограничить потребление).\n"
+        "<b>6. Общее качество продукта:</b> На основе анализа состава, дай общую оценку качества продукта (например, натуральный состав, много искусственных добавок и т.д.).\n"
+        "<b>7. Выводы:</b> Сделай краткий итоговый вывод о продукте, стоит ли его покупать/употреблять.\n\n"
+        "Ответ должен быть объективным и информативным. Используй html-разметку Telegram для форматирования (<b>, <i>, <u>)."
+    )
+
+    try:
+        # Сохраняем изображение во временный файл
+        with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+            image_path = temp_file.name
+            image.save(temp_file, format="JPEG")
+
+        logging.info(f"Сохранено временное изображение: {image_path}")
+
+        # Инициализация клиента Gemini
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())
+
+        # Загрузка изображения
+        try:
+            image_file = client.files.upload(file=pathlib.Path(image_path))
+        except Exception as e:
+            logging.error(f"Ошибка при загрузке изображения: {e}")
+            return "Не удалось загрузить изображение."
+
+        # Настройки безопасности
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+
+        # Генерация ответа
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=image_file.uri,
+                            mime_type=image_file.mime_type
+                        ),
+                        types.Part(text=f"{context}\n"),
+                    ]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.8,
+                top_p=0.9,
+                top_k=40,
+                tools=[google_search_tool],
+                safety_settings=safety_settings
+            )
+        )
+
+        # Проверяем наличие текста в ответе
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
+            return response_text
+        else:
+            logging.warning("Gemini не вернул ответ на запрос для анализа состава.")
+            return "Не удалось проанализировать состав продукта."
+
+    except Exception as e:
+        logging.info(f"Ошибка при генерации анализа состава: {e}")
+        return "Ошибка при обработке изображения. Попробуйте снова."
+    finally:
+        # Удаляем временный файл
+        if 'image_path' in locals() and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+                logging.info(f"Временный файл удален: {image_path}")
+            except Exception as e:
+                logging.error(f"Ошибка при удалении временного файла: {e}")
+
+
 async def generate_barcode_response(user_id, image=None, query=None):
     context = "Найди в интернете отзывы об этом продукте и пришли в ответ краткую сводку о найденных положительных и отрицательных отзывах. Ответ разбей по категориям: \"0)Название товара: \" \n\n \"1)Оценка: */5 (с точностью до сотых) \nОбщее краткое впечатление: \" (не длиннее 35 слов, оценку сформулируй на основании полученных данных где 5 - наилучший товар)\n\n \"2)Положительные отзывы: \" что хвалят и почему(не длиннее 50 слов)\n\n \"3)Отрицательные отзывы: \" Чем недовольны и почему, постарайся выделить наиболее существенные претензии(не длиннее 70 слов)\n\n Строго придерживайся заданного формата ответа, это нужно для того, чтобы корректно работал код программы."
     try:
@@ -2237,8 +2424,8 @@ async def generate_barcode_response(user_id, image=None, query=None):
         # Создание клиента и генерация ответа от модели
         client = genai.Client(api_key=GOOGLE_API_KEY)
         google_search_tool = Tool(google_search=GoogleSearch())        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
             contents=[
                 types.Content(
                     role="user",
@@ -2303,8 +2490,8 @@ async def generate_barcode_analysis(user_id, query=None):
             # Создаём клиент с правильным ключом
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
+            response = await client.aio.models.generate_content(
+                model='gemini-2.5-flash',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig( 
                     system_instruction=system_instruction,                              
@@ -2365,8 +2552,8 @@ async def generate_barcode_otzyvy(user_id, query=None):
             # Создаём клиент с правильным ключом
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
+            response = await client.aio.models.generate_content(
+                model='gemini-2.5-flash',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(                             
                     temperature=1.4,
@@ -2426,8 +2613,8 @@ async def generate_plant_help_response(user_id, query=None):
             # Создаём клиент с правильным ключом
             client = genai.Client(api_key=GOOGLE_API_KEY)
             google_search_tool = Tool(google_search=GoogleSearch()) 
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
+            response = await client.aio.models.generate_content(
+                model='gemini-2.5-flash',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(               
                     temperature=1.4,
@@ -2501,8 +2688,8 @@ async def translate_promt_with_gemini(user_id, query=None):
                 # Создаём клиент с правильным ключом
                 client = genai.Client(api_key=GOOGLE_API_KEY)
                 google_search_tool = Tool(google_search=GoogleSearch()) 
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash-preview-05-20',
+                response = await client.aio.models.generate_content(
+                    model='gemini-2.5-flash-lite',
                     contents=context,  # Здесь передаётся переменная context
                     config=types.GenerateContentConfig(               
                         temperature=1.4,
@@ -2565,8 +2752,8 @@ async def generate_word(chat_id):
     )
     try:
         # Создаём клиент с правильным ключом
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash-lite',
             contents=context,  # Здесь передаётся переменная context
             config=types.GenerateContentConfig(
                 temperature=1.7,
@@ -2633,7 +2820,7 @@ async def Generate_gemini_image(prompt):
     )        
     try:
 
-        response = client.models.generate_content(
+        response = await client.aio.models.generate_content(
             model="gemini-2.0-flash",
             contents=context,
             config=types.GenerateContentConfig(
@@ -2744,7 +2931,7 @@ async def generate_inpaint_gemini(image_file_path: str, instructions: str):
             types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
         ]
 
-        response = client.models.generate_content(
+        response = await client.aio.models.generate_content(
             model="gemini-2.0-flash",
             contents=[
                 types.Content(
