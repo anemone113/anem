@@ -171,10 +171,16 @@ async def data_command(update: Update, context: CallbackContext) -> None:
         await update.message.reply_document(document="user_data.json", filename="user_data.json")
     else:
         await update.message.reply_text("Ваши данные пусты.")
-
+        
+ALLOWED_USER_ID = 6217936347
 
 async def userid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
     """Обрабатывает команду /userid и выводит все найденные telegram user_id (7-12 цифр)."""
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.message.reply_text("У вас нет доступа к этой команде.")
+        return
+    
     try:
         # Загружаем всю базу
         data = load_entire_database()
@@ -209,40 +215,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def sendall(update: Update, context: CallbackContext) -> None:
+async def send(update: Update, context: CallbackContext) -> None:
     """
     Отправляет сообщение (копируя его) указанным пользователям.
-    Поддерживает текст, фото с подписью, видео с подписью и другие типы медиа.
+    Список пользователей указывается прямо в команде: /send id1,id2,id3
     """
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.message.reply_text("У вас нет доступа к этой команде.")
+        return
+    
     if not update.message or not update.message.reply_to_message:
         await update.message.reply_text(
-            "Используйте команду /sendall в ответ на сообщение, которое нужно разослать."
+            "Используйте команду /send в ответ на сообщение, которое нужно разослать."
         )
         return
 
-    args = context.args
-    user_ids_to_send = USER_IDS  # ID по умолчанию
+    if not context.args:  # если не указаны ID
+        await update.message.reply_text(
+            "Пожалуйста, укажите ID пользователей через запятую. "
+            "Пример: /send 12345,67890"
+        )
+        return
 
-    if args:
-        # Можно добавить ключевое слово 'all' для использования списка по умолчанию,
-        # если аргументы обычно используются для конкретных ID.
-        if args[0].lower() == 'all' and USER_IDS:
-            user_ids_to_send = USER_IDS
-        else:
-            try:
-                user_ids_to_send = [int(uid.strip()) for uid in args[0].split(',')]
-            except ValueError:
-                await update.message.reply_text(
-                    "Некорректный формат ID. Используйте запятую для разделения: /sendall 12345,67890"
-                )
-                return
-            except IndexError: # Если context.args пуст, но проверка args прошла
-                 await update.message.reply_text(
-                    "Пожалуйста, укажите ID пользователей через запятую или используйте 'all' для списка по умолчанию (если он настроен)."
-                )
-                 return
-    
-    if not user_ids_to_send: # Проверка, если список ID оказался пустым
+    try:
+        user_ids_to_send = [int(uid.strip()) for uid in context.args[0].split(',')]
+    except ValueError:
+        await update.message.reply_text(
+            "Некорректный формат ID. Используйте запятую для разделения: /send 12345,67890"
+        )
+        return
+
+    if not user_ids_to_send:
         await update.message.reply_text("Список ID пользователей для рассылки пуст.")
         return
 
@@ -256,19 +259,20 @@ async def sendall(update: Update, context: CallbackContext) -> None:
                 chat_id=user_id,
                 from_chat_id=replied_message.chat.id,
                 message_id=replied_message.message_id,
-                # copy_message автоматически копирует подписи, entities и состояние web_page_preview.
             )
             success_count += 1
         except Exception as e:
             fail_count += 1
-            # Логируем ошибку с полной трассировкой
-            logger.error(f"Ошибка при копировании сообщения пользователю {user_id} (ID сообщения: {replied_message.message_id}): {e}", exc_info=True)
+            logger.error(
+                f"Ошибка при копировании сообщения пользователю {user_id} "
+                f"(ID сообщения: {replied_message.message_id}): {e}",
+                exc_info=True
+            )
 
     await update.message.reply_text(
         f"Рассылка завершена. Успешно отправлено: {success_count}. Ошибок: {fail_count}."
     )
-
-
+    
 async def send_reply_with_limit(text, max_length=4096):
     """Обрабатывает текст через escape_gpt_markdown_v2 и разбивает его на части"""
     escaped_text = escape_gpt_markdown_v2(text)
