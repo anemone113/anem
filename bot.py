@@ -6053,7 +6053,6 @@ def escape_markdown_v2(text: str) -> str:
 async def text_plant_help_with_gpt(update, context):
     user_id = update.effective_user.id
     img_url = context.user_data.get('img_url')
-    temp_file_path = "temp_image.jpg"
 
     # Проверяем наличие изображения в контексте
     if not img_url:
@@ -6065,9 +6064,15 @@ async def text_plant_help_with_gpt(update, context):
     async def process():
         try:
             # Открываем файл temp_image.jpg для обработки
-            with open(temp_file_path, 'rb') as file:
-                image = Image.open(file)
-                image.load()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(img_url) as resp:
+                    if resp.status != 200:
+                        raise Exception("Не удалось скачать изображение")
+                    img_bytes = await resp.read()
+
+            # Открываем картинку напрямую из памяти
+            image = Image.open(BytesIO(img_bytes))
+            image.load()
 
             # Генерация ответа через Gemini
             response_text = await generate_plant_issue_response(user_id, image=image)
@@ -6112,14 +6117,7 @@ async def text_plant_help_with_gpt(update, context):
             except:
                 pass
 
-        finally:
-            # Гарантированное удаление временного файла
-            if os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                    logging.info(f"Временный файл {temp_file_path} удалён.")
-                except Exception as del_e:
-                    logging.warning(f"Не удалось удалить временный файл {temp_file_path}: {del_e}")
+
 
     # Запускаем фоновую задачу
     asyncio.create_task(process())
@@ -6230,17 +6228,21 @@ async def text_rec_with_gpt(update, context):
             response = None
             try:
                 # Работаем с временным файлом
-                with open('temp_image.jpg', 'rb') as file:
-                    image = Image.open(file)
-                    image.load()
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(img_url) as resp:
+                        if resp.status != 200:
+                            raise Exception("Не удалось скачать изображение")
+                        img_bytes = await resp.read()
+    
+                # Открываем картинку напрямую из памяти
+                image = Image.open(BytesIO(img_bytes))
+                image.load()
 
-                    # Отправляем в Gemini
-                    response = await generate_text_rec_response(user_id, image=image, query=None)
+                # Отправляем в Gemini
+                response = await generate_text_rec_response(user_id, image=image, query=None)
 
                 # Удаляем временный файл гарантированно
-            finally:
-                if os.path.exists('temp_image.jpg'):
-                    os.remove('temp_image.jpg')
+
 
             if not response:
                 response = "Ошибка при распознавании текста."
@@ -6389,12 +6391,17 @@ async def barcode_with_gpt(update, context):
     processing_message = await query.message.reply_text("Запрос принят, ожидайте...")
 
     async def process():
-        temp_file = "temp_image.jpg"
         try:
             # Открываем изображение
-            with open(temp_file, 'rb') as file:
-                image = Image.open(file)
-                image.load()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(img_url) as resp:
+                    if resp.status != 200:
+                        raise Exception("Не удалось скачать изображение")
+                    img_bytes = await resp.read()
+
+            # Открываем картинку напрямую из памяти
+            image = Image.open(BytesIO(img_bytes))
+            image.load()
 
             # Запрос к модели
             response = await generate_barcode_response(user_id, image=image, query=None)
@@ -6451,13 +6458,7 @@ async def barcode_with_gpt(update, context):
             logging.error(f"Ошибка при обработке изображения: {e}")
             await processing_message.edit_text("Произошла ошибка при обработке изображения.")
 
-        finally:
-            # Гарантированное удаление временного файла
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except Exception as cleanup_err:
-                logging.error(f"Не удалось удалить временный файл {temp_file}: {cleanup_err}")
+
 
     # Запускаем фоновую задачу
     asyncio.create_task(process())
