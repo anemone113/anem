@@ -1812,6 +1812,78 @@ def limit_response_length(text):
     return text[:MAX_MESSAGE_LENGTH - 3] + '...' if len(text) > MAX_MESSAGE_LENGTH else text
 
 
+
+
+
+async def generate_composition_comparison_response(user_id, images, query):
+    """Сравнивает составы продуктов/вещей на фото и даёт совет по выбору."""
+    system_instruction = (
+        "Ты эксперт по анализу составов продуктов и вещей. "
+        "Твоя задача: сравни составы на фото и дай краткий совет, что выбрать лучше и почему. "
+        "Если продукты принципиально разные и их сравнивать некорректно – честно скажи об этом пользователю. "
+        "Пиши очень лаконично, только полезные факты для выбора, без лишней информации, речевых оборотов и воды. "
+        "Максимум 200 слов. "
+        "Используй html-разметку, но исключительно ту что доступна в телеграм (<b>, <i>, <br>) если это улучшает читаемость."
+    )
+
+    try:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+
+        # Загружаем все изображения
+        image_parts = []
+        for image in images:
+            with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                image.save(temp_file, format="JPEG")
+                image_path = temp_file.name
+
+            image_file = client.files.upload(file=pathlib.Path(image_path))
+            image_parts.append(
+                types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type)
+            )
+
+            os.remove(image_path)
+
+        # Собираем запрос
+        contents = [
+            types.Content(
+                role="user",
+                parts=image_parts + [types.Part(text=f"Комментарий пользователя: {query}" if query else "")]
+            )
+        ]
+
+        # Запрос к модели
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.7,
+                top_p=0.9,
+                top_k=40,
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+            )
+        )
+
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
+            return response_text or "Не удалось сравнить составы."
+        else:
+            return "Не удалось сравнить составы."
+
+    except Exception as e:
+        logging.error(f"Ошибка при анализе составов: {e}")
+        return "Ошибка при обработке изображений. Попробуйте снова."
+
+
+
 async def generate_mushrooms_multi_response(user_id, images, query):
     """Генерирует описание гриба на основе одного или нескольких изображений."""
     system_instruction = (
@@ -1880,7 +1952,80 @@ async def generate_mushrooms_multi_response(user_id, images, query):
         logging.error(f"Ошибка при анализе изображений: {e}")
         return "Ошибка при обработке изображений. Попробуйте снова."
 
+async def generate_calories_response(user_id, images, query):
+    """Оценивает примерное количество калорий на фото с едой и даёт полезную информацию."""
+    system_instruction = (
+        "Ты нутрициолог и спортивный консультант. "
+        "Твоя задача — кратко и по существу проанализировать фото с едой.\n\n"
+        "Отвечай структурировано по пунктам:\n"
+        "1. Определи продукты на фото (каждый отдельно).\n"
+        "2. Укажи примерное количество калорий для каждого продукта.\n"
+        "3. Дай итоговую сумму калорий всего блюда или нескольких блюд, набора продуктов.\n"
+        "4. Добавь краткую оценку пользы/вреда с точки зрения здоровья.\n"
+        "5. Скажи, сколько примерно минут/часов нужно тренироваться (ходьба, бег или фитнес), чтобы сжечь эту еду.\n"
+        "6. Дай одно-два полезных замечания или лайфхака (например, чем можно заменить для меньшей калорийности).\n\n"
+        "⚠️ Важно: пиши лаконично, без лишней воды. Используй короткие предложения, списки или таблицы.\n"
+        "Если несколько фото — анализируй их все.\n"
+        "Если что-то определить невозможно, пиши честно: «неопределимо»."
+        "Используй html-разметку, но исключительно ту что доступна в телеграм (<b>, <i>, <br>) если это улучшает читаемость."        
+    )
 
+    try:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())
+
+        # Загружаем все изображения
+        image_parts = []
+        for image in images:
+            with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                image.save(temp_file, format="JPEG")
+                image_path = temp_file.name
+
+            image_file = client.files.upload(file=pathlib.Path(image_path))
+            image_parts.append(
+                types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type)
+            )
+
+            os.remove(image_path)
+
+        # Собираем запрос
+        contents = [
+            types.Content(
+                role="user",
+                parts=image_parts + [types.Part(text=f"Комментарий пользователя: {query}" if query else "")]
+            )
+        ]
+
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.8,
+                top_p=0.9,
+                top_k=40,
+                tools=[google_search_tool],
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+            )
+        )
+
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if part.text and not getattr(part, "thought", False)
+            ).strip()
+            return response_text
+        else:
+            return "Не удалось оценить калорийность."
+
+    except Exception as e:
+        logging.error(f"Ошибка при анализе изображений: {e}")
+        return "Ошибка при обработке изображений. Попробуйте снова."
 
 
 
@@ -2316,16 +2461,15 @@ async def response_ingredients(user_id, image):
     context = (
         "Проанализируй состав продукта или изделия по изображению с научной и обоснованной точки зрения. "
         "Используй актуальные научные данные и заслуживающие доверия источники. "
-        "Будь кратким и лаконичным, пиши только существенную и полезную информацию чтобы твой ответ можно было быстро прочитать, постарайся уместить весь ответ в 4000 символов. "       
+        "Будь по возможности предельно кратким и лаконичным, пиши только существенную и полезную информацию чтобы твой ответ можно было быстро прочитать, постарайся уместить весь ответ в 300 слов, максимум 400. "       
         "Твой ответ должен быть четко структурирован по следующим пунктам. "
-        "Если какой-то пункт неприменим (например, продукт несъедобен), укажи это.\n\n"
+        "Если какой-то пункт неприменим (например, продукт нельзя рассматривать с точки зрения пользы), укажи это.\n\n"
         "<b>1. Общая краткая характеристика:</b> Что это за продукт или изделие?\n"
         "<b>2. Анализ состава:</b> Разбери каждый компонент. Укажи его функцию (например, консервант, краситель, эмульгатор). Если компонент может быть вреден, вызывать аллергию или имеет другие важные особенности, отметь это.\n"
-        "<b>3. Потенциальная польза:</b> Если продукт съедобен, опиши его возможную пользу для здоровья, основываясь на компонентах.\n"
-        "<b>4. Потенциальный вред:</b> Если продукт съедобен, опиши возможные риски и вред при чрезмерном употреблении или для определенных групп людей.\n"
-        "<b>5. Рекомендации по употреблению:</b> Если продукт съедобен, дай конкретные рекомендации (например, суточная норма, кому стоит ограничить потребление).\n"
-        "<b>6. Общее качество продукта:</b> На основе анализа состава, дай общую оценку качества продукта (например, натуральный состав, много искусственных добавок и т.д.).\n"
-        "<b>7. Выводы:</b> Сделай краткий итоговый вывод о продукте, стоит ли его покупать/употреблять.\n\n"
+        "<b>3. Потенциальная польза:</b> Опиши возможную пользу данного продукта, если он съедобен то пользу для здоровья, основываясь на компонентах.\n"
+        "<b>4. Потенциальный вред:</b> Опиши возможные риски и вред  связанные с данным продуктом, если он съедобен то например при чрезмерном употреблении или для определенных групп людей.\n"
+        "<b>5. Общее качество продукта:</b> На основе анализа состава, дай общую оценку качества продукта (например, натуральный состав, много искусственных добавок и т.д.).\n"
+        "<b>6. Выводы:</b> Сделай краткий итоговый вывод о продукте, стоит ли его покупать/употреблять.\n\n"
         "Ответ должен быть объективным и информативным. Используй html-разметку Telegram для форматирования (<b>, <i>, <u>)."
     )
 
