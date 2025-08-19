@@ -1998,7 +1998,7 @@ async def generate_products_response(user_id, images, query):
         ]
 
         response = await client.aio.models.generate_content(
-            model='gemini-1.5-flash', # Используем актуальную модель
+            model='gemini-2.5-flash', # Используем актуальную модель
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
