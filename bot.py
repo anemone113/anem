@@ -80,7 +80,8 @@ from gpt_helper import (
     response_animal,
     load_entire_database,
     generate_calories_response,
-    generate_composition_comparison_response
+    generate_composition_comparison_response,
+    generate_products_response
 )
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
@@ -1264,8 +1265,13 @@ async def fast_rec(update, context):
         [InlineKeyboardButton("🍂 Что не так с растением? 🍂", callback_data='text_plant_help_with_gpt')],            
         [InlineKeyboardButton("🍄‍🟫 Распознать гриб 🍄‍🟫", callback_data='mushrooms_gpt')],  
         [InlineKeyboardButton("🐾 Распознать животное/насекомое 🐾", callback_data='recognize_animal_insect')],        
-        [InlineKeyboardButton("💬 Найти отзывы 💬", callback_data='barcode_with_gpt')],
-        [InlineKeyboardButton("🥑 Разобрать состав 🥑", callback_data='analyze_ingredients')],        
+    
+        [InlineKeyboardButton("💬 Найти отзывы 💬", callback_data='barcode_with_gpt'),
+         InlineKeyboardButton("🥑 Разобрать состав 🥑", callback_data='analyze_ingredients')],
+    
+        [InlineKeyboardButton("🍎 Калории 🍎", callback_data='calories_gpt'),
+         InlineKeyboardButton("🛒 Сравнить продукты 🛒", callback_data='products_gpt')],        
+    
         [InlineKeyboardButton("📝 Распознать текст 📝", callback_data='text_rec_with_gpt')],           
         [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')]
     ]
@@ -1350,6 +1356,7 @@ async def finish_group_after_delay(media_group_id, context, message):
     # Клавиатура
     keyboard = [
         [InlineKeyboardButton("🍄‍🟫 Распознать гриб 🍄‍🟫", callback_data='mushrooms_gpt')],
+        [InlineKeyboardButton("🛒 Сравнить продукты 🛒", callback_data='products_gpt')],        
         [InlineKeyboardButton("🥫 Сравнить составы 🥫", callback_data='compcomparison_gpt')],
         [InlineKeyboardButton("🍎 Подсчёт калорий 🍎", callback_data='calories_gpt')],
         [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
@@ -6457,6 +6464,99 @@ async def mushrooms_gpt(update, context):
 
     asyncio.create_task(process())
 
+
+
+async def products_gpt(update, context):
+    user_id = update.effective_user.id
+    img_url = context.user_data.get('img_url')              # для одного фото
+    group_images = context.user_data.get('group_images')    # для нескольких фото (список bytes)
+    caption = context.user_data.get('img_caption')
+
+    # Если нет ни одного изображения
+    if not img_url and not group_images:
+        await update.callback_query.answer("Изображение не найдено.")
+        return
+
+    processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
+    query = update.callback_query
+    if query:
+        await query.answer()  # Гасим нажатие кнопки
+
+    async def process():
+        temp_files = []
+        try:
+            images = []
+
+            # Если у нас группа изображений
+            if group_images:
+                for idx, img_bytes in enumerate(group_images):
+                    with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                        temp_file.write(img_bytes)
+                        temp_file.flush()
+                        temp_files.append(temp_file.name)
+                        images.append(Image.open(temp_file.name))
+            else:
+                # Одинарное изображение
+                with open("temp_image.jpg", "rb") as f:
+                    image = Image.open(f)
+                    image.load()
+                    images.append(image)
+                    temp_files.append("temp_image.jpg")
+
+            # Генерация ответа через Gemini
+            response_text = await generate_products_response(
+                user_id=user_id,
+                images=images,
+                query=caption
+            )
+
+            # Разбиваем текст на части
+            caption_part, message_parts = split_html_text(response_text, 0, 4096)
+            text_parts = [caption_part] + message_parts if caption_part else message_parts
+
+            # Клавиатура
+            keyboard = [[InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            # Отправляем все части ответа
+            for i, part in enumerate(text_parts):
+                part = sanitize_html(part)  # очистка текста перед отправкой
+                if i == 0:
+                    if len(text_parts) == 1:
+                        await processing_message.edit_text(
+                            part,
+                            reply_markup=reply_markup,
+                            parse_mode='HTML'
+                        )
+                        return
+                    else:
+                        await processing_message.edit_text(part, parse_mode='HTML')
+                elif i == len(text_parts) - 1:
+                    await update.callback_query.message.reply_text(
+                        part, reply_markup=reply_markup, parse_mode='HTML'
+                    )
+                else:
+                    await update.callback_query.message.reply_text(part, parse_mode='HTML')
+
+            await update.callback_query.answer()
+
+        except Exception as e:
+            logging.error(f"Ошибка при сравнении продуктов: {e}")
+            try:
+                await processing_message.edit_text("Произошла ошибка при обработке изображения.")
+            except:
+                pass
+        finally:
+            # Удаляем временные файлы
+            for path in temp_files:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                        logging.info(f"Удалён временный файл {path}")
+                    except Exception as del_e:
+                        logging.warning(f"Не удалось удалить {path}: {del_e}")
+
+    asyncio.create_task(process())
 
 
 async def calories_gpt(update, context):
@@ -16856,6 +16956,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(analyze_ingredients, pattern='analyze_ingredients$'))   
     application.add_handler(CallbackQueryHandler(recognize_animal_insect, pattern='recognize_animal_insect$'))      
     application.add_handler(CallbackQueryHandler(mushrooms_gpt, pattern='mushrooms_gpt$'))  
+    application.add_handler(CallbackQueryHandler(products_gpt, pattern='products_gpt$'))     
     application.add_handler(CallbackQueryHandler(calories_gpt, pattern='calories_gpt$'))      
     
     application.add_handler(CallbackQueryHandler(composition_comparison_gpt, pattern='compcomparison_gpt$'))      
