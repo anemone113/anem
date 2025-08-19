@@ -1952,6 +1952,81 @@ async def generate_mushrooms_multi_response(user_id, images, query):
         logging.error(f"Ошибка при анализе изображений: {e}")
         return "Ошибка при обработке изображений. Попробуйте снова."
 
+async def generate_products_response(user_id, images, query):
+    """
+    Сравнивает продукты на одном или нескольких изображениях и советует лучший.
+    """
+    system_instruction = (
+        "Твоя задача — помочь пользователю сделать выбор. "
+        "Определи все товары или продукты на предоставленных фото. Используя информацию из интернета и отзывы, "
+        "сравни их между собой. Посоветуй лучший из них. "
+        "Если фото несколько, сравнивай товары со всех фотографий. "
+        "Если на фото много товаров из разных категорий, выбери наиболее вероятную категорию для сравнения. "
+        "Если все товары из разных категорий или по ним нет информации, укажи, что сравнение невозможно. "
+        "Ответ должен быть очень кратким и лаконичным: просто лучший товар и почему он лучше (например, лучший состав, отзывы, качество)."
+    )
+
+    try:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        google_search_tool = Tool(google_search=GoogleSearch())
+
+        # Загружаем все изображения
+        image_parts = []
+        for image in images:
+            with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                image.save(temp_file, format="JPEG")
+                image_path = temp_file.name
+
+            image_file = client.files.upload(file=pathlib.Path(image_path))
+            image_parts.append(
+                types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type)
+            )
+
+            # Сразу удаляем локальный файл
+            os.remove(image_path)
+
+        # Собираем запрос
+        prompt_text = "Сравни эти товары."
+        if query:
+            prompt_text += f" Особое внимание удели: {query}"
+            
+        contents = [
+            types.Content(
+                role="user",
+                parts=image_parts + [types.Part(text=prompt_text)]
+            )
+        ]
+
+        response = await client.aio.models.generate_content(
+            model='gemini-1.5-flash', # Используем актуальную модель
+            contents=contents,
+            generation_config=types.GenerationConfig(
+                temperature=0.5, # Температура чуть ниже для более фактического ответа
+            ),
+            system_instruction=system_instruction,
+            tools=[google_search_tool],
+            safety_settings=[
+                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+            ]
+        )
+
+        if response.candidates and response.candidates[0].content.parts:
+            response_text = "".join(
+                part.text for part in response.candidates[0].content.parts
+                if hasattr(part, "text") and part.text and not getattr(part, "thought", False)
+            ).strip()
+            return response_text
+        else:
+            return "Не удалось сравнить товары."
+
+    except Exception as e:
+        logging.error(f"Ошибка при анализе изображений товаров: {e}")
+        return "Ошибка при обработке изображений. Попробуйте снова."
+
+
 async def generate_calories_response(user_id, images, query):
     """Оценивает примерное количество калорий на фото с едой и даёт полезную информацию."""
     system_instruction = (
