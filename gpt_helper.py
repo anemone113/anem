@@ -1926,7 +1926,7 @@ async def generate_mushrooms_multi_response(user_id, images, query):
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=1.0,
+                temperature=0.9,
                 top_p=0.9,
                 top_k=40,
                 tools=[google_search_tool],
@@ -2000,17 +2000,19 @@ async def generate_products_response(user_id, images, query):
         response = await client.aio.models.generate_content(
             model='gemini-1.5-flash', # Используем актуальную модель
             contents=contents,
-            generation_config=types.GenerationConfig(
-                temperature=0.5, # Температура чуть ниже для более фактического ответа
-            ),
-            system_instruction=system_instruction,
-            tools=[google_search_tool],
-            safety_settings=[
-                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-            ]
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.8,
+                top_p=0.9,
+                top_k=40,
+                tools=[google_search_tool],
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+            )
         )
 
         if response.candidates and response.candidates[0].content.parts:
