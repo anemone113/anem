@@ -2483,6 +2483,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                     await waiting_message.edit_text(f"Ошибка: {e}")
 
             asyncio.create_task(process())
+            return
         elif original_message.photo:
         
             waiting_message = await update.message.reply_text("Обрабатываю изображение...")
@@ -2560,7 +2561,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                     await waiting_message.edit_text(f"Ошибка: {e}")
         
             asyncio.create_task(process())
-            
+            return
         elif original_message.video:
             waiting_message = await update.message.reply_text("Обрабатываю видео...")
 
@@ -2608,7 +2609,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                     await waiting_message.edit_text(f"Ошибка: {e}")
 
             asyncio.create_task(process_video())
-
+            return
         elif original_message.audio or original_message.voice:
             waiting_message = await update.message.reply_text("Обрабатываю аудио...")
 
@@ -2656,6 +2657,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                     await waiting_message.edit_text(f"Ошибка: {e}")
 
             asyncio.create_task(process_audio())
+            return
         elif original_message.animation:  # Гифки попадают в animation
             waiting_message = await update.message.reply_text("Обрабатываю анимацию...")
 
@@ -2708,7 +2710,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                     await waiting_message.edit_text(f"Ошибка: {e}")
 
             asyncio.create_task(process_animation())
-
+            return
         elif original_message.document:  # Проверяем, если сообщение содержит документ
             waiting_message = await update.message.reply_text("Обрабатываю документ...")
 
@@ -2765,7 +2767,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                     await waiting_message.edit_text(f"Ошибка: {e}")
 
             asyncio.create_task(process_document())
-
+            return
 
 
 
@@ -2860,7 +2862,7 @@ async def gpt_running(update: Update, context: CallbackContext) -> int:
                 await waiting_message.edit_text("Ошибка при обработке изображения. Попробуйте снова. /restart")
     
         asyncio.create_task(process_photo())
-
+        return
 
     else:
         user_id = update.message.from_user.id
