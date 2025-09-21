@@ -36,7 +36,7 @@ from telegram.ext import CallbackContext, ContextTypes
 from telegram import Update
 from tempfile import NamedTemporaryFile
 # Google API Key и модель Gemini
-GOOGLE_API_KEY = "AIzaSyBCUQ9LeENVDjSG_Px8QN0QS9c_rXNfT84"
+GOOGLE_API_KEY = "AIzaSyDvDzhp23U4oB0lPdtDQCumcg-AsD67phs"
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
