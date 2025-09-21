@@ -1753,7 +1753,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                 google_search=GoogleSearch()
             )
             response = await client.aio.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-2.5-flash-preview-05-20',
                 contents=context,  # Здесь передаётся переменная context
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,                
