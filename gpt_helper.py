@@ -1451,12 +1451,11 @@ async def generate_document_response(document_path, user_id, query=None):
                 logger.warning(f"Ошибка при использовании модели={model_name}, ключ=...{api_key[-4:]}: {e}")
                 continue  # пробуем следующий ключ / модель
 
-    # Если ничего не вышло
-    return "К сожалению, обработка документа не удалась. Попробуйте позже."
+        # Если ничего не вышло
+        return "К сожалению, обработка документа не удалась. Попробуйте позже."
 
-    # Очистка временного файла
     finally:
-        if 'document_path' in locals() and os.path.exists(document_path):
+        if os.path.exists(document_path):
             try:
                 os.remove(document_path)
                 logger.info(f"Временный файл удален: {document_path}")
