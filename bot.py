@@ -286,9 +286,11 @@ async def send_reply_with_limit(text, max_length=4096):
 
 # Список ваших raw.githubusercontent ссылок
 GITHUB_LINKS = [
-    "https://raw.githubusercontent.com/sakha1370/OpenRay/refs/heads/main/output/all_valid_proxies.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt",
-    "https://raw.githubusercontent.com/YasserDivaR/pr0xy/refs/heads/main/ShadowSocks2021.txt",
+    "https://raw.githubusercontent.com/sakha1370/OpenRay/refs/heads/main/output/all_valid_proxies.txt",#9
+    "https://raw.githubusercontent.com/mehran1404/Sub_Link/refs/heads/main/V2RAY-Sub.txt",#6
+    "https://raw.githubusercontent.com/wuqb2i4f/xray-config-toolkit/main/output/base64/mix-uri",#7
+    "https://raw.githubusercontent.com/STR97/STRUGOV/refs/heads/main/STR.BYPASS#STR.BYPASS%F0%9F%91%BE",#10
+    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt",#random
 ]
 
 # Словарь для хранения индекса ссылки для каждого пользователя
@@ -312,6 +314,7 @@ async def fetch_keys(url: str):
 
 async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: int):
     url = GITHUB_LINKS[index]
+    repo_name = get_repo_name(url)
     keys = await fetch_keys(url)
 
     if not keys:
@@ -322,20 +325,33 @@ async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: 
             await update_or_query.message.reply_text(text)
         return
 
-    keys = keys[:50]
-    selected = random.sample(keys, min(5, len(keys)))
-    msg_text = f"<pre>{html.escape('\n\n'.join(selected))}</pre>"
+    # Проверка: это последняя ссылка?
+    if url.endswith("V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt"):
+        selected_keys = random.sample(keys, min(7, len(keys)))
+        msg_text = (
+            f"<b>{repo_name}</b>\n\n7 случайных ключей:\n"
+            f"<pre>{html.escape('\n\n'.join(selected_keys))}</pre>"
+        )
+    else:
+        # Стандартная логика
+        top_keys = keys[:50]
+        selected_top = random.sample(top_keys, min(5, len(top_keys)))
+        selected_all = random.sample(keys, min(3, len(keys)))
+
+        msg_text = (
+            f"<b>{repo_name}</b>\n\n5 новых случайных ключей:\n<pre>{html.escape('\n\n'.join(selected_top))}</pre>\n\n"
+            f"\n3 случайных ключа:\n<pre>{html.escape('\n\n'.join(selected_all))}</pre>"
+        )
 
     # Клавиатура с кнопками
     keyboard = [
-        [InlineKeyboardButton("📖 Инструкция", callback_data="vpninstruction_show")],  # новая кнопка сверху
+        [InlineKeyboardButton("📖 Инструкция", callback_data="vpninstruction_show")],
         *[
             [InlineKeyboardButton(f"Ещё ключи из {get_repo_name(url)}", callback_data=f"more_keys_{i}")]
             for i, url in enumerate(GITHUB_LINKS)
         ],
+        [InlineKeyboardButton("📥 Скачать файлом", callback_data="download_file")]
     ]
-    # новая кнопка внизу
-    keyboard.append([InlineKeyboardButton("📥 Скачать файлом", callback_data="download_file")])
 
     if hasattr(update_or_query, "message") and update_or_query.message:
         await update_or_query.message.reply_text(
@@ -349,23 +365,24 @@ async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: 
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
+        
 
 async def send_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     instruction_text = """
 <b>Инструкция по использованию ключей:</b>\n\n
-1) Скачайте NekoBox или аналогичную программу:\n
+1) Скачайте NekoBox или любую аналогичную программу поддерживающую vless и vmess ключей:
 • <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases">Версия для Android</a>
 • <a href="https://github.com/Matsuridayo/nekoray/releases">Версия для PC</a>\n\n
-2) Скопируйте 5 ключей из сообщения бота или скачайте файлом сразу много ключей.\n\n
-3) Откройте NekoBox, нажмите кнопку добавления ключа в правом верхнем углу.\n
+2) Скопируйте 5/3 случайных ключей из сообщения бота или скачайте файлом сразу много ключей.\n\n
+3) Откройте NekoBox, нажмите кнопку добавления ключа в правом верхнем углу.
 Затем:
 • "Импорт из буфера обмена" (если скопировали ключи)
 • "Импорт из файла" (если скачали файл)\n\n
-4) Нажмите три точки в правом верхнем углу и поочередно пройдите:
+4) После появления новых ключей в списке доступных нажмите три точки в правом верхнем углу и поочередно пройдите:
 • "TCP тест"
 • "URL тест"\n\n
 5) В том же меню нажмите "Удалить недоступные".\n\n
-Готово ✅ Все оставшиеся ключи (или хотя бы часть) должны работать.
+Готово ✅ Все оставшиеся ключи (или хотя бы часть из них) должны работать.
 Если перестанут – повторите действия ещё раз, очистив перед этим NekoBox.\n\n
 <i>Инструкция написана для Android-версии, но на PC процесс похожий, только кнопки расположены иначе.</i>
 """
@@ -410,8 +427,9 @@ async def more_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_index[user_id] = index
     await send_keys(query, context, index)
 
+
 async def download_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Собираем по 40 верхних и 20 нижних ключей из каждого файла и отправляем txt"""
+    """Собираем ключи по правилам: для обычных ссылок — 40 верхних, 20 нижних и 30 случайных; для последней — 70 случайных"""
     query = update.callback_query
     await query.answer()
 
@@ -421,15 +439,23 @@ async def download_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not keys:
             continue
 
-        # 40 первых и 20 последних
-        selected = keys[:40] + keys[-20:]
+        if url.endswith("V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt"):
+            # Спец-логика для последней ссылки
+            selected = random.sample(keys, min(70, len(keys)))
+        else:
+            # Общая логика
+            selected = keys[:40] + keys[-20:]
+            remaining_keys = list(set(keys) - set(selected))
+            if len(remaining_keys) >= 30:
+                selected += random.sample(remaining_keys, 30)
+            else:
+                selected += remaining_keys
         all_keys.extend(selected)
 
     if not all_keys:
         await query.message.reply_text("❌ Ключи не найдены.")
         return
 
-    # Делаем временный файл в памяти
     file_content = "\n".join(all_keys)
     bio = io.BytesIO(file_content.encode("utf-8"))
     bio.name = "vpn_keys.txt"
