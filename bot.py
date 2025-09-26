@@ -1,4 +1,4 @@
-from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDocument, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup, Message, InlineKeyboardMarkup, ReplyKeyboardMarkup, WebAppInfo
+from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, InputMediaDocument, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup, Message, InlineKeyboardMarkup, ReplyKeyboardMarkup, WebAppInfo, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler, CallbackQueryHandler, ContextTypes, JobQueue
 from PIL import Image
 from telegram.constants import ParseMode
@@ -280,6 +280,166 @@ async def send_reply_with_limit(text, max_length=4096):
     """Обрабатывает текст через escape_gpt_markdown_v2 и разбивает его на части"""
     escaped_text = escape_gpt_markdown_v2(text)
     return split_text_preserving_tags(escaped_text, max_length)
+
+
+
+
+# Список ваших raw.githubusercontent ссылок
+GITHUB_LINKS = [
+    "https://raw.githubusercontent.com/sakha1370/OpenRay/refs/heads/main/output/all_valid_proxies.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt",
+    "https://raw.githubusercontent.com/YasserDivaR/pr0xy/refs/heads/main/ShadowSocks2021.txt",
+]
+
+# Словарь для хранения индекса ссылки для каждого пользователя
+user_index = {}
+
+
+def get_repo_name(url: str) -> str:
+    """Вытащить название после .com (например: sakha1370, sevcator, yitong2333)"""
+    return url.split("githubusercontent.com/")[1].split("/")[0]
+
+
+async def fetch_keys(url: str):
+    """Скачать и распарсить ключи из raw.githubusercontent"""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            text = await resp.text()
+
+    keys = re.findall(r"(?:vmess|vless)://[^\s]+", text)
+    return keys
+
+
+async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: int):
+    url = GITHUB_LINKS[index]
+    keys = await fetch_keys(url)
+
+    if not keys:
+        text = "❌ Ключи не найдены."
+        if hasattr(update_or_query, "message") and update_or_query.message:
+            await update_or_query.message.reply_text(text)
+        else:
+            await update_or_query.message.reply_text(text)
+        return
+
+    keys = keys[:50]
+    selected = random.sample(keys, min(5, len(keys)))
+    msg_text = f"<pre>{html.escape('\n\n'.join(selected))}</pre>"
+
+    # Клавиатура с кнопками
+    keyboard = [
+        [InlineKeyboardButton("📖 Инструкция", callback_data="vpninstruction_show")],  # новая кнопка сверху
+        *[
+            [InlineKeyboardButton(f"Ещё ключи из {get_repo_name(url)}", callback_data=f"more_keys_{i}")]
+            for i, url in enumerate(GITHUB_LINKS)
+        ],
+    ]
+    # новая кнопка внизу
+    keyboard.append([InlineKeyboardButton("📥 Скачать файлом", callback_data="download_file")])
+
+    if hasattr(update_or_query, "message") and update_or_query.message:
+        await update_or_query.message.reply_text(
+            msg_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    else:
+        await update_or_query.message.reply_text(
+            msg_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+
+async def send_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    instruction_text = """
+<b>Инструкция по использованию ключей:</b>\n\n
+1) Скачайте NekoBox или аналогичную программу:\n
+• <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases">Версия для Android</a>
+• <a href="https://github.com/Matsuridayo/nekoray/releases">Версия для PC</a>\n\n
+2) Скопируйте 5 ключей из сообщения бота или скачайте файлом сразу много ключей.\n\n
+3) Откройте NekoBox, нажмите кнопку добавления ключа в правом верхнем углу.\n
+Затем:
+• "Импорт из буфера обмена" (если скопировали ключи)
+• "Импорт из файла" (если скачали файл)\n\n
+4) Нажмите три точки в правом верхнем углу и поочередно пройдите:
+• "TCP тест"
+• "URL тест"\n\n
+5) В том же меню нажмите "Удалить недоступные".\n\n
+Готово ✅ Все оставшиеся ключи (или хотя бы часть) должны работать.
+Если перестанут – повторите действия ещё раз, очистив перед этим NekoBox.\n\n
+<i>Инструкция написана для Android-версии, но на PC процесс похожий, только кнопки расположены иначе.</i>
+"""
+
+    # Кнопка "Закрыть окно"
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]]
+    )
+
+    if update.message:
+        await update.message.reply_text(
+            instruction_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=keyboard
+        )
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(
+            instruction_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=keyboard
+        )
+        await update.callback_query.answer()
+
+async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_index[user_id] = 0
+    await send_keys(update, context, 0)
+
+
+async def more_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    # Узнаём, по какой кнопке нажали
+    data = query.data  # например: "more_keys_1"
+    index = int(data.split("_")[-1])
+
+    user_index[user_id] = index
+    await send_keys(query, context, index)
+
+async def download_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Собираем по 40 верхних и 20 нижних ключей из каждого файла и отправляем txt"""
+    query = update.callback_query
+    await query.answer()
+
+    all_keys = []
+    for url in GITHUB_LINKS:
+        keys = await fetch_keys(url)
+        if not keys:
+            continue
+
+        # 40 первых и 20 последних
+        selected = keys[:40] + keys[-20:]
+        all_keys.extend(selected)
+
+    if not all_keys:
+        await query.message.reply_text("❌ Ключи не найдены.")
+        return
+
+    # Делаем временный файл в памяти
+    file_content = "\n".join(all_keys)
+    bio = io.BytesIO(file_content.encode("utf-8"))
+    bio.name = "vpn_keys.txt"
+
+    await query.message.reply_document(InputFile(bio))
+
+
+
+
+
 
 
 
@@ -17007,6 +17167,12 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(add_new_plant, pattern='addnewplant$'))
     application.add_handler(CommandHandler("map", show_map))
 
+
+    application.add_handler(CallbackQueryHandler(more_keys, pattern=r"^more_keys_\d+$"))  
+    application.add_handler(CallbackQueryHandler(download_file, pattern="^download_file$"))
+    application.add_handler(CallbackQueryHandler(send_instruction, pattern="^vpninstruction_show$"))
+
+    
       
     # Начало процесса замены
     application.add_handler(CallbackQueryHandler(swap_images, pattern=r'^swapimages_'))
@@ -17088,7 +17254,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_otloj_scheduled, pattern=r'^otlview_[\w_]+$')) 
     application.add_handler(CallbackQueryHandler(delete_scheduled_time_handler, pattern=r"^otloj_delete_\d+_\d+$")) 
 
-    
+    application.add_handler(CommandHandler("vpn", vpn))    
     application.add_handler(CommandHandler("userid", userid_command))
     application.add_handler(CommandHandler("rec", recognize_test_plant))
     application.add_handler(CommandHandler("testid", handle_testid_command))  
