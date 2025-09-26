@@ -1406,62 +1406,65 @@ async def generate_document_response(document_path, user_id, query=None):
         keys_to_try = key_manager.get_keys_to_try()
         for api_key in keys_to_try:
             try:
-                logger.info(f"Попытка: модель='{model_name}', ключ=...{api_key[-4:]}")
-                local_client = genai.Client(api_key=api_key)
+                for model_name in models_to_try:
+                    keys_to_try = key_manager.get_keys_to_try()
+                    for api_key in keys_to_try:
+                        try:
+                            logger.info(f"Попытка: модель='{model_name}', ключ=...{api_key[-4:]}")
+                            local_client = genai.Client(api_key=api_key)
 
-                response = await local_client.aio.models.generate_content(
-                    model=model_name,
-                    contents=[
-                        types.Content(
-                            role="user",
-                            parts=[
-                                types.Part.from_uri(
-                                    file_uri=file_upload.uri,
-                                    mime_type=file_upload.mime_type
+                            response = await local_client.aio.models.generate_content(
+                                model=model_name,
+                                contents=[
+                                    types.Content(
+                                        role="user",
+                                        parts=[
+                                            types.Part.from_uri(
+                                                file_uri=file_upload.uri,
+                                                mime_type=file_upload.mime_type
+                                            )
+                                        ]
+                                    ),
+                                    command_text
+                                ],
+                                config=types.GenerateContentConfig(
+                                    temperature=1.4,
+                                    top_p=0.95,
+                                    top_k=25,
+                                    tools=[google_search_tool],
+                                    safety_settings=[
+                                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                                    ]
                                 )
-                            ]
-                        ),
-                        command_text
-                    ],
-                    config=types.GenerateContentConfig(
-                        temperature=1.4,
-                        top_p=0.95,
-                        top_k=25,
-                        tools=[google_search_tool],
-                        safety_settings=[
-                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
-                        ]
-                    )
-                )
+                            )
 
-                if not response.candidates or not response.candidates[0].content.parts:
-                    raise ValueError("Пустой ответ от модели")
+                            if not response.candidates or not response.candidates[0].content.parts:
+                                raise ValueError("Пустой ответ от модели")
 
-                bot_response = ''.join(
-                    part.text for part in response.candidates[0].content.parts if part.text
-                ).strip()
+                            bot_response = ''.join(
+                                part.text for part in response.candidates[0].content.parts if part.text
+                            ).strip()
 
-                await key_manager.set_successful_key(api_key)
-                return bot_response
+                            await key_manager.set_successful_key(api_key)
+                            return bot_response
 
-            except Exception as e:
-                logger.warning(f"Ошибка при использовании модели={model_name}, ключ=...{api_key[-4:]}: {e}")
-                continue  # пробуем следующий ключ / модель
+                        except Exception as e:
+                            logger.warning(f"Ошибка при использовании модели={model_name}, ключ=...{api_key[-4:]}: {e}")
+                            continue  # пробуем следующий ключ / модель
 
-        # Если ничего не вышло
-        return "К сожалению, обработка документа не удалась. Попробуйте позже."
+                # Если ничего не вышло
+                return "К сожалению, обработка документа не удалась. Попробуйте позже."
 
-    finally:
-        if os.path.exists(document_path):
-            try:
-                os.remove(document_path)
-                logger.info(f"Временный файл удален: {document_path}")
-            except Exception as e:
-                logger.error(f"Ошибка при удалении временного файла: {e}")
-
+            finally:
+                if os.path.exists(document_path):
+                    try:
+                        os.remove(document_path)
+                        logger.info(f"Временный файл удален: {document_path}")
+                    except Exception as e:
+                        logger.error(f"Ошибка при удалении временного файла: {e}")
 
 
 async def generate_audio_response(audio_file_path, user_id, query=None):
