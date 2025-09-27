@@ -1390,24 +1390,24 @@ async def generate_document_response(document_path, user_id, query=None):
         keys_to_try = key_manager.get_keys_to_try()
         logging.info(f"[generate_document_response] Найдено {len(keys_to_try)} ключей для перебора.")
 
-        for idx, api_key in enumerate(keys_to_try, start=1):
-            logging.info(f"[generate_document_response] Пробуем ключ {idx}/{len(keys_to_try)}: ...{api_key[-4:]}")
-            try:
-                client = genai.Client(api_key=api_key)
+        models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+        logging.info(f"Будем пробовать модели: {models_to_try}")
 
+        for model_name in models_to_try:
+            logging.info(f"Пробуем модель {model_name}")
+
+            for idx, api_key in enumerate(keys_to_try, start=1):
+                logging.info(f"[generate_document_response] Пробуем ключ {idx}/{len(keys_to_try)}: ...{api_key[-4:]}")
                 try:
-                    file_upload = client.files.upload(file=document_path_obj)
-                    logging.info(f"Файл успешно загружен с ключом ...{api_key[-4:]}, uri={file_upload.uri}")
-                except Exception as e:
-                    logging.warning(f"Ошибка загрузки документа с ключом ...{api_key[-4:]}: {e}")
-                    continue  # пробуем следующий ключ
+                    client = genai.Client(api_key=api_key)
 
-                # Перебор моделей: сначала основная, потом запасные
-                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-                logging.info(f"Будем пробовать модели: {models_to_try}")
+                    try:
+                        file_upload = client.files.upload(file=document_path_obj)
+                        logging.info(f"Файл успешно загружен с ключом ...{api_key[-4:]}, uri={file_upload.uri}")
+                    except Exception as e:
+                        logging.warning(f"Ошибка загрузки документа с ключом ...{api_key[-4:]}: {e}")
+                        continue  # пробуем следующий ключ
 
-                for model_name in models_to_try:
-                    logging.info(f"Пробуем модель {model_name} с ключом ...{api_key[-4:]}")
                     try:
                         google_search_tool = Tool(google_search=GoogleSearch())
 
