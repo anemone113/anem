@@ -1347,7 +1347,6 @@ async def generate_video_response(video_file_path, user_id, query=None):
 
 
 
-
 async def generate_document_response(document_path, user_id, query=None):
     user_roles_data = user_roles.get(user_id, {})
     selected_role = None
@@ -1388,25 +1387,29 @@ async def generate_document_response(document_path, user_id, query=None):
 
     try:
         keys_to_try = key_manager.get_keys_to_try()
-        logging.info(f"[generate_document_response] Найдено {len(keys_to_try)} ключей для перебора.")
+        logging.info(f"Начинаем перебор {len(keys_to_try)} API-ключей.")
 
-        models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-        logging.info(f"Будем пробовать модели: {models_to_try}")
+        for idx, api_key in enumerate(keys_to_try, start=1):
+            logging.info(f"[{idx}/{len(keys_to_try)}] Пробуем ключ ...{api_key[-4:]}")
 
-        for model_name in models_to_try:
-            logging.info(f"Пробуем модель {model_name}")
+            try:
+                client = genai.Client(api_key=api_key)
 
-            for idx, api_key in enumerate(keys_to_try, start=1):
-                logging.info(f"[generate_document_response] Пробуем ключ {idx}/{len(keys_to_try)}: ...{api_key[-4:]}")
+                # Загружаем файл
                 try:
-                    client = genai.Client(api_key=api_key)
+                    logging.debug(f"Загружаем документ с ключом ...{api_key[-4:]}")
+                    file_upload = client.files.upload(file=document_path_obj)
+                    logging.info(f"Документ успешно загружен с ключом ...{api_key[-4:]}")
+                except Exception as e:
+                    logging.warning(f"Ошибка загрузки документа с ключом ...{api_key[-4:]}: {e}")
+                    continue  # пробуем следующий ключ
 
-                    try:
-                        file_upload = client.files.upload(file=document_path_obj)
-                        logging.info(f"Файл успешно загружен с ключом ...{api_key[-4:]}, uri={file_upload.uri}")
-                    except Exception as e:
-                        logging.warning(f"Ошибка загрузки документа с ключом ...{api_key[-4:]}: {e}")
-                        continue  # пробуем следующий ключ
+                # Перебор моделей: сначала основная, потом запасные
+                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                logging.info(f"Будем проверять {len(models_to_try)} моделей на ключе ...{api_key[-4:]}")
+
+                for model_name in models_to_try:
+                    logging.info(f"→ Пробуем модель {model_name} с ключом ...{api_key[-4:]}")
 
                     try:
                         google_search_tool = Tool(google_search=GoogleSearch())
@@ -1440,7 +1443,7 @@ async def generate_document_response(document_path, user_id, query=None):
                         )
 
                         if not response.candidates or not response.candidates[0].content.parts:
-                            logging.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} вернула пустой ответ")
+                            logging.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} вернула пустой ответ.")
                             continue
 
                         bot_response = ''.join(
@@ -1448,25 +1451,25 @@ async def generate_document_response(document_path, user_id, query=None):
                         ).strip()
 
                         if bot_response:
-                            logging.info(f"Успех! Ответ получен с ключом ...{api_key[-4:]} на модели {model_name}")
+                            logging.info(f"✅ Успех! Ключ ...{api_key[-4:]} и модель {model_name} сработали.")
                             await key_manager.set_successful_key(api_key)
                             return bot_response
-                        else:
-                            logging.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} вернула пустой текст")
 
                     except Exception as e:
-                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}", exc_info=True)
-                        continue
+                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
+                        # идём к следующей модели
+
+                logging.warning(f"❌ Все модели провалились с ключом ...{api_key[-4:]}, пробуем следующий ключ.")
 
             except Exception as e:
-                logging.warning(f"Ошибка при инициализации клиента с ключом ...{api_key[-4:]}: {e}", exc_info=True)
+                logging.warning(f"Ошибка при инициализации клиента с ключом ...{api_key[-4:]}: {e}")
                 continue
 
-        logging.error("[generate_document_response] Все ключи и модели были перепробованы, успеха нет.")
+        logging.error("🚨 Все ключи перепробованы, ни один не сработал.")
         return "К сожалению, обработка документа не удалась. Попробуйте позже."
 
     except Exception as e:
-        logging.error("[generate_document_response] Ошибка при обработке документа:", exc_info=True)
+        logging.error("Ошибка при обработке документа:", exc_info=True)
         return "Ошибка при обработке документа. Попробуйте снова."
 
     finally:
