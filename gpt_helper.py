@@ -1208,12 +1208,12 @@ async def generate_video_response(video_file_path, user_id, query=None):
     if default_role_key and default_role_key in DEFAULT_ROLES:
         selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
 
-    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
+    # Игровая роль перекрывает дефолтную
     game_role_key = user_roles_data.get("game_role")
     if game_role_key and game_role_key in GAME_ROLES:
         selected_role = GAME_ROLES[game_role_key]["full_description"]
 
-    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
+    # Выбранная вручную роль имеет наивысший приоритет
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
 
@@ -1226,78 +1226,50 @@ async def generate_video_response(video_file_path, user_id, query=None):
         relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
 
     # Формируем контекст с текущим запросом
-    context = (
+    command_text = (
         f"Ты в чате играешь роль: {selected_role}. "
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"        
-        f"Собеседник прислал тебе видео "         
-        f"С подписью:\n{query}"     
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'} "
+        f"Собеседник прислал тебе видео"
+        + (f" с подписью:\n{query}" if query else " без подписи. Опиши содержание видео.")
     )
 
-    command_text = context if query else "Опиши содержание видео."
+    if not os.path.exists(video_file_path):
+        return "Видео недоступно. Попробуйте снова."
+
+    video_path = pathlib.Path(video_file_path)
 
     try:
-        # Пробуем загрузить видео
-        try:
-            video_file = client.files.upload(file=pathlib.Path(video_file_path))
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке видео: {e}")
-            return "Не удалось загрузить видео."
-
-        # Ждём окончания обработки
-        while video_file.state == "PROCESSING":
-            await asyncio.sleep(10)
-            video_file = client.files.get(name=video_file.name)
-
-        if video_file.state == "FAILED":
-            return "Не удалось обработать видео. Попробуйте снова."
-
-        # Настройки генерации
-        safety_settings = [
-            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-        ]
-        google_search_tool = Tool(google_search=GoogleSearch())
-
-        # --- Перебор ключей ---
-        for api_key in key_manager.get_keys_to_try():
+        keys_to_try = key_manager.get_keys_to_try()
+        for api_key in keys_to_try:
             try:
                 client = genai.Client(api_key=api_key)
 
-                # Сначала пробуем основную модель
+                # Загружаем файл через текущий client
                 try:
-                    response = await client.aio.models.generate_content(
-                        model=PRIMARY_MODEL,
-                        contents=[
-                            types.Content(
-                                role="user",
-                                parts=[types.Part.from_uri(
-                                    file_uri=video_file.uri,
-                                    mime_type=video_file.mime_type
-                                )]
-                            ),
-                            command_text
-                        ],
-                        config=types.GenerateContentConfig(
-                            temperature=1.2,
-                            top_p=0.9,
-                            top_k=40,
-                            tools=[google_search_tool],
-                            safety_settings=safety_settings
-                        )
-                    )
-                    if response and response.candidates:
-                        await key_manager.set_successful_key(api_key)
-                        bot_response = ''.join(
-                            part.text for part in response.candidates[0].content.parts if part.text
-                        ).strip()
-                        return bot_response
-                except Exception as e:
-                    logger.warning(f"Ошибка с основной моделью {PRIMARY_MODEL}, ключ=...{api_key[-4:]}: {e}")
+                    video_file = client.files.upload(file=video_path)
+                except Exception:
+                    continue  # пробуем следующий ключ
 
-                # Если не получилось — перебираем запасные модели
-                for model_name in FALLBACK_MODELS:
+                # Ждём окончания обработки
+                while video_file.state == "PROCESSING":
+                    await asyncio.sleep(10)
+                    video_file = client.files.get(name=video_file.name)
+
+                if video_file.state == "FAILED":
+                    continue
+
+                # Настройки генерации
+                safety_settings = [
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+                google_search_tool = Tool(google_search=GoogleSearch())
+
+                # Перебор моделей
+                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                for model_name in models_to_try:
                     try:
                         response = await client.aio.models.generate_content(
                             model=model_name,
@@ -1319,28 +1291,32 @@ async def generate_video_response(video_file_path, user_id, query=None):
                                 safety_settings=safety_settings
                             )
                         )
-                        if response and response.candidates:
+
+                        if not response.candidates or not response.candidates[0].content.parts:
+                            continue
+
+                        bot_response = ''.join(
+                            part.text for part in response.candidates[0].content.parts if part.text
+                        ).strip()
+
+                        if bot_response:
                             await key_manager.set_successful_key(api_key)
-                            bot_response = ''.join(
-                                part.text for part in response.candidates[0].content.parts if part.text
-                            ).strip()
                             return bot_response
+
                     except Exception as e:
                         logger.warning(f"Ошибка с моделью {model_name}, ключ=...{api_key[-4:]}: {e}")
                         continue
+
             except Exception as e:
-                logger.warning(f"Ошибка с ключом ...{api_key[-4:]}: {e}")
+                logger.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
                 continue
 
-        # Если все ключи и модели не сработали
-        return "Извините, не удалось обработать видео ни с одним ключом или моделью."
+        return "Извините, я не смог обработать это видео ни с одним ключом или моделью."
 
-    except FileNotFoundError as fnf_error:
-        logger.error(f"Файл не найден: {fnf_error}")
-        return "Видео не найдено. Проверьте путь к файлу."
     except Exception as e:
-        logger.error("Ошибка при обработке видео с Gemini:", exc_info=True)
+        logger.error("Ошибка при обработке видео:", exc_info=True)
         return "Ошибка при обработке видео. Попробуйте снова."
+
     finally:
         if 'video_file_path' in locals() and os.path.exists(video_file_path):
             try:
@@ -1348,6 +1324,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
                 logger.info(f"Временный файл удален: {video_file_path}")
             except Exception as e:
                 logger.error(f"Ошибка при удалении временного файла: {e}")
+
 
 
 
@@ -1376,95 +1353,97 @@ async def generate_document_response(document_path, user_id, query=None):
     if query and relevant_context:
         relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
 
-    context = (
-        f"Ты телеграм чат-бот, сейчас ты играешь роль {selected_role}. Собеседник прислал тебе документ с подписью:\n{query}"
-        f"Предыдущий контекст вашей переписки:\n{relevant_context}"            
+    command_text = (
+        f"Ты телеграм чат-бот, сейчас ты играешь роль {selected_role}. "
+        f"Собеседник прислал тебе документ с подписью:\n{query}\n\n"
+        f"Предыдущий контекст вашей переписки:\n{relevant_context if relevant_context else 'отсутствует.'}"
     )
 
-    command_text = context
-
+    # Проверяем существование файла
     if not os.path.exists(document_path):
         logging.error(f"Файл {document_path} не существует.")
         return "Документ недоступен. Попробуйте снова."
 
-    file_extension = os.path.splitext(document_path)[1].lower()
-    logging.info(f"file_extension: {file_extension}")
-
     document_path_obj = pathlib.Path(document_path)
+
     try:
-        file_upload = client.files.upload(file=document_path_obj)
-    except Exception as e:
-        logging.error(f"Ошибка загрузки файла: {e}")
-        return "Ошибка загрузки документа."
-
-    google_search_tool = Tool(google_search=GoogleSearch())
-
-    # 🔑 Перебор ключей и моделей
-    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-
-    for model_name in models_to_try:
         keys_to_try = key_manager.get_keys_to_try()
         for api_key in keys_to_try:
             try:
+                client = genai.Client(api_key=api_key)
+
+                try:
+                    file_upload = client.files.upload(file=document_path_obj)
+                except Exception as e:
+                    logging.warning(f"Ошибка загрузки документа с ключом ...{api_key[-4:]}: {e}")
+                    continue  # пробуем следующий ключ
+
+                # Перебор моделей: сначала основная, потом запасные
+                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
                 for model_name in models_to_try:
-                    keys_to_try = key_manager.get_keys_to_try()
-                    for api_key in keys_to_try:
-                        try:
-                            logger.info(f"Попытка: модель='{model_name}', ключ=...{api_key[-4:]}")
-                            local_client = genai.Client(api_key=api_key)
+                    try:
+                        google_search_tool = Tool(google_search=GoogleSearch())
 
-                            response = await local_client.aio.models.generate_content(
-                                model=model_name,
-                                contents=[
-                                    types.Content(
-                                        role="user",
-                                        parts=[
-                                            types.Part.from_uri(
-                                                file_uri=file_upload.uri,
-                                                mime_type=file_upload.mime_type
-                                            )
-                                        ]
-                                    ),
-                                    command_text
-                                ],
-                                config=types.GenerateContentConfig(
-                                    temperature=1.4,
-                                    top_p=0.95,
-                                    top_k=25,
-                                    tools=[google_search_tool],
-                                    safety_settings=[
-                                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                        response = await client.aio.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                types.Content(
+                                    role="user",
+                                    parts=[
+                                        types.Part.from_uri(
+                                            file_uri=file_upload.uri,
+                                            mime_type=file_upload.mime_type
+                                        )
                                     ]
-                                )
+                                ),
+                                command_text
+                            ],
+                            config=types.GenerateContentConfig(
+                                temperature=1.4,
+                                top_p=0.95,
+                                top_k=25,
+                                tools=[google_search_tool],
+                                safety_settings=[
+                                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                                ]
                             )
+                        )
 
-                            if not response.candidates or not response.candidates[0].content.parts:
-                                raise ValueError("Пустой ответ от модели")
+                        if not response.candidates or not response.candidates[0].content.parts:
+                            continue
 
-                            bot_response = ''.join(
-                                part.text for part in response.candidates[0].content.parts if part.text
-                            ).strip()
+                        bot_response = ''.join(
+                            part.text for part in response.candidates[0].content.parts if part.text
+                        ).strip()
 
+                        if bot_response:
                             await key_manager.set_successful_key(api_key)
                             return bot_response
 
-                        except Exception as e:
-                            logger.warning(f"Ошибка при использовании модели={model_name}, ключ=...{api_key[-4:]}: {e}")
-                            continue  # пробуем следующий ключ / модель
-
-                # Если ничего не вышло
-                return "К сожалению, обработка документа не удалась. Попробуйте позже."
-
-            finally:
-                if os.path.exists(document_path):
-                    try:
-                        os.remove(document_path)
-                        logger.info(f"Временный файл удален: {document_path}")
                     except Exception as e:
-                        logger.error(f"Ошибка при удалении временного файла: {e}")
+                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
+                        continue
+
+            except Exception as e:
+                logging.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
+                continue
+
+        return "К сожалению, обработка документа не удалась. Попробуйте позже."
+
+    except Exception as e:
+        logging.error("Ошибка при обработке документа:", exc_info=True)
+        return "Ошибка при обработке документа. Попробуйте снова."
+
+    finally:
+        if os.path.exists(document_path):
+            try:
+                os.remove(document_path)
+                logger.info(f"Временный файл удален: {document_path}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении временного файла: {e}")
 
 
 async def generate_audio_response(audio_file_path, user_id, query=None):
@@ -1491,100 +1470,105 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
 
     # Формируем system_instruction с user_role и relevant_context
     relevant_context = await get_relevant_context(user_id)
+
     # Исключаем дубли текущего сообщения в relevant_context
     if query and relevant_context:
         relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+
     # Формируем контекст с текущим запросом
-    context = (
+    command_text = (
         f"Ты в чате играешь роль: {selected_role}. "
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"        
-        f"Собеседник прислал тебе аудио "         
-        f"С подписью:\n{query}"     
+        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
+        f"Собеседник прислал тебе аудио "
+        f"С подписью:\n{query}" if query else
+        "Распознай текст в аудио. Если текста нет или распознать его не удалось, то опиши содержимое."
     )
 
-    # Определяем значение переменной command_text
-    command_text = context if query else "Распознай текст в аудио. Если текста нет или распознать его не удалось то опиши содержимое."
-
-    try:
-        try:
-            audio_file = client.files.upload(file=pathlib.Path(audio_file_path))
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке аудио: {e}")
-            return "Не удалось загрузить аудиофайл."
-
-        if not command_text:
-            command_text = "распознай текст либо опиши содержание аудио, если текста нет."
-
-        google_search_tool = Tool(
-            google_search=GoogleSearch()
-        )
-
-        # Перебор моделей и ключей
-        models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-        last_exception = None
-
-        for model_name in models_to_try:
-            keys_to_try = key_manager.get_keys_to_try()
-            for api_key in keys_to_try:
-                try:
-                    temp_client = genai.Client(api_key=api_key)
-                    response = await temp_client.aio.models.generate_content(
-                        model=model_name,
-                        contents=[
-                            types.Content(
-                                role="user",
-                                parts=[
-                                    types.Part.from_uri(
-                                        file_uri=audio_file.uri,
-                                        mime_type=audio_file.mime_type
-                                    )
-                                ]
-                            ),
-                            command_text
-                        ],
-                        config=types.GenerateContentConfig(
-                            temperature=1.4,
-                            top_p=0.95,
-                            top_k=25,
-                            tools=[google_search_tool],
-                            safety_settings=[
-                                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-                            ]
-                        )
-                    )
-
-                    if not response.candidates or not response.candidates[0].content.parts:
-                        logger.warning("Пустой ответ от Gemini.")
-                        continue
-
-                    # Успешный ответ → сохраняем ключ
-                    await key_manager.set_successful_key(api_key)
-
-                    bot_response = ''.join(
-                        part.text for part in response.candidates[0].content.parts if part.text
-                    ).strip()
-                    logger.info("Ответ от Gemini: %s", bot_response)
-                    return bot_response
-
-                except Exception as e:
-                    last_exception = e
-                    logger.warning(f"Ошибка с ключом {api_key} и моделью {model_name}: {e}")
-                    continue
-
-        # Если дошли сюда → все ключи и модели исчерпаны
-        logger.error("Все ключи и модели дали сбой.")
-        return "Извините, не удалось обработать аудио — все ключи и модели вернули ошибку."
-
-    except FileNotFoundError as fnf_error:
-        logging.info(f"Файл не найден: {fnf_error}")
+    # Проверяем существование файла
+    if not os.path.exists(audio_file_path):
         return "Аудиофайл не найден. Проверьте путь к файлу."
 
+    audio_path = pathlib.Path(audio_file_path)
+
+    try:
+        keys_to_try = key_manager.get_keys_to_try()
+        for api_key in keys_to_try:
+            try:
+                client = genai.Client(api_key=api_key)
+
+                try:
+                    audio_file = client.files.upload(file=audio_path)
+                except Exception:
+                    continue  # пробуем следующий ключ
+
+                # Ожидание обработки файла
+                while audio_file.state == "PROCESSING":
+                    await asyncio.sleep(5)
+                    audio_file = client.files.get(name=audio_file.name)
+
+                if audio_file.state == "FAILED":
+                    continue
+
+                # Перебор моделей: сначала основная, потом запасные
+                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                for model_name in models_to_try:
+                    try:
+                        google_search_tool = Tool(google_search=GoogleSearch())
+                        safety_settings = [
+                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                        ]
+
+                        response = await client.aio.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                types.Content(
+                                    role="user",
+                                    parts=[
+                                        types.Part.from_uri(
+                                            file_uri=audio_file.uri,
+                                            mime_type=audio_file.mime_type
+                                        )
+                                    ]
+                                ),
+                                command_text
+                            ],
+                            config=types.GenerateContentConfig(
+                                temperature=1.4,
+                                top_p=0.95,
+                                top_k=25,
+                                tools=[google_search_tool],
+                                safety_settings=safety_settings
+                            )
+                        )
+
+                        if not response.candidates or not response.candidates[0].content.parts:
+                            continue
+
+                        bot_response = ''.join(
+                            part.text for part in response.candidates[0].content.parts if part.text
+                        ).strip()
+
+                        if bot_response:
+                            await key_manager.set_successful_key(api_key)
+                            return bot_response
+
+                    except Exception as e:
+                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
+                        continue
+
+            except Exception as e:
+                logging.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
+                continue
+
+        return "Извините, я не смог обработать это аудио ни с одним ключом или моделью."
+
     except Exception as e:
-        logging.info("Ошибка при обработке аудиофайла с Gemini:", exc_info=True)
-        return "Ошибка при обработке аудиофайла. Попробуйте снова."
+        logging.error("Ошибка при обработке аудио:", exc_info=True)
+        return "Ошибка при обработке аудио. Попробуйте снова."
+
     finally:
         # Удаляем временный файл
         if 'audio_file_path' in locals() and os.path.exists(audio_file_path):
@@ -1593,6 +1577,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                 logger.info(f"Временный файл удален: {audio_file_path}")
             except Exception as e:
                 logger.error(f"Ошибка при удалении временного файла: {e}")
+
 
 
 
