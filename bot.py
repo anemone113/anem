@@ -2383,155 +2383,230 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio_type = "[Голосовое сообщение]" if update.message.voice else "[Аудиофайл]"
     full_caption = f"{audio_type} {caption}".strip()
 
-    try:
-        full_audio_response = await generate_audio_response(local_file_path, user_id, query=caption)
-        logger.info("Ответ от Gemini: %s", full_audio_response)
+    # Сообщение "ожидания"
+    waiting_message = await update.message.reply_text("🎧 Обрабатываю аудио...")
 
-        add_to_context(user_id, full_caption, message_type="user_send_audio")         
-        add_to_context(user_id, full_audio_response, message_type="bot_audio_response")
-        save_context_to_firebase(user_id) 
+    async def process_audio():
+        try:
+            full_audio_response = await generate_audio_response(local_file_path, user_id, query=caption)
+            logger.info("Ответ от Gemini: %s", full_audio_response)
 
-        # Разбивка текста на части по 4096 символов
-        for i in range(0, len(full_audio_response), MAX_MESSAGE_LENGTH):
-            part = full_audio_response[i:i+MAX_MESSAGE_LENGTH]
-            await update.message.reply_text(part)
+            add_to_context(user_id, full_caption, message_type="user_send_audio")
+            add_to_context(user_id, full_audio_response, message_type="bot_audio_response")
+            save_context_to_firebase(user_id)
 
-    finally:
-        os.remove(local_file_path)
+            # Разбивка текста на части по 4096 символов
+            if len(full_audio_response) <= MAX_MESSAGE_LENGTH:
+                await waiting_message.edit_text(full_audio_response)
+            else:
+                parts = [full_audio_response[i:i+MAX_MESSAGE_LENGTH] for i in range(0, len(full_audio_response), MAX_MESSAGE_LENGTH)]
+                await waiting_message.edit_text(parts[0])
+                for i, part in enumerate(parts[1:], start=1):
+                    await update.message.reply_text(part)
+
+        except Exception as e:
+            logger.error("Ошибка при обработке аудио: %s", e)
+            await waiting_message.edit_text("⚠️ Произошла ошибка при обработке аудио. Попробуйте снова.")
+
+        finally:
+            os.remove(local_file_path)
+
+    asyncio.create_task(process_audio())
+
 
 async def handle_gptgif(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.message.chat_id)
     username = update.message.from_user.username or update.message.from_user.first_name
-    user_id = update.message.from_user.id  # Получение user_id
+    user_id = update.message.from_user.id
     caption = update.message.caption or ""
 
     logger.info("Обработка GIF от пользователя")
 
-    # Скачивание GIF
-    animation = update.message.animation
-    file = await context.bot.get_file(animation.file_id)
+    # Сообщение пользователю, что идёт обработка
+    waiting_message = await update.message.reply_text("Обрабатываю GIF...")
 
-    # Определение исходного расширения файла
-    file_extension = os.path.splitext(file.file_path)[1] or ".mp4"  # Если расширение неизвестно, используем .mp4
+    async def process_gif():
+        animation = update.message.animation
+        file = await context.bot.get_file(animation.file_id)
 
-    # Создание временного файла с исходным расширением
-    fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
+        # Определение исходного расширения
+        file_extension = os.path.splitext(file.file_path)[1] or ".mp4"
 
-    # Закрытие файлового дескриптора, чтобы освободить ресурс
-    os.close(fd)
+        # Создание временного файла
+        fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
+        os.close(fd)
 
-    # Загрузка GIF в файл
-    await file.download_to_drive(local_file_path)
+        try:
+            # Загрузка GIF в файл
+            await file.download_to_drive(local_file_path)
 
-    try:
-       
-        # Генерация ответа
-        full_animation_response = await generate_video_response(local_file_path, user_id, query=caption)
-        add_to_context(user_id, caption, message_type="user_send_gif")         
-        add_to_context(user_id, full_animation_response, message_type="bot_gif_response")  # Добавляем ответ в контекст
-        save_context_to_firebase(user_id)    
-        # Отправка текста с результатом пользователю
-        await update.message.reply_text(full_animation_response)
-    finally:
-        # Удаление временного файла
-        os.remove(local_file_path)
+            # Генерация ответа
+            full_animation_response = await generate_video_response(
+                local_file_path,
+                user_id,
+                query=caption
+            )
+
+            add_to_context(user_id, caption, message_type="user_send_gif")
+            add_to_context(user_id, full_animation_response, message_type="bot_gif_response")
+            save_context_to_firebase(user_id)
+
+            if full_animation_response:
+                # Отправка ответа пользователю (с учётом длинных сообщений)
+                text_parts = await send_reply_with_limit(full_animation_response)
+
+                if len(text_parts) == 1:
+                    await waiting_message.edit_text(
+                        text_parts[0],
+                        parse_mode='MarkdownV2',
+                        reply_markup=collapsed_menu
+                    )
+                else:
+                    await waiting_message.edit_text(text_parts[0], parse_mode='MarkdownV2')
+                    for i, part in enumerate(text_parts[1:], start=1):
+                        is_last = (i == len(text_parts) - 1)
+                        await update.message.reply_text(
+                            part,
+                            parse_mode='MarkdownV2',
+                            reply_markup=collapsed_menu if is_last else None
+                        )
+            else:
+                await waiting_message.edit_text("Произошла ошибка при обработке GIF. Попробуйте снова. /restart")
+
+        except Exception as e:
+            await waiting_message.edit_text(f"Ошибка: {e}")
+
+        finally:
+            if os.path.exists(local_file_path):
+                os.remove(local_file_path)
+
+    # Запускаем обработку GIF в фоне
+    asyncio.create_task(process_gif())
+
 
 async def handle_gptvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     chat_id = str(update.message.chat_id)
     username = update.message.from_user.username or update.message.from_user.first_name
-    user_id = update.message.from_user.id  # Получение user_id
+    user_id = update.message.from_user.id
     caption = update.message.caption or ""
 
-    logger.info("Обработка видео от пользователя")
+    logger.info(f"Обработка видео от пользователя {username} ({user_id})")
 
+    waiting_message = await update.message.reply_text("Обрабатываю видео...")
 
-    # Скачивание видеофайла
-    video = update.message.video
-    file = await context.bot.get_file(video.file_id)
+    async def process_video():
+        video = update.message.video
+        file = await context.bot.get_file(video.file_id)
 
-    # Определение исходного расширения файла
-    file_extension = os.path.splitext(file.file_path)[1] or ".mp4"  # Если расширение неизвестно, используем .mp4
+        # Определение исходного расширения файла
+        file_extension = os.path.splitext(file.file_path)[1] or ".mp4"
 
-    # Создание временного файла с исходным расширением
-    fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
+        # Создание временного файла с исходным расширением
+        fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
+        os.close(fd)
 
-    # Закрытие файлового дескриптора, чтобы освободить ресурс
-    os.close(fd)
+        try:
+            # Скачивание видео
+            await file.download_to_drive(local_file_path)
 
-    # Загрузка видео в файл
-    await file.download_to_drive(local_file_path)
+            # Генерация ответа
+            full_video_response = await generate_video_response(
+                local_file_path,
+                user_id,
+                query=caption
+            )
 
-    try:
-        # Генерация ответа
+            # Добавление в контекст
+            add_to_context(user_id, caption, message_type="user_send_video")
+            add_to_context(user_id, full_video_response, message_type="bot_video_response")
+            save_context_to_firebase(user_id)
+
+            if full_video_response:
+                await waiting_message.edit_text(full_video_response)
+            else:
+                await waiting_message.edit_text("Не удалось обработать видео. Попробуйте снова. /restart")
+
+        except Exception as e:
+            await waiting_message.edit_text(f"Ошибка при обработке видео: {e}")
+
+        finally:
+            if os.path.exists(local_file_path):
+                os.remove(local_file_path)
+
+    # Запускаем фоновую задачу
+    asyncio.create_task(process_video())
         
-        full_video_response = await generate_video_response(local_file_path, user_id, query=caption)
-        add_to_context(user_id, caption, message_type="user_send_video")        
-        add_to_context(user_id, full_video_response, message_type="bot_video_response")  # Добавляем ответ в контекст 
-        save_context_to_firebase(user_id)
-        # Отправка текста с результатом пользователю
-        await update.message.reply_text(full_video_response)
-    finally:
-        # Удаление временного файла
-        os.remove(local_file_path)
-        
+import asyncio
+import os
+import tempfile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
 async def handle_documentgpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.message.chat_id)
     username = update.message.from_user.username or update.message.from_user.first_name
     user_id = update.message.from_user.id
     caption = update.message.caption or ""
-    
+
     reset_button = InlineKeyboardMarkup([
         [InlineKeyboardButton("✂️Сбросить диалог✂️", callback_data='reset_dialog')],
         [InlineKeyboardButton("📜\nВыбрать роль", callback_data='role_select')], 
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],         # Новая кнопка для запроса роли
+        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
     ])
-    
+
     logger.info("Обработка текстового документа от пользователя")
 
-    document = update.message.document
-    file = await context.bot.get_file(document.file_id)
+    # Сразу отправляем "заглушку", чтобы пользователь видел, что идёт работа
+    waiting_message = await update.message.reply_text("Обрабатываю документ...")
 
-    file_extension = os.path.splitext(document.file_name)[1] or ".txt"
+    async def process_document():
+        document = update.message.document
+        file = await context.bot.get_file(document.file_id)
 
-    fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
-    os.close(fd)
+        file_extension = os.path.splitext(document.file_name)[1] or ".txt"
 
-    await file.download_to_drive(local_file_path)
+        fd, local_file_path = tempfile.mkstemp(suffix=file_extension)
+        os.close(fd)
 
-    try:
-       
-        full_text_response = await generate_document_response(local_file_path, user_id, caption)
-        add_to_context(user_id, caption, message_type="user_send_document")         
-        add_to_context(user_id, full_text_response, message_type="bot_document_response")
-        save_context_to_firebase(user_id)        
-        # Разбиваем текст на части
-        text_parts = await send_reply_with_limit(full_text_response)
+        try:
+            await file.download_to_drive(local_file_path)
 
-        logger.info(f"text_parts {text_parts}")
+            full_text_response = await generate_document_response(local_file_path, user_id, caption)
 
-        # Отправляем каждую часть, но кнопки добавляем только к последней
-        for i, part in enumerate(text_parts):
-            is_last_part = i == len(text_parts) - 1  # Последняя ли это часть?
+            add_to_context(user_id, caption, message_type="user_send_document")         
+            add_to_context(user_id, full_text_response, message_type="bot_document_response")
+            save_context_to_firebase(user_id)        
 
-            reply_markup = reset_button if is_last_part else None  # Кнопки только в последнем сообщении
+            # Разбиваем текст на части
+            text_parts = await send_reply_with_limit(full_text_response)
+            logger.info(f"text_parts {text_parts}")
 
-            if update.callback_query:
-                await update.callback_query.message.reply_text(
-                    part,
-                    reply_markup=reply_markup,
-                    parse_mode='MarkdownV2'
+            # Первую часть заменяем в "ожидании"
+            if text_parts:
+                await waiting_message.edit_text(
+                    text_parts[0],
+                    parse_mode='MarkdownV2',
+                    reply_markup=reset_button if len(text_parts) == 1 else None
                 )
-            else:
+
+            # Остальные части отправляем отдельными сообщениями
+            for i, part in enumerate(text_parts[1:], start=1):
+                is_last_part = i == len(text_parts) - 1
                 await update.message.reply_text(
                     part,
-                    reply_markup=reply_markup,
+                    reply_markup=reset_button if is_last_part else None,
                     parse_mode='MarkdownV2'
                 )
 
+        except Exception as e:
+            logger.error(f"Ошибка обработки документа: {e}")
+            await waiting_message.edit_text(f"Ошибка при обработке документа: {e}")
+        finally:
+            os.remove(local_file_path)
 
-    finally:
-        os.remove(local_file_path)
+    # Запускаем асинхронную задачу в фоне
+    asyncio.create_task(process_document())
+
 
 
 async def gpt_running(update: Update, context: CallbackContext) -> int:
