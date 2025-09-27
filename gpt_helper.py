@@ -1389,6 +1389,10 @@ async def generate_document_response(document_path, user_id, query=None):
         keys_to_try = key_manager.get_keys_to_try()
         logging.info(f"Начинаем перебор {len(keys_to_try)} API-ключей.")
 
+        successful_upload = None
+        successful_key = None
+
+        # 1. Перебор ключей только с основной моделью
         for idx, api_key in enumerate(keys_to_try, start=1):
             logging.info(f"[{idx}/{len(keys_to_try)}] Пробуем ключ ...{api_key[-4:]}")
 
@@ -1404,70 +1408,115 @@ async def generate_document_response(document_path, user_id, query=None):
                     logging.warning(f"Ошибка загрузки документа с ключом ...{api_key[-4:]}: {e}")
                     continue  # пробуем следующий ключ
 
-                # Перебор моделей: сначала основная, потом запасные
-                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-                logging.info(f"Будем проверять {len(models_to_try)} моделей на ключе ...{api_key[-4:]}")
+                # Пробуем только основную модель
+                try:
+                    logging.info(f"→ Пробуем модель {PRIMARY_MODEL} с ключом ...{api_key[-4:]}")
+                    google_search_tool = Tool(google_search=GoogleSearch())
 
-                for model_name in models_to_try:
-                    logging.info(f"→ Пробуем модель {model_name} с ключом ...{api_key[-4:]}")
-
-                    try:
-                        google_search_tool = Tool(google_search=GoogleSearch())
-
-                        response = await client.aio.models.generate_content(
-                            model=model_name,
-                            contents=[
-                                types.Content(
-                                    role="user",
-                                    parts=[
-                                        types.Part.from_uri(
-                                            file_uri=file_upload.uri,
-                                            mime_type=file_upload.mime_type
-                                        )
-                                    ]
-                                ),
-                                command_text
-                            ],
-                            config=types.GenerateContentConfig(
-                                temperature=1.4,
-                                top_p=0.95,
-                                top_k=25,
-                                tools=[google_search_tool],
-                                safety_settings=[
-                                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                    response = await client.aio.models.generate_content(
+                        model=PRIMARY_MODEL,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_uri(
+                                        file_uri=file_upload.uri,
+                                        mime_type=file_upload.mime_type
+                                    )
                                 ]
-                            )
+                            ),
+                            command_text
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=1.4,
+                            top_p=0.95,
+                            top_k=25,
+                            tools=[google_search_tool],
+                            safety_settings=[
+                                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                            ]
                         )
+                    )
 
-                        if not response.candidates or not response.candidates[0].content.parts:
-                            logging.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} вернула пустой ответ.")
-                            continue
-
+                    if response.candidates and response.candidates[0].content.parts:
                         bot_response = ''.join(
                             part.text for part in response.candidates[0].content.parts if part.text
                         ).strip()
 
                         if bot_response:
-                            logging.info(f"✅ Успех! Ключ ...{api_key[-4:]} и модель {model_name} сработали.")
+                            logging.info(f"✅ Успех! Ключ ...{api_key[-4:]} сработал на основной модели.")
                             await key_manager.set_successful_key(api_key)
                             return bot_response
 
-                    except Exception as e:
-                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
-                        # идём к следующей модели
+                except Exception as e:
+                    logging.warning(f"Ошибка на основной модели с ключом ...{api_key[-4:]}: {e}")
+                    # идём к следующему ключу
 
-                logging.warning(f"❌ Все модели провалились с ключом ...{api_key[-4:]}, пробуем следующий ключ.")
+                # Запоминаем последний успешный аплоад для fallback-моделей
+                successful_upload = file_upload
+                successful_key = api_key
 
             except Exception as e:
                 logging.warning(f"Ошибка при инициализации клиента с ключом ...{api_key[-4:]}: {e}")
                 continue
 
-        logging.error("🚨 Все ключи перепробованы, ни один не сработал.")
-        return "К сожалению, обработка документа не удалась. Попробуйте позже."
+        # 2. Если все ключи упали → пробуем fallback-модели на последнем доступном ключе
+        if successful_key and successful_upload:
+            logging.warning("❌ Все ключи упали на основной модели. Пробуем fallback-модели.")
+            client = genai.Client(api_key=successful_key)
 
+            for model_name in FALLBACK_MODELS:
+                logging.info(f"→ Пробуем fallback-модель {model_name} с ключом ...{successful_key[-4:]}")
+
+                try:
+                    response = await client.aio.models.generate_content(
+                        model=model_name,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_uri(
+                                        file_uri=successful_upload.uri,
+                                        mime_type=successful_upload.mime_type
+                                    )
+                                ]
+                            ),
+                            command_text
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=1.4,
+                            top_p=0.95,
+                            top_k=25,
+                            tools=[Tool(google_search=GoogleSearch())],
+                            safety_settings=[
+                                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                            ]
+                        )
+                    )
+
+                    if response.candidates and response.candidates[0].content.parts:
+                        bot_response = ''.join(
+                            part.text for part in response.candidates[0].content.parts if part.text
+                        ).strip()
+
+                        if bot_response:
+                            logging.info(f"✅ Успех! Ключ ...{successful_key[-4:]} и модель {model_name} сработали.")
+                            await key_manager.set_successful_key(successful_key)
+                            return bot_response
+
+                except Exception as e:
+                    logging.warning(f"Ошибка на fallback-модели {model_name} с ключом ...{successful_key[-4:]}: {e}")
+                    # пробуем следующую модель
+
+        logging.error("🚨 Все ключи и fallback-модели перепробованы, ни один не сработал.")
+        return "К сожалению, обработка документа не удалась. Попробуйте позже."
+        
     except Exception as e:
         logging.error("Ошибка при обработке документа:", exc_info=True)
         return "Ошибка при обработке документа. Попробуйте снова."
