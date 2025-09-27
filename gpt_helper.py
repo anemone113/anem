@@ -892,8 +892,11 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
         keys_to_try = key_manager.get_keys_to_try()
         logger.info(f"Будет протестировано {len(keys_to_try)} ключей")
 
+        # Сначала пробуем только основную модель на всех ключах
+        last_key = None
         for idx, api_key in enumerate(keys_to_try, start=1):
             logger.info(f"[{idx}/{len(keys_to_try)}] Проверка ключа ...{api_key[-4:]}")
+            last_key = api_key
 
             try:
                 client = genai.Client(api_key=api_key)
@@ -913,12 +916,67 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                     types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
                 ]
 
-                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-                logger.info(f"Будет протестировано {len(models_to_try)} моделей для ключа ...{api_key[-4:]}")
+                # Пробуем только основную модель
+                logger.info(f"Попытка генерации с основной моделью {PRIMARY_MODEL} и ключом ...{api_key[-4:]}")
+                try:
+                    response = await client.aio.models.generate_content(
+                        model=PRIMARY_MODEL,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_uri(
+                                        file_uri=image_file.uri,
+                                        mime_type=image_file.mime_type
+                                    ),
+                                    types.Part(text=f"Пользователь прислал изображение: {context}\n"),
+                                ]
+                            )
+                        ],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            temperature=1.0,
+                            top_p=0.9,
+                            top_k=40,
+                            safety_settings=safety_settings
+                        )
+                    )
 
-                for model_name in models_to_try:
-                    logger.info(f"Попытка генерации с моделью {model_name} и ключом ...{api_key[-4:]}")
+                    if response.candidates and response.candidates[0].content.parts:
+                        response_text = "".join(
+                            part.text for part in response.candidates[0].content.parts
+                            if part.text and not getattr(part, "thought", False)
+                        ).strip()
 
+                        if response_text:
+                            logger.info(f"Успех: модель {PRIMARY_MODEL} с ключом ...{api_key[-4:]} дала результат")
+                            await key_manager.set_successful_key(api_key)
+                            return response_text
+
+                except Exception as e_model:
+                    logger.warning(f"Основная модель {PRIMARY_MODEL} с ключом ...{api_key[-4:]} не сработала: {e_model}")
+                    continue
+
+            except Exception as e_key:
+                logger.warning(f"Ошибка при использовании ключа ...{api_key[-4:]}: {e_key}")
+                continue
+
+        # Если мы тут – все ключи с основной моделью провалились
+        if last_key:
+            logger.info(f"Все ключи провалились, пробуем fallback-модели на последнем ключе ...{last_key[-4:]}")
+            try:
+                client = genai.Client(api_key=last_key)
+                image_file = client.files.upload(file=image_path_obj)
+
+                safety_settings = [
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+
+                for model_name in FALLBACK_MODELS:
+                    logger.info(f"Попытка генерации с fallback-моделью {model_name} и ключом ...{last_key[-4:]}")
                     try:
                         response = await client.aio.models.generate_content(
                             model=model_name,
@@ -943,27 +1001,21 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                             )
                         )
 
-                        if not response.candidates or not response.candidates[0].content.parts:
-                            logger.warning(f"Пустой ответ от модели {model_name} с ключом ...{api_key[-4:]}")
-                            continue
+                        if response.candidates and response.candidates[0].content.parts:
+                            response_text = "".join(
+                                part.text for part in response.candidates[0].content.parts
+                                if part.text and not getattr(part, "thought", False)
+                            ).strip()
 
-                        response_text = "".join(
-                            part.text for part in response.candidates[0].content.parts
-                            if part.text and not getattr(part, "thought", False)
-                        ).strip()
+                            if response_text:
+                                logger.info(f"Успех: fallback-модель {model_name} с ключом ...{last_key[-4:]} дала результат")
+                                return response_text
 
-                        if response_text:
-                            logger.info(f"Успех: модель {model_name} с ключом ...{api_key[-4:]} дала результат")
-                            await key_manager.set_successful_key(api_key)
-                            return response_text
-
-                    except Exception as e_model:
-                        logger.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} не сработала: {e_model}")
+                    except Exception as e_fallback:
+                        logger.warning(f"Fallback-модель {model_name} не сработала: {e_fallback}")
                         continue
-
-            except Exception as e_key:
-                logger.warning(f"Ошибка при использовании ключа ...{api_key[-4:]}: {e_key}")
-                continue
+            except Exception as e_last:
+                logger.error(f"Не удалось работать с последним ключом ...{last_key[-4:]}: {e_last}")
 
         logger.error("Все ключи и модели были перепробованы, результата нет")
         return "К сожалению, все ключи и модели исчерпаны. Попробуйте позже."
@@ -1129,6 +1181,8 @@ async def generate_animation_response(video_file_path, user_id, query=None):
 
     try:
         keys_to_try = key_manager.get_keys_to_try()
+
+        # 1. Пробуем все ключи только с основной моделью
         for api_key in keys_to_try:
             try:
                 client = genai.Client(api_key=api_key)
@@ -1136,9 +1190,9 @@ async def generate_animation_response(video_file_path, user_id, query=None):
                 try:
                     video_file = client.files.upload(file=video_path)
                 except Exception:
-                    continue  # Пробуем следующий ключ
+                    continue  # Ошибка загрузки файла → пробуем следующий ключ
 
-                # Ожидание обработки видео
+                # Ждём завершения обработки
                 while video_file.state == "PROCESSING":
                     await asyncio.sleep(10)
                     video_file = client.files.get(name=video_file.name)
@@ -1146,18 +1200,67 @@ async def generate_animation_response(video_file_path, user_id, query=None):
                 if video_file.state == "FAILED":
                     continue
 
-                # Перебор моделей: сначала основная, потом запасные
-                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-                for model_name in models_to_try:
-                    try:
-                        safety_settings = [
-                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-                        ]
-                        google_search_tool = Tool(google_search=GoogleSearch())
+                # Пробуем только основную модель
+                try:
+                    safety_settings = [
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                    ]
+                    google_search_tool = Tool(google_search=GoogleSearch())
 
+                    response = await client.aio.models.generate_content(
+                        model=PRIMARY_MODEL,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_uri(
+                                        file_uri=video_file.uri,
+                                        mime_type=video_file.mime_type
+                                    )
+                                ]
+                            ),
+                            command_text
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=1.2,
+                            top_p=0.9,
+                            top_k=40,
+                            tools=[google_search_tool],
+                            safety_settings=safety_settings
+                        )
+                    )
+
+                    if response.candidates and response.candidates[0].content.parts:
+                        bot_response = ''.join(
+                            part.text for part in response.candidates[0].content.parts if part.text
+                        ).strip()
+                        if bot_response:
+                            await key_manager.set_successful_key(api_key)
+                            return bot_response
+
+                except Exception as e:
+                    logging.warning(f"Ошибка на основной модели с ключом ...{api_key[-4:]}: {e}")
+                    continue
+
+            except Exception as e:
+                logging.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
+                continue
+
+        # 2. Если все ключи упали → берём последний ключ и пробуем запасные модели
+        fallback_key = keys_to_try[-1]
+        try:
+            client = genai.Client(api_key=fallback_key)
+
+            video_file = client.files.upload(file=video_path)
+            while video_file.state == "PROCESSING":
+                await asyncio.sleep(10)
+                video_file = client.files.get(name=video_file.name)
+            if video_file.state != "FAILED":
+                for model_name in FALLBACK_MODELS:
+                    try:
                         response = await client.aio.models.generate_content(
                             model=model_name,
                             contents=[
@@ -1176,30 +1279,28 @@ async def generate_animation_response(video_file_path, user_id, query=None):
                                 temperature=1.2,
                                 top_p=0.9,
                                 top_k=40,
-                                tools=[google_search_tool],
-                                safety_settings=safety_settings
+                                tools=[Tool(google_search=GoogleSearch())],
+                                safety_settings=[
+                                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                                ]
                             )
                         )
-
-                        if not response.candidates or not response.candidates[0].content.parts:
-                            continue
-
-                        bot_response = ''.join(
-                            part.text for part in response.candidates[0].content.parts if part.text
-                        ).strip()
-
-                        if bot_response:
-                            await key_manager.set_successful_key(api_key)
-                            return bot_response
-
+                        if response.candidates and response.candidates[0].content.parts:
+                            bot_response = ''.join(
+                                part.text for part in response.candidates[0].content.parts if part.text
+                            ).strip()
+                            if bot_response:
+                                return bot_response
                     except Exception as e:
-                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
+                        logging.warning(f"Ошибка на запасной модели {model_name} с ключом ...{fallback_key[-4:]}: {e}")
                         continue
+        except Exception as e:
+            logging.error(f"Ошибка при работе с последним ключом ...{fallback_key[-4:]}: {e}")
 
-            except Exception as e:
-                logging.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
-                continue
-
+        # Если дошли сюда → всё сломалось
         return "Извините, я не смог обработать это видео ни с одним ключом или моделью."
 
     except Exception as e:
@@ -1257,14 +1358,17 @@ async def generate_video_response(video_file_path, user_id, query=None):
         return "Видео недоступно. Попробуйте снова."
 
     video_path = pathlib.Path(video_file_path)
-
     try:
         keys_to_try = key_manager.get_keys_to_try()
+        success = False
+        bot_response = None
+
+        # 1. Перебор ключей только с основной моделью
         for api_key in keys_to_try:
             try:
                 client = genai.Client(api_key=api_key)
 
-                # Загружаем файл через текущий client
+                # Загружаем файл
                 try:
                     video_file = client.files.upload(file=video_path)
                 except Exception:
@@ -1278,58 +1382,106 @@ async def generate_video_response(video_file_path, user_id, query=None):
                 if video_file.state == "FAILED":
                     continue
 
-                # Настройки генерации
-                safety_settings = [
-                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-                ]
-                google_search_tool = Tool(google_search=GoogleSearch())
-
-                # Перебор моделей
-                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-                for model_name in models_to_try:
-                    try:
-                        response = await client.aio.models.generate_content(
-                            model=model_name,
-                            contents=[
-                                types.Content(
-                                    role="user",
-                                    parts=[types.Part.from_uri(
-                                        file_uri=video_file.uri,
-                                        mime_type=video_file.mime_type
-                                    )]
-                                ),
-                                command_text
-                            ],
-                            config=types.GenerateContentConfig(
-                                temperature=1.2,
-                                top_p=0.9,
-                                top_k=40,
-                                tools=[google_search_tool],
-                                safety_settings=safety_settings
-                            )
+                # Генерация только основной моделью
+                try:
+                    response = await client.aio.models.generate_content(
+                        model=PRIMARY_MODEL,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[types.Part.from_uri(
+                                    file_uri=video_file.uri,
+                                    mime_type=video_file.mime_type
+                                )]
+                            ),
+                            command_text
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=1.2,
+                            top_p=0.9,
+                            top_k=40,
+                            tools=[Tool(google_search=GoogleSearch())],
+                            safety_settings=[
+                                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                            ]
                         )
+                    )
 
-                        if not response.candidates or not response.candidates[0].content.parts:
-                            continue
-
+                    if response.candidates and response.candidates[0].content.parts:
                         bot_response = ''.join(
                             part.text for part in response.candidates[0].content.parts if part.text
                         ).strip()
 
                         if bot_response:
                             await key_manager.set_successful_key(api_key)
+                            success = True
                             return bot_response
 
-                    except Exception as e:
-                        logger.warning(f"Ошибка с моделью {model_name}, ключ=...{api_key[-4:]}: {e}")
-                        continue
+                except Exception as e:
+                    logger.warning(f"Ошибка с основной моделью, ключ=...{api_key[-4:]}: {e}")
+                    continue
 
             except Exception as e:
                 logger.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
                 continue
+
+        # 2. Если все ключи провалились — пробуем последний ключ со всеми моделями
+        if not success:
+            last_key = keys_to_try[-1]
+            try:
+                client = genai.Client(api_key=last_key)
+                video_file = client.files.upload(file=video_path)
+
+                while video_file.state == "PROCESSING":
+                    await asyncio.sleep(10)
+                    video_file = client.files.get(name=video_file.name)
+
+                if video_file.state != "FAILED":
+                    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS:
+                        try:
+                            response = await client.aio.models.generate_content(
+                                model=model_name,
+                                contents=[
+                                    types.Content(
+                                        role="user",
+                                        parts=[types.Part.from_uri(
+                                            file_uri=video_file.uri,
+                                            mime_type=video_file.mime_type
+                                        )]
+                                    ),
+                                    command_text
+                                ],
+                                config=types.GenerateContentConfig(
+                                    temperature=1.2,
+                                    top_p=0.9,
+                                    top_k=40,
+                                    tools=[Tool(google_search=GoogleSearch())],
+                                    safety_settings=[
+                                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                                    ]
+                                )
+                            )
+
+                            if response.candidates and response.candidates[0].content.parts:
+                                bot_response = ''.join(
+                                    part.text for part in response.candidates[0].content.parts if part.text
+                                ).strip()
+
+                                if bot_response:
+                                    return bot_response
+
+                        except Exception as e:
+                            logger.warning(f"Ошибка с моделью {model_name}, последний ключ=...{last_key[-4:]}: {e}")
+                            continue
+
+            except Exception as e:
+                logger.warning(f"Ошибка при переборе моделей с последним ключом ...{last_key[-4:]}: {e}")
 
         return "Извините, я не смог обработать это видео ни с одним ключом или моделью."
 
@@ -1389,8 +1541,8 @@ async def generate_document_response(document_path, user_id, query=None):
         keys_to_try = key_manager.get_keys_to_try()
         logging.info(f"Начинаем перебор {len(keys_to_try)} API-ключей.")
 
-        successful_upload = None
-        successful_key = None
+        last_key = None
+        last_upload = None
 
         # 1. Перебор ключей только с основной моделью
         for idx, api_key in enumerate(keys_to_try, start=1):
@@ -1453,23 +1605,22 @@ async def generate_document_response(document_path, user_id, query=None):
 
                 except Exception as e:
                     logging.warning(f"Ошибка на основной модели с ключом ...{api_key[-4:]}: {e}")
-                    # идём к следующему ключу
 
-                # Запоминаем последний успешный аплоад для fallback-моделей
-                successful_upload = file_upload
-                successful_key = api_key
+                # если дошли сюда — модель не дала результата, но файл загружен
+                last_key = api_key
+                last_upload = file_upload
 
             except Exception as e:
                 logging.warning(f"Ошибка при инициализации клиента с ключом ...{api_key[-4:]}: {e}")
                 continue
 
-        # 2. Если все ключи упали → пробуем fallback-модели на последнем доступном ключе
-        if successful_key and successful_upload:
+        # 2. Если все ключи упали → пробуем fallback-модели только на последнем ключе
+        if last_key and last_upload:
             logging.warning("❌ Все ключи упали на основной модели. Пробуем fallback-модели.")
-            client = genai.Client(api_key=successful_key)
+            client = genai.Client(api_key=last_key)
 
             for model_name in FALLBACK_MODELS:
-                logging.info(f"→ Пробуем fallback-модель {model_name} с ключом ...{successful_key[-4:]}")
+                logging.info(f"→ Пробуем fallback-модель {model_name} с ключом ...{last_key[-4:]}")
 
                 try:
                     response = await client.aio.models.generate_content(
@@ -1479,8 +1630,8 @@ async def generate_document_response(document_path, user_id, query=None):
                                 role="user",
                                 parts=[
                                     types.Part.from_uri(
-                                        file_uri=successful_upload.uri,
-                                        mime_type=successful_upload.mime_type
+                                        file_uri=last_upload.uri,
+                                        mime_type=last_upload.mime_type
                                     )
                                 ]
                             ),
@@ -1506,13 +1657,13 @@ async def generate_document_response(document_path, user_id, query=None):
                         ).strip()
 
                         if bot_response:
-                            logging.info(f"✅ Успех! Ключ ...{successful_key[-4:]} и модель {model_name} сработали.")
-                            await key_manager.set_successful_key(successful_key)
+                            logging.info(f"✅ Успех! Ключ ...{last_key[-4:]} и модель {model_name} сработали.")
+                            await key_manager.set_successful_key(last_key)
                             return bot_response
 
                 except Exception as e:
-                    logging.warning(f"Ошибка на fallback-модели {model_name} с ключом ...{successful_key[-4:]}: {e}")
-                    # пробуем следующую модель
+                    logging.warning(f"Ошибка на fallback-модели {model_name} с ключом ...{last_key[-4:]}: {e}")
+                    continue
 
         logging.error("🚨 Все ключи и fallback-модели перепробованы, ни один не сработал.")
         return "К сожалению, обработка документа не удалась. Попробуйте позже."
@@ -1576,6 +1727,9 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
 
     try:
         keys_to_try = key_manager.get_keys_to_try()
+        last_error = None
+
+        # 1. Перебор всех ключей с основной моделью
         for api_key in keys_to_try:
             try:
                 client = genai.Client(api_key=api_key)
@@ -1585,7 +1739,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                 except Exception:
                     continue  # пробуем следующий ключ
 
-                # Ожидание обработки файла
+                # Ждём пока обработается
                 while audio_file.state == "PROCESSING":
                     await asyncio.sleep(5)
                     audio_file = client.files.get(name=audio_file.name)
@@ -1593,44 +1747,40 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                 if audio_file.state == "FAILED":
                     continue
 
-                # Перебор моделей: сначала основная, потом запасные
-                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-                for model_name in models_to_try:
-                    try:
-                        google_search_tool = Tool(google_search=GoogleSearch())
-                        safety_settings = [
-                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-                        ]
+                # Пробуем только основную модель
+                try:
+                    google_search_tool = Tool(google_search=GoogleSearch())
+                    safety_settings = [
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                    ]
 
-                        response = await client.aio.models.generate_content(
-                            model=model_name,
-                            contents=[
-                                types.Content(
-                                    role="user",
-                                    parts=[
-                                        types.Part.from_uri(
-                                            file_uri=audio_file.uri,
-                                            mime_type=audio_file.mime_type
-                                        )
-                                    ]
-                                ),
-                                command_text
-                            ],
-                            config=types.GenerateContentConfig(
-                                temperature=1.4,
-                                top_p=0.95,
-                                top_k=25,
-                                tools=[google_search_tool],
-                                safety_settings=safety_settings
-                            )
+                    response = await client.aio.models.generate_content(
+                        model=PRIMARY_MODEL,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_uri(
+                                        file_uri=audio_file.uri,
+                                        mime_type=audio_file.mime_type
+                                    )
+                                ]
+                            ),
+                            command_text
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=1.4,
+                            top_p=0.95,
+                            top_k=25,
+                            tools=[google_search_tool],
+                            safety_settings=safety_settings
                         )
+                    )
 
-                        if not response.candidates or not response.candidates[0].content.parts:
-                            continue
-
+                    if response.candidates and response.candidates[0].content.parts:
                         bot_response = ''.join(
                             part.text for part in response.candidates[0].content.parts if part.text
                         ).strip()
@@ -1639,13 +1789,79 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                             await key_manager.set_successful_key(api_key)
                             return bot_response
 
-                    except Exception as e:
-                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
-                        continue
+                except Exception as e:
+                    last_error = e
+                    logging.warning(f"Ошибка на основной модели {PRIMARY_MODEL} с ключом ...{api_key[-4:]}: {e}")
+                    continue
 
             except Exception as e:
+                last_error = e
                 logging.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
                 continue
+
+        # 2. Если все ключи не сработали → пробуем на последнем ключе все модели
+        if keys_to_try:
+            api_key = keys_to_try[-1]
+            try:
+                client = genai.Client(api_key=api_key)
+                audio_file = client.files.upload(file=audio_path)
+
+                while audio_file.state == "PROCESSING":
+                    await asyncio.sleep(5)
+                    audio_file = client.files.get(name=audio_file.name)
+
+                if audio_file.state != "FAILED":
+                    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                    for model_name in models_to_try:
+                        try:
+                            google_search_tool = Tool(google_search=GoogleSearch())
+                            safety_settings = [
+                                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                            ]
+
+                            response = await client.aio.models.generate_content(
+                                model=model_name,
+                                contents=[
+                                    types.Content(
+                                        role="user",
+                                        parts=[
+                                            types.Part.from_uri(
+                                                file_uri=audio_file.uri,
+                                                mime_type=audio_file.mime_type
+                                            )
+                                        ]
+                                    ),
+                                    command_text
+                                ],
+                                config=types.GenerateContentConfig(
+                                    temperature=1.4,
+                                    top_p=0.95,
+                                    top_k=25,
+                                    tools=[google_search_tool],
+                                    safety_settings=safety_settings
+                                )
+                            )
+
+                            if response.candidates and response.candidates[0].content.parts:
+                                bot_response = ''.join(
+                                    part.text for part in response.candidates[0].content.parts if part.text
+                                ).strip()
+
+                                if bot_response:
+                                    # Запоминаем ключ только, если он реально сработал
+                                    await key_manager.set_successful_key(api_key)
+                                    return bot_response
+
+                        except Exception as e:
+                            logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
+                            continue
+
+            except Exception as e:
+                last_error = e
+                logging.warning(f"Ошибка при переборе моделей на последнем ключе ...{api_key[-4:]}: {e}")
 
         return "Извините, я не смог обработать это аудио ни с одним ключом или моделью."
 
@@ -1654,13 +1870,13 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
         return "Ошибка при обработке аудио. Попробуйте снова."
 
     finally:
-        # Удаляем временный файл
         if 'audio_file_path' in locals() and os.path.exists(audio_file_path):
             try:
                 os.remove(audio_file_path)
                 logger.info(f"Временный файл удален: {audio_file_path}")
             except Exception as e:
                 logger.error(f"Ошибка при удалении временного файла: {e}")
+
 
 
 
@@ -1917,47 +2133,88 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
 
 
-    for model_name in models_to_try:
-        for api_key in key_manager.get_keys_to_try():
-            try:
-                client = genai.Client(api_key=api_key)
-
-                response = await client.aio.models.generate_content(
-                    model=model_name,
-                    contents=context,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=1.4,
-                        top_p=0.95,
-                        top_k=25,
-                        tools=[google_search_tool],
-                        safety_settings=[
-                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
-                        ]
-                    )
+    # Сначала пробуем основную модель на всех ключах
+    for api_key in key_manager.get_keys_to_try():
+        try:
+            client = genai.Client(api_key=api_key)
+            response = await client.aio.models.generate_content(
+                model=PRIMARY_MODEL,
+                contents=context,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                    ]
                 )
+            )
 
-                logging.info(f"response: {response}")
+            logging.info(f"response: {response}")
 
-                if response.candidates and response.candidates[0].content.parts:
-                    response_text = "".join(
-                        part.text for part in response.candidates[0].content.parts
-                        if part.text and not getattr(part, "thought", False)
-                    ).strip()
+            if response.candidates and response.candidates[0].content.parts:
+                response_text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
 
-                    # Запоминаем успешный ключ
-                    await key_manager.set_successful_key(api_key)
+                # Запоминаем успешный ключ
+                await key_manager.set_successful_key(api_key)
 
-                    return response_text if response_text else "Извините, я не могу ответить на этот запрос."
-                else:
-                    logging.warning("Ответ от модели не содержит текстового компонента.")
+                return response_text if response_text else "Извините, я не могу ответить на этот запрос."
+            else:
+                logging.warning("Ответ от модели не содержит текстового компонента.")
 
-            except Exception as e:
-                logging.error(f"Ошибка при генерации (модель={model_name}, ключ={api_key}): {e}")
-                continue  # Пробуем следующий ключ или модель
+        except Exception as e:
+            logging.error(f"Ошибка при генерации (модель={PRIMARY_MODEL}, ключ={api_key}): {e}")
+            continue  # Пробуем следующий ключ
+
+    # Если все ключи сломаны → перебираем модели на одном ключе (последнем)
+    last_key = key_manager.get_keys_to_try()[-1]
+    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS:
+        try:
+            client = genai.Client(api_key=last_key)
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=context,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                    ]
+                )
+            )
+
+            logging.info(f"response (fallback model): {response}")
+
+            if response.candidates and response.candidates[0].content.parts:
+                response_text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
+
+                # Запоминаем успешный ключ
+                await key_manager.set_successful_key(last_key)
+
+                return response_text if response_text else "Извините, я не могу ответить на этот запрос."
+            else:
+                logging.warning("Ответ от модели не содержит текстового компонента.")
+
+        except Exception as e:
+            logging.error(f"Ошибка при генерации (модель={model_name}, ключ={last_key}): {e}")
+            continue
 
     return "К сожалению, ни одна модель не смогла обработать запрос. Попробуйте позже."
 
@@ -1972,47 +2229,92 @@ def limit_response_length(text):
 
 
 async def generate_composition_comparison_response(user_id, images, query):
-    """Сравнивает составы продуктов/вещей на фото и даёт совет по выбору."""
     system_instruction = (
         "Ты эксперт по анализу составов продуктов и вещей. "
         "Твоя задача: сравни составы на фото и дай краткий совет, что выбрать лучше и почему. "
         "Если продукты принципиально разные и их сравнивать некорректно – честно скажи об этом пользователю. "
-        "Пиши очень лаконично, только полезные факты для выбора, без лишней информации, речевых оборотов и воды. "
-        "Максимум 200 слов. "
-        "Используй html-разметку, но исключительно ту что доступна в телеграм (<b>, <i>, <br>) если это улучшает читаемость."
+        "Пиши очень лаконично, максимум 200 слов. "
+        "Используй html-теги (<b>, <i>, <code>) если это улучшает читаемость."
     )
 
-    # Загружаем изображения заранее
     image_parts = []
     try:
         for image in images:
             with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
                 image.save(temp_file, format="JPEG")
-                image_path = temp_file.name
-
-            # Ключ и клиент будут подставляться позже в цикле
-            image_parts.append(image_path)
-
+                image_parts.append(temp_file.name)
     except Exception as e:
         logging.error(f"Ошибка при подготовке изображений: {e}")
         return "Ошибка при подготовке изображений. Попробуйте снова."
 
-    # Перебор ключей
+    # --- 1. Перебираем ключи только с основной моделью ---
+    last_key = None
     for api_key in key_manager.get_keys_to_try():
+        last_key = api_key
         try:
             client = genai.Client(api_key=api_key)
 
-            # Перебор моделей (сначала основная, потом запасные)
-            for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS:
+            # Загружаем файлы именно этим клиентом
+            uploaded_parts = []
+            for path in image_parts:
+                image_file = client.files.upload(file=pathlib.Path(path))
+                uploaded_parts.append(
+                    types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type)
+                )
+                os.remove(path)
+
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=uploaded_parts + [
+                        types.Part(text=f"Комментарий пользователя: {query}" if query else "")
+                    ]
+                )
+            ]
+
+            response = await client.aio.models.generate_content(
+                model=PRIMARY_MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.7,
+                    top_p=0.9,
+                    top_k=40,
+                    safety_settings=[
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                    ]
+                )
+            )
+
+            if response.candidates and response.candidates[0].content.parts:
+                response_text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
+
+                await key_manager.set_successful_key(api_key)
+                return response_text or "Не удалось сравнить составы."
+
+        except Exception as key_error:
+            logging.warning(f"Ошибка на ключе {api_key}: {key_error}")
+            continue  # пробуем следующий ключ
+
+    # --- 2. Если все ключи провалились — пробуем модели, но только на последнем ключе ---
+    if last_key:
+        try:
+            client = genai.Client(api_key=last_key)
+            for model_name in FALLBACK_MODELS:
                 try:
-                    # Загружаем файлы именно этим клиентом
                     uploaded_parts = []
                     for path in image_parts:
                         image_file = client.files.upload(file=pathlib.Path(path))
                         uploaded_parts.append(
                             types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type)
                         )
-                        os.remove(path)  # удаляем временный файл
+                        os.remove(path)
 
                     contents = [
                         types.Content(
@@ -2031,12 +2333,6 @@ async def generate_composition_comparison_response(user_id, images, query):
                             temperature=0.7,
                             top_p=0.9,
                             top_k=40,
-                            safety_settings=[
-                                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-                            ]
                         )
                     )
 
@@ -2046,18 +2342,13 @@ async def generate_composition_comparison_response(user_id, images, query):
                             if part.text and not getattr(part, "thought", False)
                         ).strip()
 
-                        # Сохраняем удачный ключ
-                        await key_manager.set_successful_key(api_key)
-
                         return response_text or "Не удалось сравнить составы."
 
                 except Exception as model_error:
-                    logging.warning(f"Ошибка на модели {model_name} с ключом {api_key}: {model_error}")
-                    continue  # пробуем следующую модель
-
-        except Exception as key_error:
-            logging.warning(f"Ошибка при работе с ключом {api_key}: {key_error}")
-            continue  # пробуем следующий ключ
+                    logging.warning(f"Ошибка на модели {model_name} с ключом {last_key}: {model_error}")
+                    continue
+        except Exception as fatal_key_error:
+            logging.error(f"Критическая ошибка на последнем ключе {last_key}: {fatal_key_error}")
 
     return "Все ключи и модели выдали ошибку. Попробуйте позже."
 
@@ -2073,10 +2364,9 @@ async def generate_mushrooms_multi_response(user_id, images, query):
         "Суммарная длина текста не должна быть выше 300 слов."
     )
 
-
     google_search_tool = Tool(google_search=GoogleSearch())
 
-    # Загружаем все изображения заранее (одноразово, чтобы не дублировать при переборах ключей/моделей)
+    # Загружаем изображения один раз
     image_parts = []
     for image in images:
         with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
@@ -2084,8 +2374,7 @@ async def generate_mushrooms_multi_response(user_id, images, query):
             image_path = temp_file.name
 
         try:
-            # Берём первый ключ для загрузки файлов (он одинаков для всех моделей)
-            client_upload = genai.Client(api_key=API_KEYS[0])
+            client_upload = genai.Client(api_key=API_KEYS[0])  # первый ключ для загрузки
             image_file = client_upload.files.upload(file=pathlib.Path(image_path))
             image_parts.append(
                 types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type)
@@ -2100,7 +2389,7 @@ async def generate_mushrooms_multi_response(user_id, images, query):
         )
     ]
 
-    # Сначала пробуем с ключами при основной модели
+    # --- 1. Перебор ключей только для основной модели ---
     keys_to_try = key_manager.get_keys_to_try()
     for key in keys_to_try:
         try:
@@ -2133,39 +2422,42 @@ async def generate_mushrooms_multi_response(user_id, images, query):
         except Exception as e:
             logging.warning(f"Ошибка с ключом {key} и моделью {PRIMARY_MODEL}: {e}")
 
-    # Если все ключи на основной модели не сработали — пробуем запасные модели
+    # --- 2. Если ВСЕ ключи с основной моделью сломались ---
+    # Берём один ключ (например, последний) и пробуем запасные модели
+    fallback_key = keys_to_try[-1]
     for model in FALLBACK_MODELS:
-        for key in keys_to_try:
-            try:
-                client = genai.Client(api_key=key)
-                response = await client.aio.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.9,
-                        top_p=0.9,
-                        top_k=40,
-                        tools=[google_search_tool],
-                        safety_settings=[
-                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-                        ]
-                    )
+        try:
+            client = genai.Client(api_key=fallback_key)
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.9,
+                    top_p=0.9,
+                    top_k=40,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                    ]
                 )
-                if response.candidates and response.candidates[0].content.parts:
-                    response_text = "".join(
-                        part.text for part in response.candidates[0].content.parts
-                        if part.text and not getattr(part, "thought", False)
-                    ).strip()
-                    if response_text:
-                        await key_manager.set_successful_key(key)
-                        return response_text
-            except Exception as e:
-                logging.warning(f"Ошибка с ключом {key} и моделью {model}: {e}")
+            )
+            if response.candidates and response.candidates[0].content.parts:
+                response_text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
+                if response_text:
+                    # тут ключ записывать не обязательно, но можно
+                    await key_manager.set_successful_key(fallback_key)
+                    return response_text
+        except Exception as e:
+            logging.warning(f"Ошибка с ключом {fallback_key} и моделью {model}: {e}")
 
+    # --- 3. Если вообще ничего не вышло ---
     return "Ошибка: не удалось получить результат ни с одним ключом и моделью. Попробуйте позже."
 
 async def generate_products_response(user_id, images, query):
@@ -2203,7 +2495,6 @@ async def generate_products_response(user_id, images, query):
             )
             os.remove(image_path)
 
-        # Собираем запрос
         prompt_text = "Сравни эти товары."
         if query:
             prompt_text += f" Особое внимание удели: {query}"
@@ -2241,27 +2532,34 @@ async def generate_products_response(user_id, images, query):
             return response_text
         return None
 
-    # --- Основная логика перебора ключей и моделей ---
+    # --- Основная логика ---
+    last_key = None
+
+    # 1. Перебираем все ключи только с основной моделью
     for key in key_manager.get_keys_to_try():
+        last_key = key
         try:
-            # Сначала пробуем с основной моделью
             response_text = await try_generate(key, PRIMARY_MODEL)
             if response_text:
                 await key_manager.set_successful_key(key)
                 return response_text
         except Exception as e:
             logging.warning(f"Ошибка с ключом {key} и моделью {PRIMARY_MODEL}: {e}")
-            # Пробуем fallback-модели
-            for model in FALLBACK_MODELS:
-                try:
-                    response_text = await try_generate(key, model)
-                    if response_text:
-                        await key_manager.set_successful_key(key)
-                        return response_text
-                except Exception as e2:
-                    logging.warning(f"Ошибка с ключом {key} и моделью {model}: {e2}")
-            # Если не вышло — пробуем следующий ключ
+            # Не пробуем fallback здесь — просто идем к следующему ключу
 
+    # 2. Если ВСЕ ключи с основной моделью не сработали —
+    #    пробуем fallback модели только на последнем ключе
+    if last_key:
+        for model in FALLBACK_MODELS:
+            try:
+                response_text = await try_generate(last_key, model)
+                if response_text:
+                    await key_manager.set_successful_key(last_key)
+                    return response_text
+            except Exception as e2:
+                logging.warning(f"Ошибка с ключом {last_key} и моделью {model}: {e2}")
+
+    # 3. Если вообще ничего не помогло
     return "Все доступные ключи и модели не сработали. Попробуйте позже."
 
 
@@ -2291,8 +2589,6 @@ async def generate_calories_response(user_id, images, query):
         with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
             image.save(temp_file, format="JPEG")
             image_path = temp_file.name
-
-        # Для каждого ключа придётся грузить отдельно — поэтому просто сохраняем путь
         image_parts.append(image_path)
 
     async def try_request(api_key: str, model: str):
@@ -2343,25 +2639,26 @@ async def generate_calories_response(user_id, images, query):
             logging.warning(f"Ошибка для ключа {api_key}, модели {model}: {e}")
             return None
 
-    # Сначала пробуем основную модель с разными ключами
+    # --- 1. Перебираем ключи с основной моделью ---
     for key in key_manager.get_keys_to_try():
         result = await try_request(key, PRIMARY_MODEL)
         if result:
-            # Чистим временные файлы
             for path in image_parts:
                 os.remove(path)
             return result
 
-    # Если не получилось, пробуем запасные модели
-    for fallback_model in FALLBACK_MODELS:
-        for key in key_manager.get_keys_to_try():
-            result = await try_request(key, fallback_model)
-            if result:
-                for path in image_parts:
-                    os.remove(path)
-                return result
+    # --- 2. Все ключи упали → берём последний ключ ---
+    last_key = key_manager.get_keys_to_try()[-1]
 
-    # Чистим временные файлы
+    # --- 3. Перебираем модели только для одного ключа (последнего) ---
+    for fallback_model in FALLBACK_MODELS:
+        result = await try_request(last_key, fallback_model)
+        if result:
+            for path in image_parts:
+                os.remove(path)
+            return result
+
+    # --- 4. Ошибка окончательная ---
     for path in image_parts:
         os.remove(path)
 
@@ -2392,7 +2689,6 @@ async def generate_mapplants_response(user_id, image):
     logging.info(f"Сохранено временное изображение: {image_path}")
 
     try:
-        # Настройки безопасности
         safety_settings = [
             types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
             types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
@@ -2402,23 +2698,63 @@ async def generate_mapplants_response(user_id, image):
 
         google_search_tool = Tool(google_search=GoogleSearch())
 
-        # Перебираем модели
-        models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-        for model in models_to_try:
-            logging.info(f"Пробуем модель: {model}")
+        # ---------- ЭТАП 1. Перебор ключей на основной модели ----------
+        successful = False
+        last_key = None
+        for api_key in key_manager.get_keys_to_try():
+            last_key = api_key
+            logging.info(f"Пробуем ключ {api_key[:10]}... с моделью {PRIMARY_MODEL}")
+            try:
+                client = genai.Client(api_key=api_key)
+                image_file = client.files.upload(file=pathlib.Path(image_path))
+                logging.info(f"Изображение загружено: {image_file.uri}")
 
-            # Перебираем ключи
-            for api_key in key_manager.get_keys_to_try():
-                logging.info(f"Пробуем ключ: {api_key[:10]}...")
+                response = await client.aio.models.generate_content(
+                    model=PRIMARY_MODEL,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(
+                                    file_uri=image_file.uri,
+                                    mime_type=image_file.mime_type
+                                ),
+                                types.Part(text=f"{context}\n"),
+                            ]
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=1.0,
+                        top_p=0.9,
+                        top_k=40,
+                        tools=[google_search_tool],
+                        safety_settings=safety_settings
+                    )
+                )
 
+                if response.candidates and response.candidates[0].content.parts:
+                    response_text = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
+
+                    await key_manager.set_successful_key(api_key)
+                    return response_text if response_text else "Не удалось определить проблему растения."
+                else:
+                    logging.warning(f"Модель {PRIMARY_MODEL} не вернула ответа.")
+            except Exception as e:
+                logging.error(f"Ошибка с ключом {api_key[:10]}...: {e}")
+                continue
+
+        # ---------- ЭТАП 2. Если все ключи провалились – перебор моделей на последнем ключе ----------
+        logging.warning("Все ключи на основной модели не сработали. Пробуем fallback-модели.")
+        if last_key:
+            for model in FALLBACK_MODELS:
+                logging.info(f"Пробуем fallback-модель: {model} с ключом {last_key}")
                 try:
-                    client = genai.Client(api_key=api_key)
-
-                    # Загружаем изображение
+                    client = genai.Client(api_key=last_key)
                     image_file = client.files.upload(file=pathlib.Path(image_path))
-                    logging.info(f"Изображение загружено: {image_file.uri}")
 
-                    # Генерация ответа
                     response = await client.aio.models.generate_content(
                         model=model,
                         contents=[
@@ -2442,32 +2778,24 @@ async def generate_mapplants_response(user_id, image):
                         )
                     )
 
-                    # Проверяем наличие ответа
                     if response.candidates and response.candidates[0].content.parts:
                         response_text = "".join(
                             part.text for part in response.candidates[0].content.parts
                             if part.text and not getattr(part, "thought", False)
                         ).strip()
 
-                        # Успешный ключ — запоминаем
-                        await key_manager.set_successful_key(api_key)
-
+                        # Ключ здесь не сохраняем! Только модели перебираем
                         return response_text if response_text else "Не удалось определить проблему растения."
                     else:
-                        logging.warning(f"Модель {model} не вернула ответа.")
-                        continue
-
+                        logging.warning(f"Fallback-модель {model} не вернула ответа.")
                 except Exception as e:
-                    logging.error(f"Ошибка с ключом {api_key[:10]}... и моделью {model}: {e}")
-                    continue  # пробуем следующий ключ
+                    logging.error(f"Ошибка с fallback-моделью {model}: {e}")
+                    continue
 
-            logging.info(f"Все ключи для модели {model} исчерпаны, пробуем следующую модель...")
-
-        # Если дошли сюда — не получилось ни с одной моделью и ключом
+        # ---------- ЭТАП 3. Всё сломалось ----------
         return "Не удалось обработать изображение. Попробуйте позже."
 
     finally:
-        # Удаляем временный файл
         if os.path.exists(image_path):
             try:
                 os.remove(image_path)
@@ -2501,7 +2829,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             logging.warning(f"Ошибка при запросе (ключ {api_key}, модель {model}): {e}")
             return None
 
-    # Если передан текстовый запрос
+    # === Ветка текстового запроса ===
     if query:
         context = f"Запрос:\n{query}"
         google_search_tool = Tool(google_search=GoogleSearch())
@@ -2518,22 +2846,22 @@ async def generate_text_rec_response(user_id, image=None, query=None):
             ]
         )
 
-        # Сначала пробуем основной модель на всех ключах
+        # 1. Пробуем PRIMARY_MODEL на всех ключах
         for key in key_manager.get_keys_to_try():
             text = await try_request(key, PRIMARY_MODEL, context, config)
             if text:
                 return text
 
-        # Если не вышло → пробуем запасные модели
+        # 2. Если все ключи не сработали — берем последний ключ и пробуем запасные модели
+        last_key = key_manager.get_keys_to_try()[-1]
         for model in FALLBACK_MODELS:
-            for key in key_manager.get_keys_to_try():
-                text = await try_request(key, model, context, config)
-                if text:
-                    return text
+            text = await try_request(last_key, model, context, config)
+            if text:
+                return text
 
         return "Все ключи и модели не сработали. Попробуйте позже."
 
-    # Если передано изображение
+    # === Ветка обработки изображения ===
     elif image:
         context = (
             "Постарайся полностью распознать текст на изображении и в ответе прислать его. "
@@ -2565,7 +2893,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                 safety_settings=safety_settings
             )
 
-            # Сначала пробуем PRIMARY_MODEL на всех ключах
+            # 1. Пробуем PRIMARY_MODEL на всех ключах
             for key in key_manager.get_keys_to_try():
                 try:
                     client = genai.Client(api_key=key)
@@ -2587,28 +2915,28 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                 if text:
                     return text
 
-            # Если не вышло → пробуем запасные модели
-            for model in FALLBACK_MODELS:
-                for key in key_manager.get_keys_to_try():
-                    try:
-                        client = genai.Client(api_key=key)
-                        image_file = client.files.upload(file=pathlib.Path(image_path))
-                    except Exception as e:
-                        logging.warning(f"Ошибка загрузки изображения (ключ {key}): {e}")
-                        continue
+            # 2. Если все ключи не сработали — пробуем запасные модели на последнем ключе
+            last_key = key_manager.get_keys_to_try()[-1]
+            try:
+                client = genai.Client(api_key=last_key)
+                image_file = client.files.upload(file=pathlib.Path(image_path))
+            except Exception as e:
+                logging.warning(f"Ошибка загрузки изображения (ключ {last_key}): {e}")
+                return "Ошибка при загрузке изображения."
 
-                    contents = [
-                        types.Content(
-                            role="user",
-                            parts=[
-                                types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type),
-                                types.Part(text=f"{context}\n"),
-                            ]
-                        )
-                    ]
-                    text = await try_request(key, model, contents, config)
-                    if text:
-                        return text
+            for model in FALLBACK_MODELS:
+                contents = [
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type),
+                            types.Part(text=f"{context}\n"),
+                        ]
+                    )
+                ]
+                text = await try_request(last_key, model, contents, config)
+                if text:
+                    return text
 
             return "Все ключи и модели не сработали. Попробуйте позже."
 
@@ -2625,6 +2953,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
 
     else:
         return "Неверный запрос. Укажите изображение или текст для обработки."
+
 
 
 
@@ -2645,77 +2974,122 @@ async def generate_plant_issue_response(user_id, image, caption=None):
     logging.info(f"Сохранено временное изображение: {image_path}")
 
     try:
-        # Перебор моделей
-        for model in [PRIMARY_MODEL] + FALLBACK_MODELS:
-            # Перебор ключей
-            for api_key in key_manager.get_keys_to_try():
+        # --- 1. Пробуем сначала перебор ключей на основной модели ---
+        for api_key in key_manager.get_keys_to_try():
+            try:
+                client = genai.Client(api_key=api_key)
+                google_search_tool = Tool(google_search=GoogleSearch())
+
                 try:
-                    client = genai.Client(api_key=api_key)
-                    google_search_tool = Tool(google_search=GoogleSearch())
-
-                    try:
-                        image_file = client.files.upload(file=pathlib.Path(image_path))
-                    except Exception as e:
-                        logging.error(f"Ошибка при загрузке изображения: {e}")
-                        return "Не удалось загрузить изображение."
-
-                    # Настройки безопасности
-                    safety_settings = [
-                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-                    ]
-
-                    # Запрос к модели
-                    response = await client.aio.models.generate_content(
-                        model=model,
-                        contents=[
-                            types.Content(
-                                role="user",
-                                parts=[
-                                    types.Part.from_uri(
-                                        file_uri=image_file.uri,
-                                        mime_type=image_file.mime_type
-                                    ),
-                                    types.Part(text=f"{context}\n"),
-                                ]
-                            )
-                        ],
-                        config=types.GenerateContentConfig(
-                            temperature=1.0,
-                            top_p=0.9,
-                            top_k=40,
-                            tools=[google_search_tool],
-                            safety_settings=safety_settings
-                        )
-                    )
-
-                    # Проверяем наличие ответа
-                    if response.candidates and response.candidates[0].content.parts:
-                        response_text = "".join(
-                            part.text for part in response.candidates[0].content.parts
-                            if part.text and not getattr(part, "thought", False)
-                        ).strip()
-
-                        # Сохраняем успешный ключ
-                        await key_manager.set_successful_key(api_key)
-
-                        return response_text or "Не удалось определить проблему растения."
-                    else:
-                        logging.warning(f"Gemini ({model}) не вернул ответ.")
-                        # Переход к следующему ключу
-                        continue
-
+                    image_file = client.files.upload(file=pathlib.Path(image_path))
                 except Exception as e:
-                    logging.warning(f"Ошибка с ключом {api_key} и моделью {model}: {e}")
+                    logging.error(f"Ошибка при загрузке изображения: {e}")
+                    return "Не удалось загрузить изображение."
+
+                safety_settings = [
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+
+                response = await client.aio.models.generate_content(
+                    model=PRIMARY_MODEL,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type),
+                                types.Part(text=f"{context}\n"),
+                            ]
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=1.0,
+                        top_p=0.9,
+                        top_k=40,
+                        tools=[google_search_tool],
+                        safety_settings=safety_settings
+                    )
+                )
+
+                if response.candidates and response.candidates[0].content.parts:
+                    response_text = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
+
+                    await key_manager.set_successful_key(api_key)
+                    return response_text or "Не удалось определить проблему растения."
+
+                else:
+                    logging.warning(f"Gemini ({PRIMARY_MODEL}) не вернул ответ с ключом {api_key}.")
                     continue
 
-        # Если дошли сюда — все ключи и модели упали
+            except Exception as e:
+                logging.warning(f"Ошибка с ключом {api_key} на модели {PRIMARY_MODEL}: {e}")
+                continue
+
+        # --- 2. Если все ключи упали → перебор моделей на одном ключе ---
+        last_key = key_manager.get_keys_to_try()[-1]  # возьмем последний из списка
+        logging.info(f"Все ключи упали на {PRIMARY_MODEL}, пробуем fallback-модели с ключом {last_key}")
+
+        client = genai.Client(api_key=last_key)
+        google_search_tool = Tool(google_search=GoogleSearch())
+
+        try:
+            image_file = client.files.upload(file=pathlib.Path(image_path))
+        except Exception as e:
+            logging.error(f"Ошибка при загрузке изображения: {e}")
+            return "Не удалось загрузить изображение."
+
+        safety_settings = [
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        ]
+
+        for model in FALLBACK_MODELS:
+            try:
+                response = await client.aio.models.generate_content(
+                    model=model,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(file_uri=image_file.uri, mime_type=image_file.mime_type),
+                                types.Part(text=f"{context}\n"),
+                            ]
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=1.0,
+                        top_p=0.9,
+                        top_k=40,
+                        tools=[google_search_tool],
+                        safety_settings=safety_settings
+                    )
+                )
+
+                if response.candidates and response.candidates[0].content.parts:
+                    response_text = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
+                    return response_text or "Не удалось определить проблему растения."
+                else:
+                    logging.warning(f"Gemini ({model}) не вернул ответ с ключом {last_key}.")
+                    continue
+
+            except Exception as e:
+                logging.warning(f"Ошибка с ключом {last_key} на модели {model}: {e}")
+                continue
+
+        # --- 3. Если и fallback-модели не сработали ---
         return "Все доступные ключи и модели не смогли обработать запрос. Попробуйте позже."
 
     finally:
-        # Удаляем временный файл
         if 'image_path' in locals() and os.path.exists(image_path):
             try:
                 os.remove(image_path)
@@ -2755,63 +3129,99 @@ async def response_animal(user_id, image, caption=None):
     ]
 
     try:
-        # Загружаем картинку один раз — ключи не влияют на upload
-        temp_client = genai.Client(api_key=API_KEYS[0])  
+        # Загружаем картинку один раз (ключи не влияют на upload)
+        temp_client = genai.Client(api_key=API_KEYS[0])
         try:
             image_file = temp_client.files.upload(file=pathlib.Path(image_path))
         except Exception as e:
             logging.error(f"Ошибка при загрузке изображения: {e}")
             return "Не удалось загрузить изображение."
 
-        # Порядок моделей: сначала основная, затем fallback
-        models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-
-        # Перебор моделей и ключей
-        for model in models_to_try:
-            for api_key in key_manager.get_keys_to_try():
-                try:
-                    client = genai.Client(api_key=api_key)
-                    response = await client.aio.models.generate_content(
-                        model=model,
-                        contents=[
-                            types.Content(
-                                role="user",
-                                parts=[
-                                    types.Part.from_uri(
-                                        file_uri=image_file.uri,
-                                        mime_type=image_file.mime_type
-                                    ),
-                                    types.Part(text=f"{context}\n"),
-                                ]
-                            )
-                        ],
-                        config=types.GenerateContentConfig(
-                            temperature=1.0,
-                            top_p=0.9,
-                            top_k=40,
-                            tools=[google_search_tool],
-                            safety_settings=safety_settings
+        # 1. Перебираем ключи с основной моделью
+        for api_key in key_manager.get_keys_to_try():
+            try:
+                client = genai.Client(api_key=api_key)
+                response = await client.aio.models.generate_content(
+                    model=PRIMARY_MODEL,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(
+                                    file_uri=image_file.uri,
+                                    mime_type=image_file.mime_type
+                                ),
+                                types.Part(text=f"{context}\n"),
+                            ]
                         )
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=1.0,
+                        top_p=0.9,
+                        top_k=40,
+                        tools=[google_search_tool],
+                        safety_settings=safety_settings
                     )
+                )
 
-                    # Проверяем наличие ответа
-                    if response.candidates and response.candidates[0].content.parts:
-                        response_text = "".join(
-                            part.text for part in response.candidates[0].content.parts
-                            if part.text and not getattr(part, "thought", False)
-                        ).strip()
+                if response.candidates and response.candidates[0].content.parts:
+                    response_text = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
 
-                        if response_text:
-                            # Сохраняем удачный ключ
-                            await key_manager.set_successful_key(api_key)
-                            return response_text
+                    if response_text:
+                        await key_manager.set_successful_key(api_key)
+                        return response_text
 
-                except Exception as e:
-                    logging.warning(f"Ошибка с ключом {api_key} и моделью {model}: {e}")
-                    continue  # Пробуем следующий ключ/модель
+            except Exception as e:
+                logging.warning(f"Ошибка с ключом {api_key} и основной моделью: {e}")
+                continue
 
-        # Если все модели и ключи не сработали
-        return "Не удалось определить животное: все ключи и модели выдали ошибку."
+        # 2. Если все ключи дали ошибку → перебираем fallback-модели только с последним ключом
+        last_key = key_manager.get_keys_to_try()[-1]
+        for model in FALLBACK_MODELS:
+            try:
+                client = genai.Client(api_key=last_key)
+                response = await client.aio.models.generate_content(
+                    model=model,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(
+                                    file_uri=image_file.uri,
+                                    mime_type=image_file.mime_type
+                                ),
+                                types.Part(text=f"{context}\n"),
+                            ]
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=1.0,
+                        top_p=0.9,
+                        top_k=40,
+                        tools=[google_search_tool],
+                        safety_settings=safety_settings
+                    )
+                )
+
+                if response.candidates and response.candidates[0].content.parts:
+                    response_text = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
+
+                    if response_text:
+                        # Ключ сохранять не нужно (по условию только при основной модели)
+                        return response_text
+
+            except Exception as e:
+                logging.warning(f"Ошибка с ключом {last_key} и моделью {model}: {e}")
+                continue
+
+        # Если всё провалилось
+        return "Не удалось определить животное: все ключи и fallback модели выдали ошибку."
 
     finally:
         if 'image_path' in locals() and os.path.exists(image_path):
@@ -2858,68 +3268,107 @@ async def response_ingredients(user_id, image):
 
         logging.info(f"Сохранено временное изображение: {image_path}")
 
-        # Перебираем модели
-        for model in [PRIMARY_MODEL] + FALLBACK_MODELS:
-            logging.info(f"Пробуем модель: {model}")
+        # === Шаг 1: перебор ключей на основной модели ===
+        for key in key_manager.get_keys_to_try():
+            logging.info(f"Пробуем API ключ: {key[:10]}... на модели {PRIMARY_MODEL}")
+            try:
+                client = genai.Client(api_key=key)
+                google_search_tool = Tool(google_search=GoogleSearch())
 
-            # Перебираем ключи
-            for key in key_manager.get_keys_to_try():
-                logging.info(f"Пробуем API ключ: {key[:10]}...")
+                image_file = client.files.upload(file=pathlib.Path(image_path))
 
-                try:
-                    client = genai.Client(api_key=key)
-                    google_search_tool = Tool(google_search=GoogleSearch())
-
-                    # Загружаем изображение
-                    image_file = client.files.upload(file=pathlib.Path(image_path))
-
-                    # Запрос к модели
-                    response = await client.aio.models.generate_content(
-                        model=model,
-                        contents=[
-                            types.Content(
-                                role="user",
-                                parts=[
-                                    types.Part.from_uri(
-                                        file_uri=image_file.uri,
-                                        mime_type=image_file.mime_type
-                                    ),
-                                    types.Part(text=f"{context}\n"),
-                                ]
-                            )
-                        ],
-                        config=types.GenerateContentConfig(
-                            temperature=0.8,
-                            top_p=0.9,
-                            top_k=40,
-                            tools=[google_search_tool],
-                            safety_settings=safety_settings
+                response = await client.aio.models.generate_content(
+                    model=PRIMARY_MODEL,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(
+                                    file_uri=image_file.uri,
+                                    mime_type=image_file.mime_type
+                                ),
+                                types.Part(text=f"{context}\n"),
+                            ]
                         )
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0.8,
+                        top_p=0.9,
+                        top_k=40,
+                        tools=[google_search_tool],
+                        safety_settings=safety_settings
                     )
+                )
 
-                    # Проверяем наличие ответа
-                    if response.candidates and response.candidates[0].content.parts:
-                        response_text = "".join(
-                            part.text for part in response.candidates[0].content.parts
-                            if part.text and not getattr(part, "thought", False)
-                        ).strip()
+                if response.candidates and response.candidates[0].content.parts:
+                    response_text = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
 
-                        if response_text:
-                            await key_manager.set_successful_key(key)
-                            return response_text
+                    if response_text:
+                        await key_manager.set_successful_key(key)
+                        return response_text
 
-                except Exception as e:
-                    logging.warning(f"Ошибка с ключом {key[:10]}... и моделью {model}: {e}")
-                    continue  # пробуем следующий ключ
+            except Exception as e:
+                logging.warning(f"Ошибка с ключом {key[:10]}... и моделью {PRIMARY_MODEL}: {e}")
+                continue
 
-        # Если все ключи и модели не дали результат
+        # === Шаг 2: если ВСЕ ключи упали, пробуем fallback-модели на одном ключе (берем последний) ===
+        last_key = key_manager.get_keys_to_try()[-1]
+        logging.info(f"Все ключи упали на основной модели, пробуем fallback модели на ключе {last_key[:10]}...")
+
+        for model in FALLBACK_MODELS:
+            try:
+                client = genai.Client(api_key=last_key)
+                google_search_tool = Tool(google_search=GoogleSearch())
+
+                image_file = client.files.upload(file=pathlib.Path(image_path))
+
+                response = await client.aio.models.generate_content(
+                    model=model,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(
+                                    file_uri=image_file.uri,
+                                    mime_type=image_file.mime_type
+                                ),
+                                types.Part(text=f"{context}\n"),
+                            ]
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0.8,
+                        top_p=0.9,
+                        top_k=40,
+                        tools=[google_search_tool],
+                        safety_settings=safety_settings
+                    )
+                )
+
+                if response.candidates and response.candidates[0].content.parts:
+                    response_text = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
+
+                    if response_text:
+                        # здесь ключ не сохраняем, так как fallback может быть временным
+                        return response_text
+
+            except Exception as e:
+                logging.warning(f"Ошибка с ключом {last_key[:10]}... и моделью {model}: {e}")
+                continue
+
+        # === Шаг 3: если ничего не вышло ===
         return "Не удалось проанализировать состав продукта: все ключи и модели вернули ошибку."
 
     except Exception as e:
         logging.info(f"Ошибка при обработке изображения: {e}")
         return "Ошибка при обработке изображения. Попробуйте снова."
     finally:
-        # Удаляем временный файл
         if 'image_path' in locals() and os.path.exists(image_path):
             try:
                 os.remove(image_path)
@@ -2948,9 +3397,13 @@ async def generate_barcode_response(user_id, image=None, query=None):
             types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
         ]
 
-        # Пробуем перебор ключей и моделей
         last_exception = None
+        successful = False
+        last_key = None
+
+        # --- Шаг 1. Перебор ключей только с основной моделью ---
         for key in key_manager.get_keys_to_try():
+            last_key = key
             try:
                 client = genai.Client(api_key=key)
                 google_search_tool = Tool(google_search=GoogleSearch())
@@ -2963,10 +3416,61 @@ async def generate_barcode_response(user_id, image=None, query=None):
                     last_exception = e
                     continue
 
-                # Сначала пробуем основную модель
-                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                try:
+                    response = await client.aio.models.generate_content(
+                        model=PRIMARY_MODEL,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_uri(
+                                        file_uri=image_file.uri,
+                                        mime_type=image_file.mime_type
+                                    ),
+                                    types.Part(text=f"{context}\n"),
+                                ]
+                            )
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=1.0,
+                            top_p=0.9,
+                            top_k=40,
+                            tools=[google_search_tool],
+                            safety_settings=safety_settings
+                        )
+                    )
 
-                for model in models_to_try:
+                    if response.candidates and response.candidates[0].content.parts:
+                        response_text = "".join(
+                            part.text for part in response.candidates[0].content.parts
+                            if part.text and not getattr(part, "thought", False)
+                        ).strip()
+
+                        await key_manager.set_successful_key(key)
+                        return response_text
+                    else:
+                        logging.warning(f"Gemini ({PRIMARY_MODEL}) не вернул ответ.")
+                        last_exception = Exception("Пустой ответ от модели")
+
+                except Exception as e:
+                    logging.error(f"Ошибка при генерации ({PRIMARY_MODEL}, {key}): {e}")
+                    last_exception = e
+                    continue
+
+            except Exception as e:
+                logging.error(f"Ошибка при использовании ключа {key}: {e}")
+                last_exception = e
+                continue
+
+        # --- Шаг 2. Если все ключи с основной моделью дали сбой → пробуем fallback модели на последнем ключе ---
+        if last_key:
+            try:
+                client = genai.Client(api_key=last_key)
+                google_search_tool = Tool(google_search=GoogleSearch())
+
+                image_file = client.files.upload(file=pathlib.Path(image_path))
+
+                for model in FALLBACK_MODELS:
                     try:
                         response = await client.aio.models.generate_content(
                             model=model,
@@ -2997,32 +3501,31 @@ async def generate_barcode_response(user_id, image=None, query=None):
                                 if part.text and not getattr(part, "thought", False)
                             ).strip()
 
-                            await key_manager.set_successful_key(key)
+                            # ВАЖНО: ключ мы уже сохраняем только если успешно
+                            await key_manager.set_successful_key(last_key)
                             return response_text
                         else:
-                            logging.warning(f"Gemini ({model}) не вернул ответ для штрихкод.")
+                            logging.warning(f"Gemini ({model}) не вернул ответ.")
                             last_exception = Exception("Пустой ответ от модели")
 
                     except Exception as e:
-                        logging.error(f"Ошибка при генерации ({model}, {key}): {e}")
+                        logging.error(f"Ошибка при генерации ({model}, {last_key}): {e}")
                         last_exception = e
                         continue
 
             except Exception as e:
-                logging.error(f"Ошибка при использовании ключа {key}: {e}")
+                logging.error(f"Ошибка при fallback попытках с ключом {last_key}: {e}")
                 last_exception = e
-                continue
 
-        # Если сюда дошли — ничего не получилось
+        # --- Если ничего не получилось ---
         if last_exception:
             logging.error(f"Все ключи и модели перепробованы, ошибка: {last_exception}")
         return "Не удалось обработать запрос. Попробуйте позже."
 
     except Exception as e:
-        logging.info(f"Ошибка при генерации описания проблемы растения: {e}")
+        logging.error(f"Ошибка при генерации описания: {e}")
         return "Ошибка при обработке изображения. Попробуйте снова."
     finally:
-        # Удаляем временный файл
         if 'image_path' in locals() and os.path.exists(image_path):
             try:
                 os.remove(image_path)
@@ -3045,16 +3548,63 @@ async def generate_barcode_analysis(user_id, query=None):
     )
     context = f"Текущая доступная информация о продукте: {query}"
 
-    # Перебор API-ключей
+
+    last_key = None
+    # --- 1. Перебор ключей с основной моделью ---
     for key in key_manager.get_keys_to_try():
+        last_key = key
         try:
             client = genai.Client(api_key=key)
             google_search_tool = Tool(google_search=GoogleSearch())
 
-            # Список моделей: сначала основная, потом fallback
-            models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+            try:
+                response = await client.aio.models.generate_content(
+                    model=PRIMARY_MODEL,
+                    contents=context,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=1.4,
+                        top_p=0.95,
+                        top_k=25,
+                        tools=[google_search_tool],
+                        safety_settings=[
+                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                        ]
+                    )
+                )
 
-            for model_name in models_to_try:
+                if response.candidates and response.candidates[0].content.parts:
+                    result = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ).strip()
+
+                    if result:
+                        # Сохраняем удачный ключ
+                        await key_manager.set_successful_key(key)
+                        return result
+
+                    logging.warning("Ответ от модели не содержит текста.")
+                    return "Извините, ошибка обработки."
+
+            except Exception as model_err:
+                logging.warning(f"Ошибка основной модели {PRIMARY_MODEL} с ключом {key}: {model_err}")
+                continue  # Пробуем следующий ключ
+
+        except Exception as key_err:
+            logging.error(f"Ошибка при использовании API ключа {key}: {key_err}")
+            continue  # Пробуем следующий ключ
+
+    # --- 2. Если все ключи упали, пробуем fallback модели на последнем ключе ---
+    if last_key:
+        try:
+            client = genai.Client(api_key=last_key)
+            google_search_tool = Tool(google_search=GoogleSearch())
+
+            for model_name in FALLBACK_MODELS:
                 try:
                     response = await client.aio.models.generate_content(
                         model=model_name,
@@ -3066,22 +3616,10 @@ async def generate_barcode_analysis(user_id, query=None):
                             top_k=25,
                             tools=[google_search_tool],
                             safety_settings=[
-                                types.SafetySetting(
-                                    category='HARM_CATEGORY_HATE_SPEECH',
-                                    threshold='BLOCK_NONE'
-                                ),
-                                types.SafetySetting(
-                                    category='HARM_CATEGORY_HARASSMENT',
-                                    threshold='BLOCK_NONE'
-                                ),
-                                types.SafetySetting(
-                                    category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
-                                    threshold='BLOCK_NONE'
-                                ),
-                                types.SafetySetting(
-                                    category='HARM_CATEGORY_DANGEROUS_CONTENT',
-                                    threshold='BLOCK_NONE'
-                                )
+                                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
                             ]
                         )
                     )
@@ -3093,22 +3631,16 @@ async def generate_barcode_analysis(user_id, query=None):
                         ).strip()
 
                         if result:
-                            # Сохраняем удачный ключ
-                            await key_manager.set_successful_key(key)
                             return result
 
-                        logging.warning("Ответ от модели не содержит текста.")
-                        return "Извините, ошибка обработки."
+                except Exception as fb_err:
+                    logging.warning(f"Ошибка fallback модели {model_name} с ключом {last_key}: {fb_err}")
+                    continue
 
-                except Exception as model_err:
-                    logging.warning(f"Ошибка модели {model_name} с ключом {key}: {model_err}")
-                    continue  # Пробуем следующую модель
+        except Exception as fb_key_err:
+            logging.error(f"Ошибка при fallback с ключом {last_key}: {fb_key_err}")
 
-        except Exception as key_err:
-            logging.error(f"Ошибка при использовании API ключа {key}: {key_err}")
-            continue  # Пробуем следующий ключ
-
-    return "Извините, все ключи и модели не сработали. Попробуйте позже."
+    return "Извините, все ключи и fallback модели не сработали. Попробуйте позже."
 
 
 async def generate_barcode_otzyvy(user_id, query=None):
@@ -3122,62 +3654,85 @@ async def generate_barcode_otzyvy(user_id, query=None):
 
     google_search_tool = Tool(google_search=GoogleSearch()) 
 
-    # Сначала пробуем основную модель
-    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
-
-    for model in models_to_try:
-        # Для каждой модели пробуем все ключи
-        for api_key in key_manager.get_keys_to_try():
-            try:
-                client = genai.Client(api_key=api_key)
-                response = await client.aio.models.generate_content(
-                    model=model,
-                    contents=context,
-                    config=types.GenerateContentConfig(
-                        temperature=1.4,
-                        top_p=0.95,
-                        top_k=25,
-                        tools=[google_search_tool],
-                        safety_settings=[
-                            types.SafetySetting(
-                                category='HARM_CATEGORY_HATE_SPEECH',
-                                threshold='BLOCK_NONE'
-                            ),
-                            types.SafetySetting(
-                                category='HARM_CATEGORY_HARASSMENT',
-                                threshold='BLOCK_NONE'
-                            ),
-                            types.SafetySetting(
-                                category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
-                                threshold='BLOCK_NONE'
-                            ),
-                            types.SafetySetting(
-                                category='HARM_CATEGORY_DANGEROUS_CONTENT',
-                                threshold='BLOCK_NONE'
-                            )
-                        ]
-                    )
+    # --- 1. Сначала пробуем основную модель только с перебором ключей ---
+    for api_key in key_manager.get_keys_to_try():
+        try:
+            client = genai.Client(api_key=api_key)
+            response = await client.aio.models.generate_content(
+                model=PRIMARY_MODEL,
+                contents=context,
+                config=types.GenerateContentConfig(
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                    ]
                 )
+            )
 
-                if response.candidates and response.candidates[0].content.parts:
-                    text = "".join(
-                        part.text for part in response.candidates[0].content.parts
-                        if part.text and not getattr(part, "thought", False)
-                    ).strip()
-                    if text:
-                        logging.info(f"Успешный ответ с ключом {api_key}, модель {model}")
-                        await key_manager.set_successful_key(api_key)
-                        return text
-                    else:
-                        logging.warning("Ответ от модели не содержит текста.")
-                        return "Извините, ошибка обработки."
+            if response.candidates and response.candidates[0].content.parts:
+                text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
+                if text:
+                    logging.info(f"Успешный ответ с ключом {api_key}, модель {PRIMARY_MODEL}")
+                    await key_manager.set_successful_key(api_key)
+                    return text
+                else:
+                    logging.warning("Ответ от модели не содержит текста.")
+                    return "Извините, ошибка обработки."
 
-            except Exception as e:
-                logging.error(f"Ошибка с ключом {api_key}, модель {model}: {e}")
-                # продолжаем пробовать следующий ключ или модель
+        except Exception as e:
+            logging.error(f"Ошибка с ключом {api_key}, модель {PRIMARY_MODEL}: {e}")
+            # идём к следующему ключу
 
-    # Если ничего не сработало
-    logging.error("Все ключи и модели исчерпаны.")
+    # --- 2. Если все ключи не подошли, пробуем модели на последнем ключе ---
+    last_key = key_manager.get_keys_to_try()[-1]
+    for model in FALLBACK_MODELS:
+        try:
+            client = genai.Client(api_key=last_key)
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=context,
+                config=types.GenerateContentConfig(
+                    temperature=1.4,
+                    top_p=0.95,
+                    top_k=25,
+                    tools=[google_search_tool],
+                    safety_settings=[
+                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                    ]
+                )
+            )
+
+            if response.candidates and response.candidates[0].content.parts:
+                text = "".join(
+                    part.text for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
+                if text:
+                    logging.info(f"Успешный ответ с ключом {last_key}, fallback-модель {model}")
+                    # ключ не сохраняем, т.к. это fallback-сценарий
+                    return text
+                else:
+                    logging.warning("Ответ от fallback-модели не содержит текста.")
+                    return "Извините, ошибка обработки."
+
+        except Exception as e:
+            logging.error(f"Ошибка с fallback-моделью {model}, ключ {last_key}: {e}")
+            # идём к следующей модели
+
+    # --- 3. Если ничего не сработало ---
+    logging.error("Все ключи и fallback-модели исчерпаны.")
     return "Ошибка: не удалось получить ответ ни от одной модели."
 
 
@@ -3210,43 +3765,66 @@ async def generate_plant_help_response(user_id, query=None):
         ]
     )
 
-    # Перебор моделей
-    for model in models_to_try:
-        logging.info(f"Пробуем модель: {model}")
-        # Перебор ключей
-        for key in key_manager.get_keys_to_try():
-            try:
-                client = genai.Client(api_key=key)
-                response = await client.aio.models.generate_content(
-                    model=model,
-                    contents=context,
-                    config=config,
-                )
-                logging.info(f"Успешный ответ от модели {model} с ключом {key}")
+    # 1. Пробуем основной моделью со всеми ключами
+    successful_key = None
+    for key in key_manager.get_keys_to_try():
+        try:
+            client = genai.Client(api_key=key)
+            response = await client.aio.models.generate_content(
+                model=PRIMARY_MODEL,
+                contents=context,
+                config=config,
+            )
+            logging.info(f"Успешный ответ от модели {PRIMARY_MODEL} с ключом {key}")
 
-                # Запоминаем успешный ключ
-                await key_manager.set_successful_key(key)
+            await key_manager.set_successful_key(key)
+            successful_key = key
 
-                # Обработка ответа
-                if response.candidates and response.candidates[0].content.parts:
-                    result = "".join(
-                        part.text
-                        for part in response.candidates[0].content.parts
-                        if part.text and not getattr(part, "thought", False)
-                    ).strip()
+            if response.candidates and response.candidates[0].content.parts:
+                result = "".join(
+                    part.text
+                    for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
+                return result if result else "Извините, я не могу ответить на этот запрос."
+            else:
+                logging.warning("Ответ от модели не содержит текстового компонента.")
+                return "Извините, я не могу ответить на этот запрос."
 
-                    return result if result else "Извините, я не могу ответить на этот запрос."
-                else:
-                    logging.warning("Ответ от модели не содержит текстового компонента.")
-                    return "Извините, я не могу ответить на этот запрос."
-            except Exception as e:
-                logging.error(f"Ошибка при работе с ключом {key} и моделью {model}: {e}")
-                # Пробуем следующий ключ
+        except Exception as e:
+            logging.error(f"Ошибка при работе с ключом {key} и моделью {PRIMARY_MODEL}: {e}")
+            # идём к следующему ключу
 
-        # Если ни один ключ для этой модели не сработал → идём к следующей модели
-        logging.warning(f"Все ключи не сработали для модели {model}, пробуем следующую.")
+    # 2. Если все ключи не сработали → берём последний ключ и пробуем запасные модели
+    last_key = key_manager.get_keys_to_try()[-1]
+    for model in FALLBACK_MODELS:
+        try:
+            logging.info(f"Пробуем fallback модель {model} с последним ключом {last_key}")
+            client = genai.Client(api_key=last_key)
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=context,
+                config=config,
+            )
+            logging.info(f"Успешный ответ от fallback модели {model} с ключом {last_key}")
 
-    # Если дошли сюда → ни одна модель/ключ не сработали
+            # ⚠️ Тут ключ не запоминаем, т.к. успешность модели не сохраняем
+            if response.candidates and response.candidates[0].content.parts:
+                result = "".join(
+                    part.text
+                    for part in response.candidates[0].content.parts
+                    if part.text and not getattr(part, "thought", False)
+                ).strip()
+                return result if result else "Извините, я не могу ответить на этот запрос."
+            else:
+                logging.warning("Ответ от модели не содержит текстового компонента.")
+                return "Извините, я не могу ответить на этот запрос."
+
+        except Exception as e:
+            logging.error(f"Ошибка при работе с fallback моделью {model} и ключом {last_key}: {e}")
+            # идём к следующей модели
+
+    # 3. Всё сломалось
     return "Извините, не удалось обработать запрос ни с одной моделью. Попробуйте позже."
 
 
