@@ -890,16 +890,21 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
 
     try:
         keys_to_try = key_manager.get_keys_to_try()
-        for api_key in keys_to_try:
+        logger.info(f"Будет протестировано {len(keys_to_try)} ключей")
+
+        for idx, api_key in enumerate(keys_to_try, start=1):
+            logger.info(f"[{idx}/{len(keys_to_try)}] Проверка ключа ...{api_key[-4:]}")
+
             try:
                 client = genai.Client(api_key=api_key)
 
                 try:
+                    logger.info(f"Загрузка изображения с ключом ...{api_key[-4:]}")
                     image_file = client.files.upload(file=image_path_obj)
-                except Exception:
+                    logger.info(f"Изображение успешно загружено: {image_file.uri}")
+                except Exception as e_upload:
+                    logger.warning(f"Не удалось загрузить изображение с ключом ...{api_key[-4:]}: {e_upload}")
                     continue  # пробуем следующий ключ
-
-                logger.info(f"Изображение загружено: {image_file.uri}")
 
                 safety_settings = [
                     types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
@@ -909,7 +914,11 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                 ]
 
                 models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                logger.info(f"Будет протестировано {len(models_to_try)} моделей для ключа ...{api_key[-4:]}")
+
                 for model_name in models_to_try:
+                    logger.info(f"Попытка генерации с моделью {model_name} и ключом ...{api_key[-4:]}")
+
                     try:
                         response = await client.aio.models.generate_content(
                             model=model_name,
@@ -935,6 +944,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                         )
 
                         if not response.candidates or not response.candidates[0].content.parts:
+                            logger.warning(f"Пустой ответ от модели {model_name} с ключом ...{api_key[-4:]}")
                             continue
 
                         response_text = "".join(
@@ -943,6 +953,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                         ).strip()
 
                         if response_text:
+                            logger.info(f"Успех: модель {model_name} с ключом ...{api_key[-4:]} дала результат")
                             await key_manager.set_successful_key(api_key)
                             return response_text
 
@@ -954,6 +965,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                 logger.warning(f"Ошибка при использовании ключа ...{api_key[-4:]}: {e_key}")
                 continue
 
+        logger.error("Все ключи и модели были перепробованы, результата нет")
         return "К сожалению, все ключи и модели исчерпаны. Попробуйте позже."
 
     except Exception as e:
@@ -1369,26 +1381,33 @@ async def generate_document_response(document_path, user_id, query=None):
 
     # Проверяем существование файла
     if not os.path.exists(document_path):
-        logging.error(f"Файл {document_path} не существует.")
+        logging.error(f"[generate_document_response] Файл {document_path} не существует.")
         return "Документ недоступен. Попробуйте снова."
 
     document_path_obj = pathlib.Path(document_path)
 
     try:
         keys_to_try = key_manager.get_keys_to_try()
-        for api_key in keys_to_try:
+        logging.info(f"[generate_document_response] Найдено {len(keys_to_try)} ключей для перебора.")
+
+        for idx, api_key in enumerate(keys_to_try, start=1):
+            logging.info(f"[generate_document_response] Пробуем ключ {idx}/{len(keys_to_try)}: ...{api_key[-4:]}")
             try:
                 client = genai.Client(api_key=api_key)
 
                 try:
                     file_upload = client.files.upload(file=document_path_obj)
+                    logging.info(f"Файл успешно загружен с ключом ...{api_key[-4:]}, uri={file_upload.uri}")
                 except Exception as e:
                     logging.warning(f"Ошибка загрузки документа с ключом ...{api_key[-4:]}: {e}")
                     continue  # пробуем следующий ключ
 
                 # Перебор моделей: сначала основная, потом запасные
                 models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                logging.info(f"Будем пробовать модели: {models_to_try}")
+
                 for model_name in models_to_try:
+                    logging.info(f"Пробуем модель {model_name} с ключом ...{api_key[-4:]}")
                     try:
                         google_search_tool = Tool(google_search=GoogleSearch())
 
@@ -1421,6 +1440,7 @@ async def generate_document_response(document_path, user_id, query=None):
                         )
 
                         if not response.candidates or not response.candidates[0].content.parts:
+                            logging.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} вернула пустой ответ")
                             continue
 
                         bot_response = ''.join(
@@ -1428,30 +1448,34 @@ async def generate_document_response(document_path, user_id, query=None):
                         ).strip()
 
                         if bot_response:
+                            logging.info(f"Успех! Ответ получен с ключом ...{api_key[-4:]} на модели {model_name}")
                             await key_manager.set_successful_key(api_key)
                             return bot_response
+                        else:
+                            logging.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} вернула пустой текст")
 
                     except Exception as e:
-                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}")
+                        logging.warning(f"Ошибка на модели {model_name} с ключом ...{api_key[-4:]}: {e}", exc_info=True)
                         continue
 
             except Exception as e:
-                logging.warning(f"Ошибка при работе с ключом ...{api_key[-4:]}: {e}")
+                logging.warning(f"Ошибка при инициализации клиента с ключом ...{api_key[-4:]}: {e}", exc_info=True)
                 continue
 
+        logging.error("[generate_document_response] Все ключи и модели были перепробованы, успеха нет.")
         return "К сожалению, обработка документа не удалась. Попробуйте позже."
 
     except Exception as e:
-        logging.error("Ошибка при обработке документа:", exc_info=True)
+        logging.error("[generate_document_response] Ошибка при обработке документа:", exc_info=True)
         return "Ошибка при обработке документа. Попробуйте снова."
 
     finally:
         if os.path.exists(document_path):
             try:
                 os.remove(document_path)
-                logger.info(f"Временный файл удален: {document_path}")
+                logging.info(f"Временный файл удален: {document_path}")
             except Exception as e:
-                logger.error(f"Ошибка при удалении временного файла: {e}")
+                logging.error(f"Ошибка при удалении временного файла: {e}")
 
 
 async def generate_audio_response(audio_file_path, user_id, query=None):
