@@ -856,9 +856,15 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
 
-    # Если нет ни роли по умолчанию, ни пользовательской роли
     if not selected_role:
-        selected_role = "Ты обычный вариант модели Gemini реализованный в виде телеграм бота, помогаешь пользователю выполнять различные задачи и выполняешь его поручения. В боте есть кнопка выбор роли, сообщи об этом пользователю если он поинтересуется. Так же ты умеешь рисовать и дорисовывать изображения. Для того чтобы ты что-то нарисовал, тебе нужно прислать сообщение которое начинается со слово \"Нарисуй\". Чтобы ты изменил, обработал или дорисовал изображение, тебе нужно отправить исходное сообщение с подписью начинающейся с \"Дорисуй\", так же сообщи об этом пользователю если он будет спрашивать."
+        selected_role = (
+            "Ты обычный вариант модели Gemini реализованный в виде телеграм-бота. "
+            "Помогаешь пользователю выполнять различные задачи и выполняешь его поручения. "
+            "В боте есть кнопка выбора роли, сообщи об этом пользователю если он поинтересуется. "
+            "Ты умеешь рисовать и дорисовывать изображения. Чтобы нарисовать, пользователь должен "
+            "начать сообщение со слова «Нарисуй». Чтобы изменить или дорисовать изображение — отправить "
+            "его с подписью, начинающейся с «Дорисуй»."
+        )
 
     # Контекст
     relevant_context = await get_relevant_context(user_id) if use_context else ""
@@ -867,46 +873,45 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
 
     system_instruction = (
         f"Ты чат-бот играющий роль: {selected_role}. "
-        f"Эту роль задал тебе пользователь и ты должен строго её придерживаться. "
+        f"Эту роль задал тебе пользователь и ты должен строго её придерживаться."
     )
 
     context = (
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'} "
-        f"Собеседник прислал тебе изображение С подписью:\n{query}"
+        f"Предыдущий контекст диалога: {relevant_context if relevant_context else 'отсутствует.'} "
+        f"Собеседник прислал тебе изображение с подписью:\n{query}"
         if query else
         "Отреагируй на это изображение в контексте чата"
     )
 
-    image_file = None
+    if not os.path.exists(image_path):
+        return "Изображение недоступно. Попробуйте снова."
+
+    image_path_obj = pathlib.Path(image_path)
+
     try:
-        # Загрузка изображения
-        try:
-            image_file = client.files.upload(file=pathlib.Path(image_path))
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке изображения: {e}")
-            return "Не удалось загрузить изображение."
-
-        logger.info(f"Изображение загружено: {image_file.uri}")
-
-        safety_settings = [
-            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
-        ]
-
-        # --- Перебор ключей и моделей ---
-        for api_key in key_manager.get_keys_to_try():
+        keys_to_try = key_manager.get_keys_to_try()
+        for api_key in keys_to_try:
             try:
-                client_local = genai.Client(api_key=api_key)
+                client = genai.Client(api_key=api_key)
 
-                # Сначала пробуем основную модель
-                try_models = [PRIMARY_MODEL] + FALLBACK_MODELS
+                try:
+                    image_file = client.files.upload(file=image_path_obj)
+                except Exception:
+                    continue  # пробуем следующий ключ
 
-                for model_name in try_models:
+                logger.info(f"Изображение загружено: {image_file.uri}")
+
+                safety_settings = [
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+                ]
+
+                models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                for model_name in models_to_try:
                     try:
-                        logger.info(f"Попытка: модель='{model_name}', ключ=...{api_key[-4:]}")
-                        response = await client_local.aio.models.generate_content(
+                        response = await client.aio.models.generate_content(
                             model=model_name,
                             contents=[
                                 types.Content(
@@ -928,15 +933,19 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                                 safety_settings=safety_settings
                             )
                         )
-                        # Если ответ есть
-                        if response.candidates and response.candidates[0].content.parts:
-                            response_text = "".join(
-                                part.text for part in response.candidates[0].content.parts
-                                if part.text and not getattr(part, "thought", False)
-                            ).strip()
 
+                        if not response.candidates or not response.candidates[0].content.parts:
+                            continue
+
+                        response_text = "".join(
+                            part.text for part in response.candidates[0].content.parts
+                            if part.text and not getattr(part, "thought", False)
+                        ).strip()
+
+                        if response_text:
                             await key_manager.set_successful_key(api_key)
-                            return response_text if response_text else "Извините, я не смог распознать изображение."
+                            return response_text
+
                     except Exception as e_model:
                         logger.warning(f"Модель {model_name} с ключом ...{api_key[-4:]} не сработала: {e_model}")
                         continue
@@ -945,15 +954,14 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                 logger.warning(f"Ошибка при использовании ключа ...{api_key[-4:]}: {e_key}")
                 continue
 
-        # Если все ключи и модели перепробованы
         return "К сожалению, все ключи и модели исчерпаны. Попробуйте позже."
 
     except Exception as e:
         logger.error("Ошибка при распознавании изображения: %s", e)
         return "Произошла ошибка при обработке изображения. Попробуйте снова."
+
     finally:
-        # Удаляем временный файл
-        if image_path and os.path.exists(image_path):
+        if os.path.exists(image_path):
             try:
                 os.remove(image_path)
                 logger.info(f"Временный файл удален: {image_path}")
