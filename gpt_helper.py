@@ -2216,7 +2216,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
             logging.error(f"Ошибка при генерации (модель={model_name}, ключ={last_key}): {e}")
             continue
 
-    return "К сожалению, ни одна модель не смогла обработать запрос. Попробуйте позже."
+    return "К сожалению, ни одна модель не смогла обработать запрос. Попробуйте сбросить ваш диалог через кнопку меню, возможно что-то в нём блокируется цензурой. Либо попытайтесь позже позже."
 
 
 def limit_response_length(text):
