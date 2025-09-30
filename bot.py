@@ -6772,7 +6772,7 @@ async def products_gpt(update, context):
     img_url = context.user_data.get('img_url')
     group_images = context.user_data.get('group_images')
     caption = context.user_data.get('img_caption')
-    image_path = context.user_data['img_path'] = 
+    image_path = context.user_data.get('img_path')
     if not img_url and not group_images and not image_path:
         await update.callback_query.answer("Изображение не найдено.")
         return
