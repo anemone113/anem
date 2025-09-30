@@ -1444,6 +1444,7 @@ async def fast_rec(update, context):
     # Сохраняем в user_data
     context.user_data['img_url'] = img_url
     context.user_data['img_caption'] = caption
+    context.user_data['img_path'] = image_path  # <-- сохраняем путь к файлу
 
     # Шаг 3: Успешная загрузка и показ клавиатуры
     keyboard = [
@@ -7199,28 +7200,21 @@ from urllib.parse import quote  # Импортируем функцию quote
 async def barcode_with_gpt(update, context):
     query = update.callback_query
     user_id = query.from_user.id
-    img_url = context.user_data.get('img_url')
+    img_path = context.user_data.get('img_path')
 
-    if not img_url:
-        await query.answer("Изображение не найдено.", show_alert=True)
+    if not img_path:
+        await query.answer("Файл изображения не найден.", show_alert=True)
         return
 
     # Отправляем сообщение о начале обработки
     processing_message = await query.message.reply_text("Запрос принят, ожидайте...")
-    query = update.callback_query
     if query:
         await query.answer()  # Гасим нажатие кнопки
+
     async def process():
         try:
-            # Открываем изображение
-            async with aiohttp.ClientSession() as session:
-                async with session.get(img_url) as resp:
-                    if resp.status != 200:
-                        raise Exception("Не удалось скачать изображение")
-                    img_bytes = await resp.read()
-
-            # Открываем картинку напрямую из памяти
-            image = Image.open(BytesIO(img_bytes))
+            # Загружаем картинку из временного файла
+            image = Image.open(img_path)
             image.load()
 
             # Запрос к модели
