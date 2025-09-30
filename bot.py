@@ -111,7 +111,7 @@ from io import BytesIO
 # Укажите ваши токены и ключ для imgbb
 TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
-IMGBB_API_KEY = '201102aa07fa88004788bfa1c0b2fcae'
+IMGBB_API_KEY = '0f0f15b17c990ae3d20936ec8e614493'
 GROUP_CHAT_ID = -1002233281756
 
 # Состояния
@@ -5541,22 +5541,54 @@ async def search_image_saucenao(image_path: str):
 
 async def plants_upload_image(file_path: str) -> str:
     try:
-        # Попытка загрузки на ImgBB с таймаутом 5 секунд
-        return await asyncio.wait_for(upload_image_to_imgbb(file_path), timeout=5)
-    except asyncio.TimeoutError:
-        print("Таймаут при загрузке на ImgBB. Переход к Catbox.")
-        try:
-            return await upload_catbox(file_path)
-        except Exception as e:
-            print(f"Ошибка при загрузке на Catbox: {e}. Переход к FreeImage.")
-            return await upload_free_image(file_path)
+        # Сначала Uploadcare (таймаут 8 сек)
+        return await asyncio.wait_for(upload_uploadcare(file_path), timeout=8)
     except Exception as e:
-        print(f"Ошибка при загрузке на ImgBB: {e}. Переход к Catbox.")
+        print(f"Ошибка при загрузке на Uploadcare: {e}. Переход к ImgBB.")
         try:
-            return await upload_catbox(file_path)
-        except Exception as catbox_error:
-            print(f"Ошибка при загрузке на Catbox: {catbox_error}. Переход к FreeImage.")
-            return await upload_free_image(file_path)
+            return await asyncio.wait_for(upload_image_to_imgbb(file_path), timeout=5)
+        except asyncio.TimeoutError:
+            print("Таймаут при загрузке на ImgBB. Переход к Catbox.")
+            try:
+                return await upload_catbox(file_path)
+            except Exception as e:
+                print(f"Ошибка при загрузке на Catbox: {e}. Переход к FreeImage.")
+                return await upload_free_image(file_path)
+        except Exception as e:
+            print(f"Ошибка при загрузке на ImgBB: {e}. Переход к Catbox.")
+            try:
+                return await upload_catbox(file_path)
+            except Exception as catbox_error:
+                print(f"Ошибка при загрузке на Catbox: {catbox_error}. Переход к FreeImage.")
+                return await upload_free_image(file_path)
+
+UPLOADCARE_PUBLIC_KEY = "dfb67a63bf689bd1e116"  # ⚠️ сюда вставь свой ключ
+
+async def upload_uploadcare(file_path: str) -> str:
+    """
+    Загрузка изображения на Uploadcare.
+    Возвращает прямую ссылку на файл.
+    """
+    url = "https://upload.uploadcare.com/base/"
+    try:
+        async with aiohttp.ClientSession() as session:
+            with open(file_path, "rb") as f:
+                data = aiohttp.FormData()
+                data.add_field("UPLOADCARE_PUB_KEY", UPLOADCARE_PUBLIC_KEY)
+                data.add_field("UPLOADCARE_STORE", "1")  # сохранять в хранилище
+                data.add_field("file", f, filename=os.path.basename(file_path))
+
+                async with session.post(url, data=data, timeout=10) as resp:
+                    if resp.status != 200:
+                        raise Exception(f"Uploadcare вернул {resp.status}")
+                    result = await resp.json()
+                    file_id = result.get("file")
+                    if not file_id:
+                        raise Exception(f"Uploadcare не вернул file_id: {result}")
+                    return f"https://ucarecdn.com/{file_id}/"
+    except Exception as e:
+        raise Exception(f"Ошибка Uploadcare: {e}")
+
 
 
 async def second_upload_image(file_path: str) -> str:
