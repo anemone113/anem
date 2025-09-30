@@ -1046,7 +1046,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         context.user_data['image_bytes'] = bio.getvalue()
         context.user_data['img_url'] = img_url
         context.user_data['img_caption'] = caption
-
+        context.user_data['img_path'] = image_path
         # Формируем клавиатуру с кнопками для распознавания
         keyboard = [
             [InlineKeyboardButton("🗺Добавить это растение на карту 🗺", callback_data='plantmap_gpt')],  
@@ -1414,6 +1414,21 @@ import uuid
 async def fast_rec(update, context):
     user_id = update.effective_user.id
     message = update.message    
+
+    # === Очистка перед началом работы ===
+    # Удаление временного файла, если он существует
+    image_path = 'temp_image.jpg'
+    if os.path.exists(image_path):
+        try:
+            os.remove(image_path)
+        except Exception as e:
+            print(f"Не удалось удалить {image_path}: {e}")
+
+    # Очистка локальных данных пользователя
+    for key in ['image_bytes', 'img_url', 'img_caption', 'img_path']:
+        if key in context.user_data:
+            del context.user_data[key]
+            
     if update.message.photo:
         file = await update.message.photo[-1].get_file()
         image_path = 'temp_image.jpg'
@@ -6401,15 +6416,13 @@ def escape_markdown_v2(text: str) -> str:
 
 async def analyze_ingredients(update, context):
     """
-    Обрабатывает запрос на анализ состава по изображению.
-    Функция скачивает изображение, отправляет его в Gemini для анализа
-    и возвращает результат пользователю.
+    Обрабатывает запрос на анализ состава по уже скачанному изображению.
     """
     user_id = update.effective_user.id
-    img_url = context.user_data.get('img_url')
+    image_bytes = context.user_data.get('image_bytes')
 
-    # Проверяем наличие изображения в контексте
-    if not img_url:
+    # Проверяем наличие изображения
+    if not image_bytes:
         await update.callback_query.answer("Изображение не найдено.")
         return
 
@@ -6421,15 +6434,8 @@ async def analyze_ingredients(update, context):
 
     async def process():
         try:
-            # Скачиваем изображение
-            async with aiohttp.ClientSession() as session:
-                async with session.get(img_url) as resp:
-                    if resp.status != 200:
-                        raise Exception("Не удалось скачать изображение")
-                    img_bytes = await resp.read()
-
-            # Открываем картинку напрямую из памяти
-            image = Image.open(BytesIO(img_bytes))
+            # Открываем картинку напрямую из памяти (уже скачанный файл)
+            image = Image.open(BytesIO(image_bytes))
             image.load()
 
             # Генерация ответа через Gemini для анализа состава
@@ -6488,11 +6494,12 @@ async def analyze_ingredients(update, context):
 
 async def recognize_animal_insect(update, context):
     user_id = update.effective_user.id
-    img_url = context.user_data.get('img_url')
     caption = context.user_data.get('img_caption')  # <-- подпись, если есть
+    image_bytes = context.user_data.get('image_bytes')  # <-- байты из fast_rec
+    img_url = context.user_data.get('img_url')  # fallback
 
     # Проверяем наличие изображения
-    if not img_url:
+    if not image_bytes and not img_url:
         await update.callback_query.answer("Изображение не найдено.")
         return
 
@@ -6503,12 +6510,16 @@ async def recognize_animal_insect(update, context):
 
     async def process():
         try:
-            # Скачиваем изображение
-            async with aiohttp.ClientSession() as session:
-                async with session.get(img_url) as resp:
-                    if resp.status != 200:
-                        raise Exception("Не удалось скачать изображение")
-                    img_bytes = await resp.read()
+            # Используем уже скачанный файл из памяти
+            if image_bytes:
+                img_bytes = image_bytes
+            else:
+                # fallback: скачать по ссылке
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(img_url) as resp:
+                        if resp.status != 200:
+                            raise Exception("Не удалось скачать изображение")
+                        img_bytes = await resp.read()
 
             # Открываем картинку из памяти
             image = Image.open(BytesIO(img_bytes))
@@ -6569,29 +6580,23 @@ async def recognize_animal_insect(update, context):
 
 async def text_plant_help_with_gpt(update, context):
     user_id = update.effective_user.id
-    img_url = context.user_data.get('img_url')
     caption = context.user_data.get('img_caption')  # <-- достаём подпись
 
-    # Проверяем наличие изображения в контексте
-    if not img_url:
-        await update.callback_query.answer("Изображение не найдено.")
+    # Проверяем наличие файла
+    image_path = 'temp_image.jpg'
+    if not os.path.exists(image_path):
+        await update.callback_query.answer("Файл изображения не найден. Отправьте фото снова.")
         return
 
     processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
     query = update.callback_query
     if query:
         await query.answer()  # Гасим нажатие кнопки
+
     async def process():
         try:
-            # Открываем файл temp_image.jpg для обработки
-            async with aiohttp.ClientSession() as session:
-                async with session.get(img_url) as resp:
-                    if resp.status != 200:
-                        raise Exception("Не удалось скачать изображение")
-                    img_bytes = await resp.read()
-
-            # Открываем картинку напрямую из памяти
-            image = Image.open(BytesIO(img_bytes))
+            # Загружаем уже сохранённое изображение
+            image = Image.open(image_path)
             image.load()
 
             # Генерация ответа через Gemini
@@ -6764,35 +6769,40 @@ async def mushrooms_gpt(update, context):
 
 async def products_gpt(update, context):
     user_id = update.effective_user.id
-    img_url = context.user_data.get('img_url')              # для одного фото
-    group_images = context.user_data.get('group_images')    # для нескольких фото (список bytes)
+    img_url = context.user_data.get('img_url')
+    group_images = context.user_data.get('group_images')
     caption = context.user_data.get('img_caption')
-
-    # Если нет ни одного изображения
-    if not img_url and not group_images:
+    image_path = context.user_data['img_path'] = 
+    if not img_url and not group_images and not image_path:
         await update.callback_query.answer("Изображение не найдено.")
         return
 
     processing_message = await update.callback_query.message.reply_text("Запрос принят, ожидайте...")
     query = update.callback_query
     if query:
-        await query.answer()  # Гасим нажатие кнопки
+        await query.answer()
 
     async def process():
         temp_files = []
         try:
             images = []
 
-            # Если у нас группа изображений
             if group_images:
+                # Несколько фото
                 for idx, img_bytes in enumerate(group_images):
                     with NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
                         temp_file.write(img_bytes)
                         temp_file.flush()
                         temp_files.append(temp_file.name)
                         images.append(Image.open(temp_file.name))
+            elif image_path:
+                # Уже скачанный файл
+                image = Image.open(image_path)
+                image.load()
+                images.append(image)
+                temp_files.append(image_path)  # учтем в очистке, если надо
             else:
-                # Одинарное изображение
+                # fallback (если всё же нет local_image_path, но есть img_url)
                 with open("temp_image.jpg", "rb") as f:
                     image = Image.open(f)
                     image.load()
@@ -6805,6 +6815,7 @@ async def products_gpt(update, context):
                 images=images,
                 query=caption
             )
+
 
             # Разбиваем текст на части
             caption_part, message_parts = split_html_text(response_text, 0, 4096)
@@ -6870,6 +6881,7 @@ async def calories_gpt(update, context):
     query = update.callback_query
     if query:
         await query.answer()  # Гасим нажатие кнопки
+
     async def process():
         temp_files = []
         try:
@@ -6884,12 +6896,15 @@ async def calories_gpt(update, context):
                         temp_files.append(temp_file.name)
                         images.append(Image.open(temp_file.name))
             else:
-                # Одинарное изображение
-                with open("temp_image.jpg", "rb") as f:
-                    image = Image.open(f)
+                # Используем уже скачанный temp_image.jpg
+                image_path = "temp_image.jpg"
+                if os.path.exists(image_path):
+                    image = Image.open(image_path)
                     image.load()
                     images.append(image)
-                    temp_files.append("temp_image.jpg")
+                    temp_files.append(image_path)
+                else:
+                    raise FileNotFoundError("Файл temp_image.jpg не найден. Сначала отправьте фото.")
 
             # Генерация ответа через Gemini
             response_text = await generate_calories_response(
@@ -7039,9 +7054,9 @@ async def composition_comparison_gpt(update, context):
 
 async def text_rec_with_gpt(update, context):
     user_id = update.effective_user.id
-    img_url = context.user_data.get('img_url')
+    image_path = context.user_data.get('img_path')  # <-- используем локальный путь
 
-    if not img_url:
+    if not image_path:
         await update.callback_query.answer("Изображение не найдено.")
         return
 
@@ -7052,13 +7067,8 @@ async def text_rec_with_gpt(update, context):
 
     async def process():
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(img_url) as resp:
-                    if resp.status != 200:
-                        raise Exception("Не удалось скачать изображение")
-                    img_bytes = await resp.read()
-    
-            image = Image.open(BytesIO(img_bytes))
+            # Загружаем уже скачанный файл
+            image = Image.open(image_path)
             image.load()
     
             response = await generate_text_rec_response(user_id, image=image, query=None)
