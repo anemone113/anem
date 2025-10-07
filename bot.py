@@ -13196,134 +13196,124 @@ def preprocess_caption(text: str) -> str:
     clean_text = re.sub(r'<[^>]+>', '', processed_text)
     return clean_text
 
-async def generate_timeline_image(context: CallbackContext, posts_data: list) -> io.BytesIO:
+import io
+import gc
+import pytz
+import logging
+import asyncio
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from textwrap import wrap
+from PIL import Image
+
+async def generate_timeline_image(context, posts_data: list) -> io.BytesIO:
     """
     Генерирует изображение временной шкалы постов с помощью Matplotlib.
+    Оптимизировано для снижения использования оперативной памяти.
     """
-    # 1. Настройка холста (Figure) и осей (Axes)
     num_posts = len(posts_data)
-    # Динамически вычисляем высоту изображения. 6 дюймов на пост.
     fig_height = max(6, 4 * num_posts)
-    fig, ax = plt.subplots(figsize=(12, fig_height))
-    fig.patch.set_facecolor('#f0f0f0') # Цвет фона всего изображения
-    ax.set_facecolor('#ffffff') # Цвет фона области для рисования
 
-    # 2. Убираем лишние элементы графика
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False)
+    # Создание холста
+    fig, ax = plt.subplots(figsize=(12, fig_height), constrained_layout=False)
+    fig.patch.set_facecolor('#f0f0f0')
+    ax.set_facecolor('#ffffff')
+
+    # Скрываем оси и рамки
+    for spine in ax.spines.values():
+        spine.set_visible(False)
     ax.get_xaxis().set_ticks([])
     ax.get_yaxis().set_ticks([])
-    ax.set_ylim(0, num_posts * 10 + 3)  # было: num_posts * 10
     ax.set_xlim(0, 10)
+    ax.set_ylim(0, num_posts * 10 + 3)
 
     # Заголовок
     ax.text(5, num_posts * 10 + 2, 'План публикаций на 30 дней',
             ha='center', va='center', fontsize=24, fontweight='bold', color='#333333')
 
-    # 3. Итерация по постам для их отрисовки
+    # Основной цикл
     for i, (post_key, data) in enumerate(posts_data):
         details = await _get_post_details(post_key, context)
         scheduled_time = data['scheduled_time'].astimezone(pytz.timezone("Europe/Moscow"))
-
-        # Вертикальная позиция блока
         y_base = (num_posts - i - 1) * 10
 
-        # Рисуем фоновый прямоугольник для каждого поста
-        rect = patches.Rectangle((0.5, y_base + 0.5), 9, 9,
-                                 linewidth=1, edgecolor='none', facecolor='#ffffff',
-                                 zorder=1, linestyle='--',
-                                 transform=ax.transData)
+        # Тень и фон блока
         shadow = patches.Rectangle((0.55, y_base + 0.45), 9, 9,
-                                   linewidth=0, facecolor='#cccccc', zorder=0,
-                                   transform=ax.transData)
+                                   linewidth=0, facecolor='#cccccc', zorder=0)
+        rect = patches.Rectangle((0.5, y_base + 0.5), 9, 9,
+                                 linewidth=1, edgecolor='none', facecolor='#ffffff', zorder=1)
         ax.add_patch(shadow)
         ax.add_patch(rect)
 
-
-        # 4. Отображение изображения поста
-        if details['image_data']:
+        # Отображение изображения поста
+        if details.get('image_data'):
             try:
                 img = Image.open(details['image_data'])
-                
-                # 1. Определяем "коробку", в которую нужно вписать изображение
-                box_x, box_y = 1, y_base + 1
-                box_w, box_h = 3.5, 7.5 # Ширина = 4.5 - 1, Высота = 8.5 - 1
-                box_aspect = box_w / box_h
+                img.thumbnail((400, 400))  # уменьшаем в 4–10 раз без потери качества
+                img_array = np.asarray(img)
+                img.close()
+                del img
 
-                # 2. Получаем пропорции самого изображения
-                img_w, img_h = img.size
+                # Вычисляем параметры расположения
+                box_x, box_y = 1, y_base + 1
+                box_w, box_h = 3.5, 7.5
+                box_aspect = box_w / box_h
+                img_h, img_w = img_array.shape[:2]
                 img_aspect = img_w / img_h
 
-                # 3. Вычисляем новые размеры и позицию, чтобы сохранить пропорции
                 if img_aspect > box_aspect:
-                    # Изображение шире "коробки" -> упирается в бока
-                    new_w = box_w
-                    new_h = new_w / img_aspect
-                    # Центрируем по вертикали
-                    new_x = box_x
-                    new_y = box_y + (box_h - new_h) / 2
+                    new_w, new_h = box_w, box_w / img_aspect
+                    new_x, new_y = box_x, box_y + (box_h - new_h) / 2
                 else:
-                    # Изображение выше "коробки" -> упирается в верх/низ
-                    new_h = box_h
-                    new_w = new_h * img_aspect
-                    # Центрируем по горизонтали
-                    new_y = box_y
-                    new_x = box_x + (box_w - new_w) / 2
+                    new_h, new_w = box_h, box_h * img_aspect
+                    new_y, new_x = box_y, box_x + (box_w - new_w) / 2
 
-                # 4. Рисуем изображение с новыми, правильными координатами
-                # Масштабируем изображение под высоту коробки
-                zoom_factor = box_h / img_h * 2000 / fig.dpi  # dpi влияет на zoom в matplotlib
-
-                imagebox = OffsetImage(img, zoom=zoom_factor)
-                ab = AnnotationBbox(imagebox, (box_x + box_w/2, box_y + box_h/2), frameon=False, zorder=2)
+                zoom_factor = box_h / img_h * 2000 / fig.dpi
+                imagebox = OffsetImage(img_array, zoom=zoom_factor)
+                ab = AnnotationBbox(imagebox, (box_x + box_w/2, box_y + box_h/2),
+                                    frameon=False, zorder=2)
                 ax.add_artist(ab)
+                del img_array
 
             except Exception as e:
                 logging.error(f"Не удалось отрисовать изображение: {e}")
                 ax.text(2.75, y_base + 4.75, "Ошибка\nзагрузки\nизображения",
                         ha='center', va='center', fontsize=12, color='red', zorder=2)
 
-        # 5. Отображение текста
+        # Текстовые элементы
         text_x_pos = 5.0
-        # Дата и время
         date_str = scheduled_time.strftime('%d %B, %Y')
         time_str = scheduled_time.strftime('%H:%M')
+
         ax.text(text_x_pos, y_base + 8.5, f"☆ {date_str}  -  ☆ {time_str}",
                 ha='left', va='center', fontsize=16, fontweight='bold', color='#005a9c', zorder=3)
-
-        # Автор
-        ax.text(text_x_pos, y_base + 7.8, f"☆ Автор: {details['author']}",
+        ax.text(text_x_pos, y_base + 7.8, f"☆ Автор: {details.get('author', '—')}",
                 ha='left', va='center', fontsize=14, color='#555555', zorder=3)
 
-        # Подпись (с переносом строк)
-        # Новый код для обработки подписи
-        caption_text = details['caption']
-        # Применяем нашу функцию для очистки и форматирования
+        caption_text = details.get('caption', '')
         clean_caption = preprocess_caption(caption_text)
-
-        # Теперь мы можем дополнительно обернуть слишком длинные строки,
-        # которые не были разделены через /n.
-        # textwrap.wrap работает корректно с уже существующими \n.
-        wrapped_text = '\n'.join(wrap(clean_caption, 
-                                     width=45,          # Максимальная ширина строки
-                                     replace_whitespace=False,
-                                     break_long_words=False))
+        wrapped_text = '\n'.join(wrap(clean_caption, width=45, replace_whitespace=False, break_long_words=False))
 
         ax.text(text_x_pos, y_base + 6.5, wrapped_text,
-                ha='left', va='top', fontsize=12, color='#333333', zorder=3,
-                wrap=True) # Добавляем wrap=True для лучшей обработки текста в matplotlib
+                ha='left', va='top', fontsize=12, color='#333333', zorder=3, wrap=True)
 
+        # микропаузa для избежания пиков памяти
+        await asyncio.sleep(0)
 
-
-    # 6. Сохранение в буфер
+    # Сохранение в буфер
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=72)
     buf.seek(0)
-    plt.close(fig) # Важно закрыть фигуру, чтобы освободить память
+
+    # Очистка памяти
+    ax.clear()
+    plt.close(fig)
+    gc.collect()
 
     return buf
+
 
 async def show_timeline(update: Update, context: CallbackContext) -> None:
     """
@@ -13362,32 +13352,44 @@ async def show_timeline(update: Update, context: CallbackContext) -> None:
         await loading_msg.edit_text("Нет запланированных публикаций на ближайшие 30 дней.")
         return
 
+    # Сортировка по времени
     sorted_posts = sorted(scheduled_posts.items(), key=lambda x: x[1]['scheduled_time'])
 
+    # Разбиваем на чанки по 6 постов
+    chunk_size = 6
+    post_chunks = [sorted_posts[i:i + chunk_size] for i in range(0, len(sorted_posts), chunk_size)]
+
     try:
-        # Генерация изображения
-        image_buffer = await generate_timeline_image(context, sorted_posts)
+        # Генерируем и отправляем изображения по мере готовности
+        for idx, chunk in enumerate(post_chunks):
+            image_buffer = await generate_timeline_image(context, chunk)
 
-        # Кнопка "Закрыть окно"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
-        ])
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]
+            ])
 
-        # Заменяем текстовое сообщение на фото с кнопкой
-        await context.bot.edit_message_media(
-            media=InputMediaPhoto(
-                media=image_buffer,
-                caption="Вот ваш план публикаций на ближайшие 30 дней."
-            ),
-            chat_id=loading_msg.chat_id,
-            message_id=loading_msg.message_id,
-            reply_markup=keyboard
-        )
+            caption = f"Вот ваш план публикаций (часть {idx + 1}/{len(post_chunks)})."
+
+            if idx == 0:
+                # Первое изображение заменяет сообщение "Генерирую…"
+                await context.bot.edit_message_media(
+                    media=InputMediaPhoto(media=image_buffer, caption=caption),
+                    chat_id=loading_msg.chat_id,
+                    message_id=loading_msg.message_id,
+                    reply_markup=keyboard
+                )
+            else:
+                # Остальные отправляются новыми сообщениями
+                await context.bot.send_photo(
+                    chat_id=loading_msg.chat_id,
+                    photo=image_buffer,
+                    caption=caption,
+                    reply_markup=keyboard
+                )
+
     except Exception as e:
         logging.error(f"Ошибка при генерации шкалы: {e}", exc_info=True)
         await loading_msg.edit_text(f"❌ Произошла ошибка при создании шкалы: {e}")
-
-
 
 
 
