@@ -12931,7 +12931,7 @@ async def publish_to_vk_scheduled(context: CallbackContext):
         formatted_caption = format_caption_for_vk(first_caption) # Предполагается, что эта функция у вас есть
 
         for url in image_urls:
-            photo = upload_photo_to_vk(vk, url, owner_id, formatted_caption) # Предполагается, что эта функция у вас есть
+            photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption) # Предполагается, что эта функция у вас есть
             uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
             
         if int(owner_id) > 0:
@@ -15801,7 +15801,7 @@ async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
 
     try:
         for url in image_urls:
-            photo = upload_photo_to_vk(vk, url, owner_id, formatted_caption) 
+            photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption)
             uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
     except Exception as e:
         await loading_message.edit_text(f"🚫 Ошибка загрузки изображений в ВК: {e}")
@@ -15828,21 +15828,53 @@ async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
 
 
 
-def upload_photo_to_vk(vk, image_url, group_id, caption):
-    # Загружаем изображение на сервер ВКонтакте
-    upload_url = vk.photos.getWallUploadServer(group_id=group_id)['upload_url']
+async def upload_photo_to_vk(vk, image_url, group_id, caption, max_retries=3, delay=2):
+    """
+    Асинхронно загружает фото в группу ВКонтакте с повторными попытками при ошибках.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            upload_url = vk.photos.getWallUploadServer(group_id=group_id)['upload_url']
+            if not upload_url:
+                raise ValueError("Не удалось получить upload_url от VK API")
 
-    image_data = requests.get(image_url).content
-    response = requests.post(upload_url, files={'photo': ('image.jpg', image_data)}).json()
-    saved_photo = vk.photos.saveWallPhoto(
-        group_id=group_id,
-        photo=response['photo'],
-        server=response['server'],
-        hash=response['hash'],
-        caption=caption  # Используем caption как описание фотографии
-    )[0]
-   
-    return saved_photo
+            # Загружаем изображение по URL
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as resp:
+                    if resp.status != 200:
+                        raise ValueError(f"Ошибка загрузки изображения: HTTP {resp.status}")
+                    image_data = await resp.read()
+
+                # Отправляем изображение на сервер VK
+                form = aiohttp.FormData()
+                form.add_field('photo', image_data, filename='image.jpg', content_type='image/jpeg')
+
+                async with session.post(upload_url, data=form) as upload_resp:
+                    upload_json = await upload_resp.json()
+                    logger.debug(f"VK upload response: {upload_json}")
+
+            # Проверяем корректность ответа
+            if not all(k in upload_json for k in ('photo', 'server', 'hash')):
+                raise ValueError(f"Некорректный ответ от VK при загрузке фото: {upload_json}")
+
+            # Сохраняем фото в альбом
+            saved_photo = vk.photos.saveWallPhoto(
+                group_id=group_id,
+                photo=upload_json['photo'],
+                server=upload_json['server'],
+                hash=upload_json['hash'],
+                caption=caption
+            )[0]
+
+            return saved_photo
+
+        except Exception as e:
+            logger.error(f"Попытка {attempt}/{max_retries} — Ошибка загрузки изображения: {e}", exc_info=True)
+            if attempt < max_retries:
+                await asyncio.sleep(delay)
+                delay *= 1.5  # увеличиваем интервал между попытками
+            else:
+                raise  # если все попытки неудачны — пробрасываем ошибку дальше
 
 
 
