@@ -11660,7 +11660,39 @@ async def schedule_confirm_handler(update: Update, context: CallbackContext) -> 
             del context.user_data[selection_key]
             
         await query.answer("✅ Настройки сохранены!", show_alert=False)
-        await query.message.edit_text(f"✅ Публикация запланирована на: *{time_string}*", parse_mode='Markdown')
+        await query.message.edit_text(
+            f"✅ Публикация запланирована на: *{time_string}*",
+            parse_mode='Markdown'
+        )
+
+        # --- 🔔 УВЕДОМЛЕНИЕ ДЛЯ ВТОРОГО ПОЛЬЗОВАТЕЛЯ ---
+        try:
+            # Получаем краткий текст поста
+            post_key = f"{user_id}_{message_id}"
+            post_caption = await get_post_caption(post_key)
+
+            # Определяем получателя уведомления
+            if user_id == 6217936347:
+                target_user_id = 419817885
+                sender_name = "Артём"
+            elif user_id == 419817885:
+                target_user_id = 6217936347
+                sender_name = "Нова"
+            else:
+                target_user_id = None
+
+            # Если это один из них — отправляем уведомление
+            if target_user_id:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=(
+                        f"{sender_name} добавил отложенный пост на {time_string}, "
+                        f"с содержимым: {post_caption}\n\n"
+                        f"Для просмотра отложенных постов введите /otl"
+                    )
+                )
+        except Exception as e:
+            logging.info(f"Ошибка при отправке уведомления другому пользователю: {e}")
 
     except Exception as e:
         logging.error(f"Ошибка при обновлении Firebase: {e}")
