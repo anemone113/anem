@@ -15861,23 +15861,24 @@ async def handle_vk_keys_input(update: Update, context: CallbackContext):
 
 
 
-async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
+async def handle_vkpub_button(update, context):
+    """Обработка кнопки публикации поста в ВКонтакте."""
     query = update.callback_query
+    await query.answer()
 
-    await query.answer()  # Ответ пользователю, что нажатие обработано
     loading_message = await query.message.reply_text("📤 Пост переносится в ВК, ожидайте...")
 
     if not query.data.startswith("vkpub_"):
         await loading_message.edit_text("🚫 Неверный формат callback данных.")
         return
 
-    # Извлекаем user_id и message_id из callback_data
+    # --- Извлечение данных из callback ---
     _, user_id_str, message_id_str = query.data.split('_', maxsplit=2)
     user_id = int(user_id_str)
     message_id = int(message_id_str)
     key = f"{user_id}_{message_id}"
-    global media_group_storage
-    # Загружаем данные медиагруппы из Firebase
+
+    # --- Получаем медиагруппу из Firebase ---
     media_group_storage = load_publications_from_firebase()
     user_publications = media_group_storage.get(str(user_id), {})
     media_group_data = user_publications.get(key)
@@ -15886,38 +15887,21 @@ async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
         await loading_message.edit_text("🚫 Ошибка: Данные о медиагруппе не найдены.")
         return
 
-    # Проверка формата данных медиагруппы
     media_items = media_group_data.get("media", [])
     if not media_items or not isinstance(media_items, list):
         await loading_message.edit_text("🚫 Ошибка: Медиагруппа пуста или имеет некорректный формат.")
         return
 
-    # Извлекаем ссылки на изображения
     image_urls = [item.get("file_id") for item in media_items if "file_id" in item]
     if not image_urls:
         await loading_message.edit_text("🚫 Ошибка: Ссылки на изображения отсутствуют.")
         return
 
-    # Загружаем токен и owner_id пользователя из Firebase
+    # --- Проверка VK-ключей ---
     vk_keys_ref = db.reference(f'users_publications/vk_keys/{user_id}')
     vk_keys = vk_keys_ref.get()
     if not vk_keys:
-        await loading_message.edit_text(
-            "В данный момент у вас не настроена публикация в вашу ВК группу. "
-            "Для этого вам нужно получить два значения - ID вашей вк группы и токен.\n\n "
-            'Токен вы можете получить тут: vkhost.github.io\n'
-            'Для этого перейдите по указанной ссылке и следуйте инструкциям указанным там, в качестве приложения выберите VKадмин\n\n'
-            'ID группы можно узнать из адресной строки, из настроек группы. либо тут regvk.com/id/\n\n'
-            'Когда у вас будут и ID и токен, отправьте их сюда разделив пробелом или новой строкой.\nТак:\n'
-            '<pre>IDгруппы токен</pre>\n'
-            'Или так:\n'
-            '<pre>IDгруппы\n'
-            'токен</pre>'                                    
-            ,
-            parse_mode="HTML"
-        )
-        if user_id not in waiting_for_vk:
-            waiting_for_vk[user_id] = True         
+        await loading_message.edit_text("🚫 Не найдены VK-ключи. Настройте их через бота.")
         return
 
     token = vk_keys.get("token")
@@ -15926,38 +15910,38 @@ async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
         await loading_message.edit_text("🚫 Ошибка: Некорректные данные для ВК. Проверьте настройки.")
         return
 
-    # Авторизация в VK API
+    # --- Авторизация ---
     vk_session = VkApi(token=token)
     vk = vk_session.get_api()
 
-
-
-    # Загрузка изображений в ВК
-    uploaded_photos = []
-    # Извлекаем заголовок и обрабатываем caption
+    # --- Подготовка подписи ---
     first_caption = media_items[0].get("caption", "")
     cleaned_caption = extract_text_before_first_link(first_caption)
     formatted_caption = format_caption_for_vk(first_caption)
-   
 
+    # --- Загрузка изображений ---
     try:
-        for url in image_urls:
-            photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption)
-            uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
-            await asyncio.sleep(0.4)
-    
+        # Получаем один upload_url для всех изображений
+        upload_url = vk.photos.getWallUploadServer(group_id=owner_id)['upload_url']
+        uploaded_photos = []
+
+        async with aiohttp.ClientSession() as session:
+            for url in image_urls:
+                photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption, session, upload_url)
+                uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
+                await asyncio.sleep(random.uniform(0.6, 1.2))  # дополнительная пауза для стабильности
+
     except Exception as e:
         await loading_message.edit_text(f"🚫 Ошибка загрузки изображений в ВК: {e}")
         return
 
-    # Публикация поста
+    # --- Публикация поста ---
     try:
-        # Проверяем значение owner_id
         if int(owner_id) > 0:
             owner_id = -int(owner_id)
 
         vk.wall.post(
-            owner_id=int(owner_id),  # ID группы
+            owner_id=int(owner_id),
             from_group=1,
             message=html.unescape(cleaned_caption),
             attachments=",".join(uploaded_photos),
@@ -15966,53 +15950,47 @@ async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
         )
 
         await loading_message.edit_text("✅ Пост успешно опубликован в ВКонтакте")
+
     except Exception as e:
         await loading_message.edit_text(f"🚫 Ошибка публикации поста в ВК: {e}")
 
 
-
-async def upload_photo_to_vk(vk, image_url, group_id, caption, max_retries=3, delay=2):
+async def upload_photo_to_vk(vk, image_url, group_id, caption, session, upload_url, max_retries=4, delay=2):
     """
     Асинхронно загружает фото в группу ВКонтакте с повторными попытками при ошибках.
+    Использует одну сессию aiohttp и один upload_url для нескольких изображений.
     """
     for attempt in range(1, max_retries + 1):
         try:
-            upload_url = vk.photos.getWallUploadServer(group_id=group_id)['upload_url']
-            if not upload_url:
-                raise ValueError("Не удалось получить upload_url от VK API")
-
             # Загружаем изображение по URL
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as resp:
-                    if resp.status != 200:
-                        raise ValueError(f"Ошибка загрузки изображения: HTTP {resp.status}")
-                    image_data = await resp.read()
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    raise ValueError(f"Ошибка загрузки изображения: HTTP {resp.status}")
+                image_data = await resp.read()
 
-                # Отправляем изображение на сервер VK
-                form = aiohttp.FormData()
-                form.add_field('photo', image_data, filename='image.jpg', content_type='image/jpeg')
+            # Подготавливаем форму для загрузки
+            form = aiohttp.FormData()
+            form.add_field('photo', image_data, filename='image.jpg', content_type='image/jpeg')
 
-                async with session.post(upload_url, data=form) as upload_resp:
-                    text = await upload_resp.text()
+            # Отправляем изображение на сервер VK
+            async with session.post(upload_url, data=form) as upload_resp:
+                text = await upload_resp.text()
 
-                    # Проверка, действительно ли это JSON
-                    if "504" in text or "<html" in text.lower():
-                        raise ValueError(f"VK вернул HTML-ответ (возможно, таймаут или перегрузка): {text[:200]}")
+                # Проверка на HTML-ответ (ошибка/перегрузка)
+                if "<html" in text.lower() or "504" in text:
+                    raise ValueError(f"VK вернул HTML-ответ (возможно, таймаут): {text[:200]}")
 
-                    try:
-                        upload_json = await upload_resp.json(content_type=None)
-                    except Exception:
-                        raise ValueError(f"Ошибка декодирования JSON. Ответ: {text[:200]}")
+                try:
+                    upload_json = await upload_resp.json(content_type=None)
+                except Exception:
+                    raise ValueError(f"Ошибка декодирования JSON. Ответ: {text[:200]}")
 
-                    logger.debug(f"VK upload response: {upload_json}")
-
-            # Проверяем наличие ключей
+            # Проверяем корректность ответа
             if not upload_json.get('photo') or not all(k in upload_json for k in ('server', 'hash')):
                 raise ValueError(f"Некорректный ответ VK при загрузке: {upload_json}")
 
-            # Небольшая задержка перед сохранением (помогает при множественных загрузках)
-            await asyncio.sleep(0.5)
-
+            # Сохраняем фото в альбоме стены
+            await asyncio.sleep(random.uniform(0.4, 0.8))  # лёгкая задержка между запросами
             saved_photo = vk.photos.saveWallPhoto(
                 group_id=group_id,
                 photo=upload_json['photo'],
@@ -16024,12 +16002,12 @@ async def upload_photo_to_vk(vk, image_url, group_id, caption, max_retries=3, de
             return saved_photo
 
         except Exception as e:
-            logger.error(f"Попытка {attempt}/{max_retries} — Ошибка загрузки изображения: {e}", exc_info=True)
             if attempt < max_retries:
                 await asyncio.sleep(delay)
                 delay *= 1.5
             else:
-                raise
+                raise ValueError(f"Ошибка загрузки {image_url}: {e}")
+
 
 
 
