@@ -13028,58 +13028,75 @@ def handle_testid_command_logic(message_text: str, user_id_to_manage: int = 6217
 
 
 async def publish_to_vk_scheduled(context: CallbackContext):
-    """Публикует пост в VK по расписанию."""
+    """Публикует пост в ВКонтакте по расписанию (с логикой, аналогичной handle_vkpub_button)."""
     job_data = context.job.data
-    user_id = job_data['user_id']
-    message_id = job_data['message_id']
-    
-    logging.info(f"Начало публикации в VK для user_id: {user_id}, message_id: {message_id}")
-
-    # Загружаем данные из Firebase
-    media_group_storage = load_publications_from_firebase()
-    user_data = media_group_storage.get(str(user_id))
-    if not user_data:
-        logging.error(f"Данные пользователя {user_id} не найдены.")
-        return
-
+    user_id = job_data["user_id"]
+    message_id = job_data["message_id"]
     key = f"{user_id}_{message_id}"
-    media_group_data = user_data.get(key)
+
+    logging.info(f"[VK SCHEDULE] Начало публикации для user_id={user_id}, message_id={message_id}")
+
+    # --- Загружаем данные из Firebase ---
+    media_group_storage = load_publications_from_firebase()
+    user_publications = media_group_storage.get(str(user_id), {})
+    media_group_data = user_publications.get(key)
+
     if not media_group_data:
-        logging.error(f"Данные для публикации {key} не найдены.")
+        logging.error(f"[VK SCHEDULE] ❌ Данные для публикации {key} не найдены.")
         return
-    bot = context.bot
-    # ... (Остальная логика из handle_vkpub_button, адаптированная)
-    
+
+    media_items = media_group_data.get("media", [])
+    if not media_items or not isinstance(media_items, list):
+        logging.error(f"[VK SCHEDULE] ❌ Медиагруппа пуста или некорректна для {key}.")
+        return
+
+    image_urls = [item.get("file_id") for item in media_items if "file_id" in item]
+    if not image_urls:
+        logging.error(f"[VK SCHEDULE] ❌ Отсутствуют ссылки на изображения для {key}.")
+        return
+
+    # --- Получаем VK-ключи ---
+    vk_keys_ref = db.reference(f"users_publications/vk_keys/{user_id}")
+    vk_keys = vk_keys_ref.get()
+    if not vk_keys:
+        logging.warning(f"[VK SCHEDULE] ⚠️ Не найдены VK-ключи для пользователя {user_id}.")
+        return
+
+    token = vk_keys.get("token")
+    owner_id = vk_keys.get("owner_id")
+    if not token or not owner_id:
+        logging.error(f"[VK SCHEDULE] ❌ Некорректные данные VK для {user_id}.")
+        return
+
+    # --- Авторизация VK ---
+    vk_session = VkApi(token=token)
+    vk = vk_session.get_api()
+
+    # --- Подготовка подписи ---
+    first_caption = media_items[0].get("caption", "")
+    cleaned_caption = extract_text_before_first_link(first_caption)
+    formatted_caption = format_caption_for_vk(first_caption)
+
+    # --- Загрузка изображений ---
+    uploaded_photos = []
     try:
-        media_items = media_group_data.get("media", [])
-        image_urls = [item.get("file_id") for item in media_items if "file_id" in item]
-        
-        vk_keys_ref = db.reference(f'users_publications/vk_keys/{user_id}')
-        vk_keys = vk_keys_ref.get()
-        if not vk_keys:
-            logging.warning(f"У пользователя {user_id} нет ключей для VK.")
-            return
-            
-        token = vk_keys.get("token")
-        owner_id = vk_keys.get("owner_id")
+        upload_url = vk.photos.getWallUploadServer(group_id=owner_id)["upload_url"]
+        async with aiohttp.ClientSession() as session:
+            for url in image_urls:
+                photo = await upload_photo_to_vk(
+                    vk, url, owner_id, formatted_caption, session, upload_url
+                )
+                uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
+                await asyncio.sleep(random.uniform(0.8, 1.9))  # пауза для стабильности
+    except Exception as e:
+        logging.error(f"[VK SCHEDULE] 🚫 Ошибка загрузки изображений для {key}: {e}")
+        return
 
-        vk_session = VkApi(token=token)
-        vk = vk_session.get_api()
-        
-        uploaded_photos = []
-        first_caption = media_items[0].get("caption", "")
-        cleaned_caption = extract_text_before_first_link(first_caption) # Предполагается, что эта функция у вас есть
-        formatted_caption = format_caption_for_vk(first_caption) # Предполагается, что эта функция у вас есть
-
-        for url in image_urls:
-            photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption) # Предполагается, что эта функция у вас есть
-            uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
-            await asyncio.sleep(0.4)            
+    # --- Публикация поста ---
+    try:
         if int(owner_id) > 0:
             owner_id = -int(owner_id)
-            
 
-        # Отправляем пост, используя созданный словарь
         vk.wall.post(
             owner_id=int(owner_id),
             from_group=1,
@@ -13088,18 +13105,22 @@ async def publish_to_vk_scheduled(context: CallbackContext):
             random_id=get_random_id(),
             primary_attachments_mode="grid"
         )
-        logging.info(f"Пост {key} успешно опубликован в VK группу {owner_id}.")
 
-        # НОВОЕ: Удаляем ключ time только после успешной публикации
-        db.reference(f'users_publications/{user_id}/{key}/time').delete()
-        logging.info(f"Ключ time для {key} удален после публикации в TG.")
-        # Уведомляем пользователя об успешной публикации
+        logging.info(f"[VK SCHEDULE] ✅ Пост {key} успешно опубликован в ВК.")
+
+        # --- Удаляем ключ time после успешной публикации ---
+        db.reference(f"users_publications/{user_id}/{key}/time").delete()
+        logging.info(f"[VK SCHEDULE] ⏰ Ключ 'time' удалён для {key}.")
+
+        # --- Отправляем уведомление пользователю ---
+        bot = context.bot
         await bot.send_message(
             chat_id=user_id,
-            text="✅ Ваша отложенная публикация была успешно размещена в ВК."
+            text="✅ Ваша отложенная публикация была успешно размещена в ВКонтакте."
         )
+
     except Exception as e:
-        logging.error(f"Ошибка при публикации поста {key} в VK: {e}")
+        logging.error(f"[VK SCHEDULE] 🚫 Ошибка публикации поста {key} в ВК: {e}")
 
 
 
@@ -15955,6 +15976,9 @@ async def handle_vkpub_button(update, context):
         await loading_message.edit_text(f"🚫 Ошибка публикации поста в ВК: {e}")
 
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
+
 async def upload_photo_to_vk(vk, image_url, group_id, caption, session, upload_url, max_retries=5, delay=2):
     """
     Асинхронно загружает фото в группу ВКонтакте с повторными попытками при ошибках.
@@ -15963,7 +15987,7 @@ async def upload_photo_to_vk(vk, image_url, group_id, caption, session, upload_u
     for attempt in range(1, max_retries + 1):
         start_time = time.strftime("%H:%M:%S")
         try:
-            print(f"[{start_time}] 🔄 Попытка {attempt}/{max_retries} загрузить {image_url}")
+            logging.info(f"🔄 Попытка {attempt}/{max_retries} загрузить {image_url}")
 
             # 1️⃣ Скачиваем изображение
             async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
@@ -16001,26 +16025,24 @@ async def upload_photo_to_vk(vk, image_url, group_id, caption, session, upload_u
                 caption=caption
             )[0]
 
-            print(f"[{start_time}] ✅ Фото успешно загружено: {image_url}")
+            logging.info(f"✅ Фото успешно загружено: {image_url}")
             return saved_photo
 
         except Exception as e:
-            print(f"[{start_time}] ⚠️ Ошибка на попытке {attempt}: {e}")
+            logging.info(f"⚠️ Ошибка на попытке {attempt}: {e}")
 
             # Если ошибка на загрузке или VK ответил HTML — пробуем новый upload_url
             if attempt < max_retries:
                 try:
                     upload_url = vk.photos.getWallUploadServer(group_id=group_id)['upload_url']
-                    print(f"[{start_time}] 🔁 Обновлён upload_url перед новой попыткой.")
+                    logging.info("🔁 Обновлён upload_url перед новой попыткой.")
                 except Exception as url_err:
-                    print(f"[{start_time}] ⚠️ Ошибка при обновлении upload_url: {url_err}")
+                    logging.info(f"⚠️ Ошибка при обновлении upload_url: {url_err}")
 
                 await asyncio.sleep(delay + random.uniform(0.5, 1.5))
                 delay *= 1.6  # увеличиваем задержку экспоненциально
             else:
                 raise ValueError(f"❌ Ошибка загрузки {image_url} после {max_retries} попыток: {e}")
-
-
 
 import tweepy
 
