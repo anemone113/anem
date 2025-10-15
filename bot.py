@@ -15929,7 +15929,7 @@ async def handle_vkpub_button(update, context):
             for url in image_urls:
                 photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption, session, upload_url)
                 uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
-                await asyncio.sleep(random.uniform(0.6, 1.2))  # дополнительная пауза для стабильности
+                await asyncio.sleep(random.uniform(0.8, 1.9))  # дополнительная пауза для стабильности
 
     except Exception as e:
         await loading_message.edit_text(f"🚫 Ошибка загрузки изображений в ВК: {e}")
@@ -15955,42 +15955,44 @@ async def handle_vkpub_button(update, context):
         await loading_message.edit_text(f"🚫 Ошибка публикации поста в ВК: {e}")
 
 
-async def upload_photo_to_vk(vk, image_url, group_id, caption, session, upload_url, max_retries=4, delay=2):
+async def upload_photo_to_vk(vk, image_url, group_id, caption, session, upload_url, max_retries=5, delay=2):
     """
     Асинхронно загружает фото в группу ВКонтакте с повторными попытками при ошибках.
-    Использует одну сессию aiohttp и один upload_url для нескольких изображений.
+    В случае ошибки upload_url обновляется.
     """
     for attempt in range(1, max_retries + 1):
+        start_time = time.strftime("%H:%M:%S")
         try:
-            # Загружаем изображение по URL
-            async with session.get(image_url) as resp:
+            print(f"[{start_time}] 🔄 Попытка {attempt}/{max_retries} загрузить {image_url}")
+
+            # 1️⃣ Скачиваем изображение
+            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
                 if resp.status != 200:
-                    raise ValueError(f"Ошибка загрузки изображения: HTTP {resp.status}")
+                    raise ValueError(f"Ошибка загрузки: HTTP {resp.status}")
                 image_data = await resp.read()
 
-            # Подготавливаем форму для загрузки
+            # 2️⃣ Формируем форму для VK
             form = aiohttp.FormData()
             form.add_field('photo', image_data, filename='image.jpg', content_type='image/jpeg')
 
-            # Отправляем изображение на сервер VK
-            async with session.post(upload_url, data=form) as upload_resp:
+            # 3️⃣ Отправляем изображение на VK
+            async with session.post(upload_url, data=form, timeout=aiohttp.ClientTimeout(total=30)) as upload_resp:
                 text = await upload_resp.text()
 
-                # Проверка на HTML-ответ (ошибка/перегрузка)
-                if "<html" in text.lower() or "504" in text:
-                    raise ValueError(f"VK вернул HTML-ответ (возможно, таймаут): {text[:200]}")
+                # VK иногда отдаёт HTML при перегрузке
+                if "<html" in text.lower():
+                    raise ValueError("VK вернул HTML (таймаут/ошибка сервера)")
 
                 try:
                     upload_json = await upload_resp.json(content_type=None)
                 except Exception:
                     raise ValueError(f"Ошибка декодирования JSON. Ответ: {text[:200]}")
 
-            # Проверяем корректность ответа
-            if not upload_json.get('photo') or not all(k in upload_json for k in ('server', 'hash')):
-                raise ValueError(f"Некорректный ответ VK при загрузке: {upload_json}")
+            if not upload_json.get('photo') or not upload_json.get('server') or not upload_json.get('hash'):
+                raise ValueError(f"Некорректный ответ VK: {upload_json}")
 
-            # Сохраняем фото в альбоме стены
-            await asyncio.sleep(random.uniform(0.4, 0.8))  # лёгкая задержка между запросами
+            # 4️⃣ Сохраняем фото на стене
+            await asyncio.sleep(random.uniform(0.4, 0.9))
             saved_photo = vk.photos.saveWallPhoto(
                 group_id=group_id,
                 photo=upload_json['photo'],
@@ -15999,15 +16001,24 @@ async def upload_photo_to_vk(vk, image_url, group_id, caption, session, upload_u
                 caption=caption
             )[0]
 
+            print(f"[{start_time}] ✅ Фото успешно загружено: {image_url}")
             return saved_photo
 
         except Exception as e:
-            if attempt < max_retries:
-                await asyncio.sleep(delay)
-                delay *= 1.5
-            else:
-                raise ValueError(f"Ошибка загрузки {image_url}: {e}")
+            print(f"[{start_time}] ⚠️ Ошибка на попытке {attempt}: {e}")
 
+            # Если ошибка на загрузке или VK ответил HTML — пробуем новый upload_url
+            if attempt < max_retries:
+                try:
+                    upload_url = vk.photos.getWallUploadServer(group_id=group_id)['upload_url']
+                    print(f"[{start_time}] 🔁 Обновлён upload_url перед новой попыткой.")
+                except Exception as url_err:
+                    print(f"[{start_time}] ⚠️ Ошибка при обновлении upload_url: {url_err}")
+
+                await asyncio.sleep(delay + random.uniform(0.5, 1.5))
+                delay *= 1.6  # увеличиваем задержку экспоненциально
+            else:
+                raise ValueError(f"❌ Ошибка загрузки {image_url} после {max_retries} попыток: {e}")
 
 
 
