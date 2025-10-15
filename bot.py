@@ -13074,7 +13074,7 @@ async def publish_to_vk_scheduled(context: CallbackContext):
         for url in image_urls:
             photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption) # Предполагается, что эта функция у вас есть
             uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
-            
+            await asyncio.sleep(0.4)            
         if int(owner_id) > 0:
             owner_id = -int(owner_id)
             
@@ -15944,6 +15944,8 @@ async def handle_vkpub_button(update: Update, context: CallbackContext) -> None:
         for url in image_urls:
             photo = await upload_photo_to_vk(vk, url, owner_id, formatted_caption)
             uploaded_photos.append(f"photo{photo['owner_id']}_{photo['id']}")
+            await asyncio.sleep(0.4)
+    
     except Exception as e:
         await loading_message.edit_text(f"🚫 Ошибка загрузки изображений в ВК: {e}")
         return
@@ -15978,33 +15980,39 @@ async def upload_photo_to_vk(vk, image_url, group_id, caption, max_retries=3, de
             upload_url = vk.photos.getWallUploadServer(group_id=group_id)['upload_url']
             if not upload_url:
                 raise ValueError("Не удалось получить upload_url от VK API")
-            
+
             # Загружаем изображение по URL
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url) as resp:
                     if resp.status != 200:
                         raise ValueError(f"Ошибка загрузки изображения: HTTP {resp.status}")
                     image_data = await resp.read()
-                
+
                 # Отправляем изображение на сервер VK
                 form = aiohttp.FormData()
                 form.add_field('photo', image_data, filename='image.jpg', content_type='image/jpeg')
-                
+
                 async with session.post(upload_url, data=form) as upload_resp:
-                    upload_json = await upload_resp.json()
+                    text = await upload_resp.text()
+
+                    # Проверка, действительно ли это JSON
+                    if "504" in text or "<html" in text.lower():
+                        raise ValueError(f"VK вернул HTML-ответ (возможно, таймаут или перегрузка): {text[:200]}")
+
+                    try:
+                        upload_json = await upload_resp.json(content_type=None)
+                    except Exception:
+                        raise ValueError(f"Ошибка декодирования JSON. Ответ: {text[:200]}")
+
                     logger.debug(f"VK upload response: {upload_json}")
-            
-            # ИСПРАВЛЕНИЕ 1: Проверяем наличие и непустоту полей
-            if not upload_json.get('photo'):
-                raise ValueError(f"Поле 'photo' пустое в ответе VK: {upload_json}")
-            
-            if not all(k in upload_json for k in ('server', 'hash')):
-                raise ValueError(f"Отсутствуют обязательные поля в ответе VK: {upload_json}")
-            
-            # ИСПРАВЛЕНИЕ 2: Добавляем небольшую задержку перед сохранением
+
+            # Проверяем наличие ключей
+            if not upload_json.get('photo') or not all(k in upload_json for k in ('server', 'hash')):
+                raise ValueError(f"Некорректный ответ VK при загрузке: {upload_json}")
+
+            # Небольшая задержка перед сохранением (помогает при множественных загрузках)
             await asyncio.sleep(0.5)
-            
-            # Сохраняем фото в альбом
+
             saved_photo = vk.photos.saveWallPhoto(
                 group_id=group_id,
                 photo=upload_json['photo'],
@@ -16012,9 +16020,9 @@ async def upload_photo_to_vk(vk, image_url, group_id, caption, max_retries=3, de
                 hash=upload_json['hash'],
                 caption=caption
             )[0]
-            
+
             return saved_photo
-            
+
         except Exception as e:
             logger.error(f"Попытка {attempt}/{max_retries} — Ошибка загрузки изображения: {e}", exc_info=True)
             if attempt < max_retries:
@@ -16022,7 +16030,6 @@ async def upload_photo_to_vk(vk, image_url, group_id, caption, max_retries=3, de
                 delay *= 1.5
             else:
                 raise
-
 
 
 
