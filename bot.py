@@ -5823,6 +5823,13 @@ async def ai_or_not(update: Update, context: CallbackContext):
                 elif response.status == 429:
                     await asyncio.sleep(5)  # Ждем 5 секунд перед следующей попыткой
                 else:
+                    keyboard = [
+                        [InlineKeyboardButton("Sightengine", url="https://sightengine.com/detect-ai-generated-images")],
+                        [InlineKeyboardButton("Illuminarty AI", url="https://app.illuminarty.ai/#/")]
+                    ]
+
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
                     error_message = await response.text()
                     await update.callback_query.message.reply_text(
                         f"Не удалось определить веротяность, ошибка ответа от API. Попробуйте похзже или вручную:",
