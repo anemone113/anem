@@ -1512,14 +1512,11 @@ async def find_image_source(update: Update, context: CallbackContext):
         await query.edit_message_text("Изображение не найдено. Пожалуйста, отправьте его заново.")
         return
 
-    loading_message = await query.edit_message_text("Загрузка файла на хостинг...")
+    loading_message = await query.edit_message_text("Обработка запроса...")
 
-    try:
-        img_url = await upload_catbox(image_path)
-        context.user_data['img_url'] = img_url
-    except Exception as e:
-        await loading_message.edit_text(f"Ошибка при загрузке на хостинг: {e}")
-        return
+    img_url = context.user_data.get("img_url")  # ✅ Берём уже сохранённый URL
+    image_path = context.user_data.get("img_path")
+    image_bytes = context.user_data.get("image_bytes")
     logger.info(f"img_url: {img_url}")
     await loading_message.edit_text("Файл успешно загружен! Поиск источников через SauceNAO...")
 
@@ -5783,10 +5780,11 @@ async def parse_yandex_results(img_url):
 
 
 async def ai_or_not(update: Update, context: CallbackContext):
-    img_url = context.user_data.get('img_url')
+    """Проверяет, сгенерировано ли изображение ИИ, используя сохранённые байты"""
+    image_bytes = context.user_data.get("image_bytes")
 
-    if img_url is None:
-        await update.callback_query.answer("Не удалось найти URL изображения.")
+    if image_bytes is None:
+        await update.callback_query.answer("Изображение не найдено.")
         return
 
     api_user = '1334786424'
@@ -5800,21 +5798,12 @@ async def ai_or_not(update: Update, context: CallbackContext):
 
     temp_file = None
     try:
-        # Скачиваем изображение во временный файл
-        async with aiohttp.ClientSession() as session:
-            async with session.get(img_url) as resp:
-                if resp.status != 200:
-                    await update.callback_query.message.reply_text(
-                        "Не удалось скачать изображение для анализа.", reply_markup=reply_markup
-                    )
-                    return
+        # ✅ Сохраняем image_bytes во временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            temp_file = tmp.name
+            tmp.write(image_bytes)
 
-                # Создаём временный файл
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                    temp_file = tmp.name
-                    tmp.write(await resp.read())
-
-        # Отправляем изображение на анализ
+        # ✅ Отправляем изображение на анализ в Sightengine
         data = {
             'models': 'genai',
             'api_user': api_user,
@@ -5843,6 +5832,7 @@ async def ai_or_not(update: Update, context: CallbackContext):
                             return
 
                         elif response.status == 429:
+                            logger.warning("Лимит запросов к API Sightengine. Повтор через 5 секунд.")
                             await asyncio.sleep(5)
                         else:
                             err_text = await response.text()
@@ -5858,17 +5848,17 @@ async def ai_or_not(update: Update, context: CallbackContext):
     except Exception as e:
         logger.exception(f"Ошибка при анализе изображения: {e}")
         await update.callback_query.message.reply_text(
-            "Произошла ошибка при анализе изображения. Попробуйте позже.", reply_markup=reply_markup
+            "Произошла ошибка при анализе изображения. Попробуйте позже.",
+            reply_markup=reply_markup
         )
 
     finally:
-        # Удаляем временный файл в любом случае
+        # ✅ Удаляем временный файл
         if temp_file and os.path.exists(temp_file):
             try:
                 os.remove(temp_file)
             except Exception as e:
                 logger.warning(f"Не удалось удалить временный файл {temp_file}: {e}")
-
 
 
 async def handle_file(update: Update, context: CallbackContext) -> int:
