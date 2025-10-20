@@ -5789,57 +5789,85 @@ async def ai_or_not(update: Update, context: CallbackContext):
         await update.callback_query.answer("Не удалось найти URL изображения.")
         return
 
-    api_user = '1334786424'  # Ваш api_user
-    api_secret = 'HaC88eFy4NLhyo86Md9aTKkkKaQyZeEU'  # Ваш api_secret
+    api_user = '1334786424'
+    api_secret = 'HaC88eFy4NLhyo86Md9aTKkkKaQyZeEU'
 
-    params = {
-        'url': img_url,
-        'models': 'genai',
-        'api_user': api_user,
-        'api_secret': api_secret
-    }
+    keyboard = [
+        [InlineKeyboardButton("Sightengine", url="https://sightengine.com/detect-ai-generated-images")],
+        [InlineKeyboardButton("Illuminarty AI", url="https://app.illuminarty.ai/#/")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    async with aiohttp.ClientSession() as session:
-        for attempt in range(5):  # Пять попыток
-            async with session.get('https://api.sightengine.com/1.0/check.json', params=params) as response:
-                if response.status == 200:
-                    output = await response.json()
-                    ai_generated_score = output['type']['ai_generated']
-
-                    keyboard = [
-                        [InlineKeyboardButton("Sightengine", url="https://sightengine.com/detect-ai-generated-images")],
-                        [InlineKeyboardButton("Illuminarty AI", url="https://app.illuminarty.ai/#/")]
-                    ]
-
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-
-                    await update.callback_query.answer()
+    temp_file = None
+    try:
+        # Скачиваем изображение во временный файл
+        async with aiohttp.ClientSession() as session:
+            async with session.get(img_url) as resp:
+                if resp.status != 200:
                     await update.callback_query.message.reply_text(
-                        f"Изображение сгенерировано АИ с вероятностью: {ai_generated_score * 100:.2f}% \n\n Вы можете прислать другое изображение для проверки, либо проверить самостоятельно на следующих ресурсах:",
-                        reply_markup=reply_markup
+                        "Не удалось скачать изображение для анализа.", reply_markup=reply_markup
                     )
-
-                    return
-                elif response.status == 429:
-                    await asyncio.sleep(5)  # Ждем 5 секунд перед следующей попыткой
-                else:
-                    keyboard = [
-                        [InlineKeyboardButton("Sightengine", url="https://sightengine.com/detect-ai-generated-images")],
-                        [InlineKeyboardButton("Illuminarty AI", url="https://app.illuminarty.ai/#/")]
-                    ]
-
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    error_message = await response.text()
-                    await update.callback_query.message.reply_text(
-                        f"Не удалось определить веротяность, ошибка ответа от API. Попробуйте похзже или вручную:",
-                        reply_markup=reply_markup
-                    )
-                    logger.info(f"Ошибка API: {response.status} - {error_message}")
                     return
 
-    await update.callback_query.answer("Не удалось обработать изображение после нескольких попыток.")
+                # Создаём временный файл
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                    temp_file = tmp.name
+                    tmp.write(await resp.read())
 
+        # Отправляем изображение на анализ
+        data = {
+            'models': 'genai',
+            'api_user': api_user,
+            'api_secret': api_secret
+        }
+
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(5):
+                with open(temp_file, 'rb') as f:
+                    form = aiohttp.FormData()
+                    for k, v in data.items():
+                        form.add_field(k, v)
+                    form.add_field('media', f, filename=os.path.basename(temp_file))
+
+                    async with session.post('https://api.sightengine.com/1.0/check.json', data=form) as response:
+                        if response.status == 200:
+                            output = await response.json()
+                            ai_generated_score = output.get('type', {}).get('ai_generated', 0)
+
+                            await update.callback_query.answer()
+                            await update.callback_query.message.reply_text(
+                                f"Изображение сгенерировано АИ с вероятностью: {ai_generated_score * 100:.2f}%\n\n"
+                                "Вы можете прислать другое изображение для проверки, либо проверить самостоятельно:",
+                                reply_markup=reply_markup
+                            )
+                            return
+
+                        elif response.status == 429:
+                            await asyncio.sleep(5)
+                        else:
+                            err_text = await response.text()
+                            logger.info(f"Ошибка API Sightengine: {response.status} - {err_text}")
+                            await update.callback_query.message.reply_text(
+                                "Не удалось определить вероятность. Попробуйте позже или вручную:",
+                                reply_markup=reply_markup
+                            )
+                            return
+
+        await update.callback_query.answer("Не удалось обработать изображение после нескольких попыток.")
+
+    except Exception as e:
+        logger.exception(f"Ошибка при анализе изображения: {e}")
+        await update.callback_query.message.reply_text(
+            "Произошла ошибка при анализе изображения. Попробуйте позже.", reply_markup=reply_markup
+        )
+
+    finally:
+        # Удаляем временный файл в любом случае
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить временный файл {temp_file}: {e}")
 
 
 
