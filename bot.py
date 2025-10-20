@@ -1520,7 +1520,7 @@ async def find_image_source(update: Update, context: CallbackContext):
     except Exception as e:
         await loading_message.edit_text(f"Ошибка при загрузке на хостинг: {e}")
         return
-
+    logger.info(f"img_url: {img_url}")
     await loading_message.edit_text("Файл успешно загружен! Поиск источников через SauceNAO...")
 
     search_url = f"https://saucenao.com/search.php?db=999&url={img_url}"
@@ -5824,8 +5824,11 @@ async def ai_or_not(update: Update, context: CallbackContext):
                     await asyncio.sleep(5)  # Ждем 5 секунд перед следующей попыткой
                 else:
                     error_message = await response.text()
-                    await update.callback_query.answer("Ошибка при обращении к API Sightengine.")
-                    print(f"Ошибка API: {response.status} - {error_message}")
+                    await update.callback_query.message.reply_text(
+                        f"Не удалось определить веротяность, ошибка ответа от API. Попробуйте похзже или вручную:",
+                        reply_markup=reply_markup
+                    )
+                    logger.info(f"Ошибка API: {response.status} - {error_message}")
                     return
 
     await update.callback_query.answer("Не удалось обработать изображение после нескольких попыток.")
