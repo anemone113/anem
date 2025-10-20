@@ -915,6 +915,14 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         # Загружаем изображение на Catbox
         img_url = await upload_catbox(image_path)
+        # Сохраняем в user_data
+        bio = BytesIO()
+        await file.download_to_memory(out=bio)
+        bio.seek(0)
+    
+    
+        # Сохраняем в context.user_data
+        context.user_data['image_bytes'] = bio.getvalue()    
         context.user_data['img_url'] = img_url 
 
         # Обновляем сообщение о статусе загрузки
