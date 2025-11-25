@@ -1,0 +1,431 @@
+/* style.css */
+
+:root {
+    --bg-color: #1e1e1e;
+    --card-bg: #2d2d2d;
+    --accent: #6c5ce7;
+    --text: #ffffff;
+    --text-sec: #a0a0a0;
+    --danger: #e17055;
+    --active-btn: #a29bfe; /* Цвет активной кнопки редактора */
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text);
+    overflow-x: hidden;
+}
+
+.container { padding: 15px; max-width: 600px; margin: 0 auto; }
+
+/* Скрытие экранов */
+.screen { display: none; animation: fadeIn 0.3s; }
+.screen.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Кнопки */
+.btn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 12px;
+    background: var(--accent);
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+.btn:active { transform: scale(0.98); }
+.btn-outline { background: transparent; border: 2px solid var(--accent); color: var(--accent); }
+.btn-danger { background: var(--danger); border: none; color: white;}
+.btn-small { width: auto; padding: 8px 15px; font-size: 14px; }
+.btn-icon { background: none; border: none; color: var(--text-sec); cursor: pointer; padding: 5px; }
+
+
+
+
+
+/* --- Списки --- */
+.header-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
+.list-item { 
+    background: var(--bg-sec, #2b2d31); 
+    padding: 15px; 
+    border-radius: 12px; 
+    margin-bottom: 10px; 
+    cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.list-item:hover {
+    background: var(--accent);
+    color: white;
+}
+.list-item:hover p,
+.list-item:hover h4 {
+    color: white;
+}
+.list-info h4 { margin: 0 0 5px 0; font-size: 16px; }
+.list-info p { margin: 0; font-size: 12px; color: #aaa; }
+
+/* --- Таймлайн просмотра --- */
+.timeline-entry:hover .timeline-content {
+    background: var(--accent);
+}
+
+.timeline-entry:hover .truncated-text,
+.timeline-entry:hover .timeline-time {
+    color: white;
+}
+
+
+/* Обрезка текста до 7 строк */
+.truncated-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 7;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: 14px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    cursor: pointer;
+}
+.truncated-text:hover { color: #ddd; }
+
+/* Галерея миниатюр */
+.media-grid {
+    display: flex; gap: 5px; margin-top: 8px; overflow-x: auto;
+}
+.media-thumb {
+    width: 60px; height: 60px; object-fit: cover; border-radius: 6px; cursor: zoom-in;
+    background: #000;
+}
+
+/* Чекбоксы для редактирования */
+.edit-checkbox {
+    margin-right: 10px; transform: scale(1.3);
+}
+
+/* --- Модальное окно --- */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.9); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+}
+.modal-content {
+    width: 90%; max-height: 90%; background: #1e1e1e;
+    border-radius: 10px; padding: 20px; position: relative;
+    display: flex; flex-direction: column; align-items: center;
+}
+.modal-close {
+    position: absolute; top: 10px; right: 15px;
+    background: none; border: none; color: white; font-size: 24px; cursor: pointer;
+}
+.full-image { max-width: 100%; max-height: 70vh; object-fit: contain; }
+.full-text { width: 100%; max-height: 70vh; overflow-y: auto; white-space: pre-wrap; font-size: 16px; }
+.modal-nav { display: flex; gap: 20px; margin-top: 15px; color: white; align-items: center; }
+.edit-bottom-bar {
+    position: sticky; bottom: 0; background: #1e1e1e; padding: 10px;
+    border-top: 1px solid #333; display: flex; justify-content: space-between; align-items: center;
+}
+
+
+
+
+
+
+
+/* Inputs */
+input, textarea {
+    width: 100%;
+    padding: 12px;
+    box-sizing: border-box;
+    background: var(--card-bg);
+    border: 1px solid #444;
+    border-radius: 8px;
+    color: white;
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+/* Timer Styles */
+.timer-display {
+    font-size: 48px;
+    font-weight: bold;
+    text-align: center;
+    margin: 20px 0;
+    font-variant-numeric: tabular-nums;
+}
+.timer-controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; }
+
+/* Sub-titles / Episodes */
+.episode-section { margin-bottom: 15px; display: none; /* Скрыто по умолчанию */ }
+.episode-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;}
+
+.episode-chips {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 10px;
+}
+.chip {
+    background: var(--card-bg);
+    padding: 6px 12px;
+    border-radius: 20px;
+    white-space: nowrap;
+    border: 1px solid #444;
+    cursor: pointer;
+}
+.chip.active { background: var(--accent); border-color: var(--accent); }
+
+/* Editor Formatting */
+.toolbar { display: flex; gap: 5px; margin-bottom: 5px; }
+.toolbar button { 
+    background: #444; border: none; color: white; 
+    padding: 8px 12px; border-radius: 4px; cursor: pointer; 
+}
+.toolbar button.active {
+    background: var(--accent);
+    color: white;
+}
+.editor-area { 
+    min-height: 100px; 
+    background: var(--card-bg); 
+    border: 1px solid #444; 
+    border-radius: 8px; 
+    padding: 10px;
+    outline: none;
+}
+
+/* Timeline (General & Mini) */
+.timeline { position: relative; border-left: 2px solid var(--accent); margin-left: 10px; padding-left: 20px; }
+.timeline-item { margin-bottom: 15px; position: relative; }
+.timeline-item::before {
+    content: ''; position: absolute; left: -26px; top: 5px;
+    width: 10px; height: 10px; background: var(--accent); border-radius: 50%;
+}
+.time-badge { font-weight: bold; color: var(--accent); font-size: 14px; margin-bottom: 4px; display: flex; justify-content: space-between;}
+.note-content { background: var(--card-bg); padding: 10px; border-radius: 8px; margin-top: 5px; word-break: break-word;}
+.note-img { max-width: 100%; border-radius: 6px; margin-top: 5px; display: block; }
+
+/* Mini Timeline in Player */
+.mini-timeline-container {
+    max-height: 250px;
+    overflow-y: auto;
+    margin-bottom: 15px;
+    padding-right: 5px;
+}
+
+
+
+
+
+/* --- Красивый Таймлайн (Обновленный стиль) --- */
+.timeline-container {
+    padding-bottom: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Центрируем весь поток */
+}
+
+.timeline-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    position: relative;
+}
+
+/* --- Карточка с контентом --- */
+.timeline-body {
+    width: 100%;
+    z-index: 2; /* Чтобы карточка была выше линии, если вдруг наедет */
+}
+
+.timeline-card {
+    background: var(--card-bg);
+    border-radius: 12px; /* 1) Все углы скруглены */
+    padding: 12px;
+    border: 1px solid #3a3a3a;
+    transition: all 0.2s ease;
+    position: relative;
+    cursor: pointer;
+}
+
+/* 2) При наведении весь фон фиолетовый */
+.timeline-card:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(108, 92, 231, 0.4); /* Подсветка в цвет акцента */
+}
+
+/* Цвет текста при наведении */
+.timeline-card:hover .truncated-text {
+    color: white;
+}
+.timeline-card:hover em {
+    color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.timeline-card .truncated-text {
+    font-size: 15px;
+    color: #e0e0e0;
+    line-height: 1.5;
+}
+
+/* --- Ось: Время и Линия под карточкой --- */
+.timeline-axis {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+/* 3) Время посередине под заметкой */
+.time-pill {
+    background: var(--bg-color); /* Фон страницы, чтобы перекрыть линию при необходимости */
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-top: -1px; /* Чуть притянуть к карточке или 0 */
+    z-index: 2;
+    margin-bottom: 0;
+}
+
+/* 4) Пунктирная линия вниз */
+.timeline-line {
+    width: 0px; /* Ширина 0, работаем бордером */
+    border-left: 2px dashed var(--text-sec); /* Пунктирная линия */
+    opacity: 0.5;
+    position: relative;
+    margin-top: 2px;
+}
+
+/* Точка в конце линии (начало следующего бокса) */
+.timeline-line::after {
+    content: '';
+    position: absolute;
+    bottom: -6px; /* Чуть ниже конца линии */
+    left: -4px;   /* Центрируем относительно линии 2px (-4px left + 2px width = center) */
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+}
+
+/* Убираем линию у последнего элемента, так как дальше ничего нет */
+.timeline-row:last-child .timeline-line {
+    display: none;
+}
+
+/* Хедер карточки (чекбоксы) */
+.card-header {
+    display: flex;
+    justify-content: flex-end; /* Чекбокс справа, если есть */
+    margin-bottom: 0;
+}
+.card-header input {
+    margin-bottom: 5px;
+}
+
+
+
+
+
+.save-status {
+    position: fixed;
+    bottom: 25px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 18px;
+    border-radius: 10px;
+    background: #222;
+    color: #fff;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity .3s ease;
+    z-index: 9999;
+}
+
+.save-status.show {
+    opacity: 1;
+}
+
+.save-status.success {
+    background: #1e8f3a;
+}
+
+.save-status.error {
+    background: #b3261e;
+}
+
+.save-status.hidden {
+    display: none;
+}
+
+
+
+
+
+
+.modal-thumbs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.modal-thumb {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid #444;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.mini-note {
+    background: var(--card-bg);
+    padding: 8px;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-left: 3px solid var(--accent);
+    cursor: pointer;
+}
+.mini-note-info { flex-grow: 1; overflow: hidden; }
+.mini-note-time { font-size: 12px; color: var(--accent); font-weight: bold; }
+.mini-note-text { 
+    font-size: 14px; color: #ddd; 
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
+}
+
+/* Image Upload Preview */
+#preview-container { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 10px; }
+.preview-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; }
+
+h2 { margin-top: 0; }

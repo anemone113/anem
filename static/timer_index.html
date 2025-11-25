@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Anime Timer Bot</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="container">
+        
+        <div id="screen-menu" class="screen active">
+            <h1>🎬 Заметки о просмотренном</h1>
+            <button class="btn" onclick="app.toNewView()">Новый просмотр</button>
+            <button class="btn btn-outline" onclick="app.toggleHistory()">Список просмотренного</button>
+            <button class="btn btn-outline" onclick="app.toEditMode()">Редактировать</button>
+        </div>
+
+        <div id="screen-player" class="screen">
+            <input type="text" id="media-title" placeholder="Название (Ходячий замок, Аватар...)">
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <button class="btn-small btn-outline" onclick="app.addEpisode()" style="margin-left: auto;">+ Эпизод</button>
+            </div>
+
+            <div id="episode-section" class="episode-section">
+                <span style="color: var(--text-sec); font-size: 12px;">Серии / Главы</span>
+                <div class="episode-chips" id="episode-list">
+                    </div>
+            </div>
+
+            <div class="timer-display" id="timer">00:00:00</div>
+            
+            <div class="timer-controls">
+                <button class="btn btn-small" id="btn-timer-toggle">▶ Старт</button>
+                <button class="btn btn-small btn-outline" id="btn-timer-reset">↺ Сброс</button>
+                <button class="btn btn-small btn-outline" id="btn-timer-edit">✎ Время</button>
+            </div>
+
+            <hr style="border-color: #333;">
+
+            <div id="player-timeline" class="mini-timeline-container">
+                </div>
+
+            <button class="btn" onclick="app.openEditor()">📝 Новая метка тут</button>
+            <button class="btn btn-outline" onclick="app.openQuickTagMenu()">⚡ Быстрая метка тут</button>
+
+            <!-- Мини-меню быстрых меток -->
+            <div id="quick-tag-menu" class="modal-overlay" style="display:none;">
+                <div class="modal-content" style="max-width:300px; text-align:center;">
+                    <h3>Быстрая метка</h3>
+
+                    <button class="btn" onclick="app.addQuickTag('тут красивый кадр')">Красивый кадр</button>
+                    <button class="btn" onclick="app.addQuickTag('тут интересная мысль')">Интересная мысль</button>
+                    <button class="btn" onclick="app.addQuickTag('тут интересная музыка')">Музыка</button>
+                    <button class="btn" onclick="app.addQuickTag('тут что-то другое')">Другое</button>
+
+                    <button class="btn btn-danger" onclick="app.closeQuickTagMenu()">Отмена</button>
+                </div>
+            </div>
+
+            <button class="btn btn-danger" onclick="app.toMenu()">В меню(сохранить)</button>
+        </div>
+
+        <div id="screen-list" class="screen">
+            <div class="header-nav">
+                <button class="btn-icon" onclick="app.toMenu()">←</button>
+                <h2 id="list-title">Мои просмотры</h2>
+            </div>
+            <div id="list-container" class="list-wrapper"></div>
+        </div>
+
+        <div id="screen-view" class="screen">
+            <div class="header-nav">
+                <button class="btn-icon" onclick="historyApp.backToList()">←</button>
+                <h3 id="view-title">Название</h3>
+            </div>
+            
+            <div id="view-episodes" class="episode-chips horizontal-scroll"></div>
+
+            <div id="view-timeline" class="view-timeline-container"></div>
+            
+            <div id="edit-controls" class="edit-bottom-bar" style="display:none;">
+                <label><input type="checkbox" id="select-all-checkbox"> Все</label>
+                <button class="btn btn-danger btn-small" onclick="historyApp.deleteSelected()">Удалить выбранное</button>
+            </div>
+
+            <button class="btn" style="margin-top: 20px;" onclick="app.continueWatchingFromHistory()">▶ Продолжить просмотр</button>
+        </div>
+
+        <div id="media-modal" class="modal-overlay" style="display: none;">
+            <div class="modal-content">
+                <button class="modal-close" onclick="historyApp.closeModal()">×</button>
+                <div id="modal-body">
+                    </div>
+                <div id="modal-nav" class="modal-nav">
+                    <button onclick="historyApp.prevSlide()">❮</button>
+                    <span id="slide-counter">1/1</span>
+                    <button onclick="historyApp.nextSlide()">❯</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="screen-editor" class="screen">
+            <h3 style="display:flex; justify-content:space-between; align-items:center;">
+                <span>
+                    Заметка на <span id="editor-timestamp">00:00:00</span>
+                    <span id="editor-timer-live" style="color:#aaa; font-size:14px; margin-left:4px; display:none;">
+                        (текущий: 00:00:00)
+                    </span>
+                </span>
+
+                <button id="editor-timer-pause" class="btn-small btn-outline" 
+                        style="display:none; padding:3px 6px; font-size:12px;">
+                    ⏸
+                </button>
+            </h3>
+            
+            <div class="toolbar">
+                <button data-command="bold"><b>B</b></button>
+                <button data-command="italic"><i>I</i></button>
+                <button data-command="formatBlock" data-arg="blockquote">”</button>
+            </div>
+            
+            <div class="editor-area" id="note-text" contenteditable="true"></div>
+
+            <div style="margin-top: 10px;">
+                <label class="btn btn-small btn-outline" style="display:inline-block; width:auto;">
+                    📷 Добавить фото
+                    <input type="file" id="file-input" accept="image/*" multiple hidden onchange="app.handleFiles(this)">
+                </label>
+                <div id="preview-container"></div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <button class="btn" onclick="app.saveNote()">Сохранить</button>
+                <button class="btn btn-outline" onclick="app.cancelEditor()">Отмена</button>
+            </div>
+        </div>
+
+        <div id="screen-history" class="screen">
+            </div>
+
+    </div>
+
+    <script type="module" src="app.js"></script>
+    <div id="save-status" class="save-status hidden"></div>
+</body>
+</html>
