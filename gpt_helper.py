@@ -104,6 +104,208 @@ class ApiKeyManager:
 key_manager = ApiKeyManager(api_keys=API_KEYS)
 
 
+
+
+import uuid
+
+# ... (Ваш код инициализации firebase и другие функции) ...
+
+def get_user_timers(user_id):
+    """
+    Получает все записи таймеров для конкретного пользователя.
+    """
+    try:
+        ref = db.reference(f'users_timers/{user_id}')
+        data = ref.get()
+        return data if data else {}
+    except Exception as e:
+        logging.error(f"Ошибка получения таймеров для {user_id}: {e}")
+        return {}
+
+def add_new_media(user_id, title, media_type="movie"):
+    """
+    Создает новую запись (фильм или сериал).
+    Возвращает сгенерированный media_id.
+    """
+    try:
+        # Генерируем уникальный ID для произведения
+        media_id = str(uuid.uuid4())[:8]
+        path = f'users_timers/{user_id}/{media_id}'
+        ref = db.reference(path)
+        
+        new_media = {
+            "id": media_id,
+            "title": title,
+            "type": media_type, # 'movie' или 'series'
+            "created_at": {".sv": "timestamp"},
+            "entries": {} # Сюда будем складывать заметки
+        }
+        
+        ref.set(new_media)
+        return media_id
+    except Exception as e:
+        logging.error(f"Ошибка создания медиа для {user_id}: {e}")
+        return None
+
+def add_timer_entry(
+    user_id,
+    media_id,
+    note_text,
+    timestamp,
+    episode=None,
+    file_ids=None
+):
+    """
+    Добавляет заметку с таймкодом.
+    Поддерживает:
+    - несколько file_id (список)
+    - один file_id (строка)
+    - отсутствие файлов
+    """
+    try:
+        path = f'users_timers/{user_id}/{media_id}/entries'
+        ref = db.reference(path)
+
+        new_entry_ref = ref.push()  # Генерирует уникальный ключ
+
+        # --- НОРМАЛИЗАЦИЯ file_ids ---
+        # Если фронт передал один file_id (строка)
+        if isinstance(file_ids, str):
+            file_ids = [file_ids]
+
+        # Если пришло None — делаем пустой список
+        if file_ids is None:
+            file_ids = []
+
+        entry_data = {
+            "timestamp": timestamp,
+            "text": note_text,
+            "file_ids": file_ids,   # ← теперь тут список
+            "episode": episode,
+            "created_at": {".sv": "timestamp"},
+        }
+
+        new_entry_ref.set(entry_data)
+
+        return new_entry_ref.key
+
+    except Exception as e:
+        logging.error(f"Ошибка добавления записи: {e}")
+        return None
+
+def delete_media(user_id, media_id):
+    """
+    Удаляет произведение целиком.
+    """
+    try:
+        ref = db.reference(f'users_timers/{user_id}/{media_id}')
+        ref.delete()
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка удаления медиа: {e}")
+        return False
+
+
+TELEGRAM_BOT_TOKEN = "6026973561:AAEH542TDSuKUfVbIvo3LbmdeI3-Z_hMTvc"
+
+def upload_file_to_telegram(file_storage, chat_id):
+    """
+    Отправляет файл пользователю в чат, чтобы получить file_id.
+    """
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    
+    # ВАЖНО: file_storage - это объект FileStorage из Flask.
+    # Мы передаем его поток (stream) напрямую в requests.
+    files = {
+        'photo': (file_storage.filename, file_storage.stream, file_storage.content_type)
+    }
+    data = {'chat_id': chat_id, 'caption': '📎 Изображение для заметки'}
+    
+    try:
+        r = requests.post(url, files=files, data=data)
+        resp = r.json()
+        
+        if resp.get('ok'):
+            # Берем photo[-1] (самое высокое разрешение)
+            return resp['result']['photo'][-1]['file_id']
+        else:
+            logging.error(f"Telegram API Error: {resp}")
+    except Exception as e:
+        logging.error(f"Upload error: {e}")
+    return None
+
+def get_telegram_file_link(file_id):
+    """
+    Получает прямую ссылку на файл по file_id.
+    """
+    try:
+        # 1. Получаем file_path
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
+        res = r.json()
+        if res.get('ok'):
+            file_path = res['result']['file_path']
+            # 2. Формируем ссылку
+            return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+    except Exception as e:
+        logging.error(f"Get file error: {e}")
+    return None
+
+# Добавьте эти функции в gpt-helper.py
+
+def update_timer_entry(user_id, media_id, entry_id, text=None, timestamp=None, file_ids=None):
+    """
+    Обновляет заметку. Теперь принимает file_ids (список).
+    """
+    try:
+        path = f'users_timers/{user_id}/{media_id}/entries/{entry_id}'
+        ref = db.reference(path)
+        
+        updates = {}
+        if text is not None:
+            updates['text'] = text
+        if timestamp is not None:
+            updates['timestamp'] = timestamp
+        
+        # ИЗМЕНЕНИЕ: работаем с file_ids
+        if file_ids is not None:
+            updates['file_ids'] = file_ids 
+            # Опционально: удаляем старое поле file_id, чтобы не путаться
+            # updates['file_id'] = None 
+            
+        if updates:
+            ref.update(updates)
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка обновления записи: {e}")
+        return False
+
+def delete_timer_entry(user_id, media_id, entry_id):
+    """
+    Удаляет конкретную заметку.
+    """
+    try:
+        path = f'users_timers/{user_id}/{media_id}/entries/{entry_id}'
+        ref = db.reference(path)
+        ref.delete()
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка удаления записи: {e}")
+        return False
+
+def update_media_title(user_id, media_id, new_title):
+    try:
+        ref = db.reference(f'users_timers/{user_id}/{media_id}')
+        ref.update({"title": new_title})
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка обновления названия: {e}")
+        return False
+
+
+
+
+
+
 def save_ozon_tracking_to_firebase(user_id: int, item_data: dict):
     """Сохраняет товар для отслеживания в Firebase."""
     try:
