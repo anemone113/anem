@@ -86,87 +86,49 @@ const App = {
         document.getElementById('btn-timer-reset').onclick = () => Timer.reset();
         document.getElementById('btn-timer-edit').onclick = () => this.editTimerTime();
     },
+
+
+    // --- Связь с модулем History ---
+    toHistory() { Timer.stop(); HistoryApp.init('view'); },
+    toEditMode() { Timer.stop(); HistoryApp.init('edit'); },
+    
+
+
+    // Прочий код
     continueWatchingFromHistory() {
+        console.group("%c▶ continueWatchingFromHistory()", "color:#6aaaff; font-weight: bold");
+
+        console.log("🔹 HistoryApp.currentMedia:", HistoryApp.currentMedia);
+
         if (!HistoryApp.currentMedia) {
+            console.warn("⚠ Нет выбранной записи для продолжения — возврат в меню.");
             Notify.show("Нет выбранной записи для продолжения.", "error");
+            console.groupEnd();
             this.showScreen('screen-menu');
             return;
         }
 
-        // 1. Получаем данные из HistoryApp
+        // 1. Получаем данные
         const mediaToContinue = HistoryApp.currentMedia;
+        console.log("📄 Данные для продолжения (mediaToContinue):", mediaToContinue);
 
-        // 2. Вызываем toNewView с этими данными
-        // Экрану screen-player нужны эти данные для state
+        // 2. Передаём в toNewView
+        console.log("➡️ Передаём в toNewView():", mediaToContinue);
         this.toNewView(mediaToContinue);
-        
-        // 3. (Опционально) Обновляем поле названия в UI
+
+        // 3. Обновляем UI
+        console.log("📝 Устанавливаем название:", mediaToContinue.title);
         document.getElementById('media-title').value = mediaToContinue.title;
-        
+
         // 4. Показываем экран плеера
+        console.log("🖥 Переход к экрану: screen-player");
         this.showScreen('screen-player');
+
+        console.groupEnd();
     },
 
-    toEditorView(existingNote = null) {
-        // --- НЕ сбрасываем mediaId, title, episodes, notes! ---
-        Timer.reset();
 
-        const noteTime = existingNote ? existingNote.timestamp : Timer.formatTime();
-        document.getElementById('editor-timestamp').innerText = noteTime;
 
-        // 💡 НОВОЕ: ЗАПОМИНАЕМ, ОТКУДА ПРИШЛИ
-        const activeScreen = document.querySelector('.screen.active');
-        state.previousScreen = activeScreen ? activeScreen.id : 'screen-menu';
-
-        const noteArea = document.getElementById('note-text');
-        noteArea.innerHTML = existingNote ? existingNote.text : "";
-
-        // Очистка превью
-        const container = document.getElementById('preview-container');
-        container.innerHTML = "";
-        this.uploadedFiles = [];
-        state.currentNoteImages = [];
-
-        // Если существующая заметка — подгружаем картинки
-        if (existingNote) {
-            let ids = existingNote.file_ids || [];
-            if (existingNote.file_id && ids.length === 0) ids = [existingNote.file_id];
-            state.currentNoteImages = ids;
-
-            ids.forEach(fid => {
-                const img = document.createElement('img');
-                img.src = `/api/media/get_image_url?file_id=${fid}`; // или fetch для динамического URL
-                img.className = 'preview-thumb';
-                container.appendChild(img);
-            });
-        }
-
-        // Настройка таймера для редактирования
-        const liveLabel = document.getElementById("editor-timer-live");
-        const pauseBtn = document.getElementById("editor-timer-pause");
-
-        if (Timer.isRunning) {
-            liveLabel.style.display = "inline";
-            pauseBtn.style.display = "inline-block";
-
-            editorLiveTimerInterval = setInterval(() => {
-                liveLabel.innerText = `(текущий: ${Timer.formatTime()})`;
-            }, 1000);
-
-            pauseBtn.onclick = () => {
-                Timer.stop();
-                pauseBtn.style.display = "none";
-            };
-        } else {
-            liveLabel.style.display = "none";
-            pauseBtn.style.display = "none";
-            clearInterval(editorLiveTimerInterval);
-            editorLiveTimerInterval = null;
-        }
-
-        state.editingNoteId = existingNote ? existingNote.id : null;
-        this.showScreen('screen-editor');
-    },
 
 
 
@@ -303,7 +265,6 @@ const App = {
         this.showScreen('screen-menu');
     },
 
-// app.js
 
     toNewView(mediaData = null) {
         // Сброс состояния, только если это ДЕЙСТВИТЕЛЬНО новый просмотр
@@ -321,14 +282,23 @@ const App = {
             state.title = mediaData.title;
             state.episodes = mediaData.episodes || [];
             state.currentEpisode = mediaData.currentEpisode || null;
-            state.notes = mediaData.entries || []; // 'entries' это заметки из базы
-            state.editingNoteId = null; // Сбрасываем ID заметки, которую редактировали
-            
-            // Если в данных есть последняя позиция (например, `mediaData.last_position`), 
-            // можно инициализировать таймер
-            // Timer.setSeconds(mediaData.last_position || 0);
-            
-            // Важно: если мы продолжаем просмотр, запускаем таймер с 0 или с последней позиции
+            state.notes = mediaData.entries || [];
+            state.editingNoteId = null;
+            // 🔥 Автовосстановление списка эпизодов из заметок
+            if (!mediaData.episodes || mediaData.episodes.length === 0) {
+                const eps = new Set();
+
+                state.notes.forEach(n => {
+                    if (n.episode) eps.add(n.episode);
+                });
+
+                state.episodes = Array.from(eps);
+
+                // Если есть эпизоды — активируем последний
+                if (state.episodes.length > 0) {
+                    state.currentEpisode = state.episodes[state.episodes.length - 1];
+                }
+            }            
             Timer.reset(); 
         }
 
@@ -346,9 +316,16 @@ const App = {
 
     addEpisode() {
         let num = state.episodes.length + 1;
-        state.episodes.push(`Серия ${num}`);
-        if (state.episodes.length === 1) this.selectEpisode(`Серия ${num}`);
-        else this.renderEpisodes();
+        const newEpisodeName = `Серия ${num}`; // 💡 СОХРАНЯЕМ ИМЯ НОВОГО ЭПИЗОДА
+
+        state.episodes.push(newEpisodeName); // Добавляем в список
+
+        // 🛑 ЭТУ СТРОКУ НУЖНО ИЗМЕНИТЬ
+        // if (state.episodes.length === 1) this.selectEpisode(`Серия ${num}`);
+        // else this.renderEpisodes();
+
+        // ✅ НОВОЕ РЕШЕНИЕ: ВСЕГДА ВЫБИРАТЬ НОВЫЙ ЭПИЗОД
+        this.selectEpisode(newEpisodeName); // Автоматически выбираем новый эпизод
     },
 
     selectEpisode(epName) {
@@ -400,38 +377,44 @@ const App = {
     // --- Редактор и Сохранение ---
     // --- Замени свою старую функцию openEditor на эту ---
     async openEditor(existingNote = null) {
+
         if (!state.title?.trim()) {
             alert("Пожалуйста сначала укажите название");
             return;
         }
-        // 💡 НОВОЕ: ЗАПОМИНАЕМ, ОТКУДА ПРИШЛИ
+
+        // Запоминаем предыдущий экран
         const activeScreen = document.querySelector('.screen.active');
         state.previousScreen = activeScreen ? activeScreen.id : 'screen-menu';
 
+        // id заметки
         state.editingNoteId = existingNote ? existingNote.id : null;
+
+        // timestamp
         const timeVal = existingNote ? existingNote.timestamp : Timer.formatTime();
         document.getElementById('editor-timestamp').innerText = timeVal;
-        
+
+        // текст
         const noteArea = document.getElementById('note-text');
         noteArea.innerHTML = existingNote ? existingNote.text : "";
-        
-        // Очистка
+
+        // Очистка контейнера
         const container = document.getElementById('preview-container');
-        container.innerHTML = ""; 
+        container.innerHTML = "";
         this.uploadedFiles = [];
-        state.currentNoteImages = []; // Сброс списка старых картинок
+        state.currentNoteImages = [];
 
         this.showScreen('screen-editor');
 
-        // ЛОГИКА ЗАГРУЗКИ КАРТИНОК
+        // Загрузка картинок
         if (existingNote) {
-            // Нормализация: превращаем старый file_id в массив или берем file_ids
             let ids = existingNote.file_ids || [];
+
             if (existingNote.file_id && ids.length === 0) {
                 ids = [existingNote.file_id];
             }
 
-            state.currentNoteImages = ids; // Запоминаем текущие ID
+            state.currentNoteImages = ids;
 
             if (ids.length > 0) {
                 const loadingLabel = document.createElement('div');
@@ -440,20 +423,20 @@ const App = {
                 loadingLabel.id = 'loading-lbl';
                 container.appendChild(loadingLabel);
 
-                // Загружаем превью для каждого ID параллельно
                 Promise.all(ids.map(async (fid) => {
                     try {
                         const res = await fetch(`/api/media/get_image_url?file_id=${fid}`);
                         const data = await res.json();
                         if (data.url) return { url: data.url, id: fid };
-                    } catch (e) { console.error(e); }
+                    } catch (e) {}
                     return null;
                 })).then(results => {
-                    if(document.getElementById('loading-lbl')) container.removeChild(loadingLabel);
-                    
+                    if (document.getElementById('loading-lbl')) {
+                        container.removeChild(loadingLabel);
+                    }
+
                     results.forEach(item => {
-                        if(item) {
-                            // Создаем контейнер для фото (чтобы можно было потом добавить кнопку удаления)
+                        if (item) {
                             let wrapper = document.createElement('div');
                             wrapper.className = 'img-wrapper';
                             wrapper.style.display = 'inline-block';
@@ -463,41 +446,42 @@ const App = {
                             let img = document.createElement('img');
                             img.src = item.url;
                             img.className = 'preview-thumb';
-                            
+
                             wrapper.appendChild(img);
                             container.appendChild(wrapper);
                         }
                     });
                 });
             }
-        };
-        // --- Новая часть про таймер во время редактирования ---
+        }
+
+        // Лайв-таймер
         const liveLabel = document.getElementById("editor-timer-live");
         const pauseBtn = document.getElementById("editor-timer-pause");
 
-        // Если таймер сейчас работает — показываем текущий
         if (Timer.isRunning) {
             liveLabel.style.display = "inline";
             pauseBtn.style.display = "inline-block";
 
-            // Обновляем каждые 1000 мс
             editorLiveTimerInterval = setInterval(() => {
-                liveLabel.innerText = `(текущий: ${Timer.formatTime()})`;
+                const formatted = Timer.formatTime();
+                liveLabel.innerText = `(текущий: ${formatted})`;
             }, 1000);
 
-            // функционал кнопки паузы
             pauseBtn.onclick = () => {
                 Timer.stop();
                 pauseBtn.style.display = "none";
             };
+
         } else {
-            // Таймер не идёт — ничего не показываем
             liveLabel.style.display = "none";
             pauseBtn.style.display = "none";
+
             clearInterval(editorLiveTimerInterval);
             editorLiveTimerInterval = null;
-        }        
+        }
     },
+
 
     handleFiles(input) {
         // ... (Код превью картинок без изменений) ...
@@ -565,7 +549,6 @@ const App = {
             }
 
             // 2. ОБЪЕДИНЕНИЕ ID (Старые + Новые)
-            // Мы берем те, что уже были (state.currentNoteImages) и добавляем новые
             const finalFileIds = [...state.currentNoteImages, ...newFileIds];
 
             // 3. ФОРМИРОВАНИЕ ЗАПРОСА
@@ -689,55 +672,28 @@ const App = {
         clearInterval(editorLiveTimerInterval);
         editorLiveTimerInterval = null;      
         
-        // 💡 ИСПРАВЛЕНИЕ: ВОЗВРАЩАЕМСЯ НА ЭКРАН, С КОТОРОГО ПЕРЕШЛИ
-        // Если это screen-view (история), то возвращаемся на screen-player,
-        // Иначе возвращаемся на то, что сохранили, или по умолчанию на screen-player
         let screenToReturn;
         if (state.previousScreen === 'screen-view' && HistoryApp.currentMedia) {
-             // Если мы пришли с экрана просмотра записи (истории), 
-             // то нас интересует возврат в режим "Продолжить просмотр" (screen-player)
+
              screenToReturn = 'screen-player';
         } else if (state.previousScreen === 'screen-player') {
-             // Если мы пришли с экрана плеера - туда и возвращаемся
+
              screenToReturn = 'screen-player';
         } else {
-             // Если пришли откуда-то еще (напр., редактировали старую заметку из истории)
-             // или state.previousScreen не установлен - возвращаемся в меню
+
              screenToReturn = 'screen-menu';
         }
 
-        // Сбрасываем ID редактируемой заметки
         state.editingNoteId = null;
 
         this.showScreen(screenToReturn);
 
-        // ВАЖНО: Если возвращаемся на screen-player, то нужно возобновить таймер, 
-        // если он не был принудительно остановлен в редакторе
         if (screenToReturn === 'screen-player' && Timer.wasRunning) {
             Timer.start();
             this.updatePlayButton();
         }
-    },
-    
-    // --- Связь с модулем History ---
-    toHistory() { Timer.stop(); HistoryApp.init('view'); },
-    toEditMode() { Timer.stop(); HistoryApp.init('edit'); },
-    
-    // Вызывается из HistoryApp для редактирования старой заметки
-    openEditorFromHistory(noteId) {
-        const note = HistoryApp.currentMedia.entries.find(n => n.id == noteId);
-        if (note) {
-            state.mediaId = HistoryApp.currentMedia.id;
-            state.currentEpisode = note.episode;
-
-            // Приводим к массиву file_ids, если старый формат
-            if (note.file_id && !note.file_ids) {
-                note.file_ids = [note.file_id];
-            }
-
-            this.toEditorView(note);
-        }
     }
+
 
 };
 
