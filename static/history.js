@@ -1,7 +1,31 @@
 // history.js
 
 const API_BASE = '/api';
-const USER_ID = '6217936347'; 
+const FALLBACK_USER_ID = '6217936347'; // Ваш резервный ID
+
+/**
+ * Получает user_id из URL (для работы в Telegram WebApp)
+ * или использует FALLBACK_USER_ID, если не может его найти (для локального тестирования).
+ */
+function getCurrentUserId() {
+    // 1. Попытка получить ID из параметров поиска URL (например, ...history.html?user_id=12345)
+    const urlParams = new URLSearchParams(window.location.search);
+    const userIdFromUrl = urlParams.get('user_id');
+
+    if (userIdFromUrl) {
+        return userIdFromUrl;
+    }
+
+    // 2. Если ID не найден, возвращаем резервный ID
+    // Это будет происходить, если вы открыли страницу локально без параметров
+    console.warn("User ID not found in URL. Using fallback ID for testing:", FALLBACK_USER_ID);
+    return FALLBACK_USER_ID;
+
+
+const CURRENT_USER_ID = getCurrentUserId();
+
+
+
 
 // --- Вспомогательные функции времени (оставляем как были) ---
 function formatDate(ts) {
@@ -97,7 +121,7 @@ export const HistoryApp = {
         container.innerHTML = '<div style="text-align:center; padding:20px;">Загрузка...</div>';
         
         try {
-            const res = await fetch(`${API_BASE}/timer/get_all?user_id=${USER_ID}`);
+            const res = await fetch(`${API_BASE}/timer/get_all?user_id=${CURRENT_USER_ID}`);
             const json = await res.json();
             
             let rawData = json.timers || json;
@@ -202,7 +226,7 @@ export const HistoryApp = {
         if (shouldRender) this.renderList();
 
         try {
-            await fetch(`${API_BASE}/timer/delete?user_id=${USER_ID}&media_id=${mediaId}`, { method: 'DELETE' });
+            await fetch(`${API_BASE}/timer/delete?user_id=${CURRENT_USER_ID}&media_id=${mediaId}`, { method: 'DELETE' });
         } catch (e) {
             console.error("Ошибка удаления на сервере", e);
         }
@@ -486,7 +510,7 @@ export const HistoryApp = {
         this.renderList();
 
         try {
-            const res = await fetch(`${API_BASE}/timer/delete?user_id=${USER_ID}&media_id=${mediaId}`, {
+            const res = await fetch(`${API_BASE}/timer/delete?user_id=${CURRENT_USER_ID}&media_id=${mediaId}`, {
                 method: 'DELETE'
             });
             const d = await res.json();
