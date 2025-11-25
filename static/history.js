@@ -291,26 +291,42 @@ export const HistoryApp = {
 
     // --- Рендер таймлайна (Уровень 3) ---
     renderTimeline() {
+
+        console.log("🔄 [renderTimeline] Старт рендера. Текущий режим:", this.currentMode);
+        console.log("📌 [renderTimeline] currentMedia:", this.currentMedia);
+        console.log("📌 [renderTimeline] currentEpisode:", this.currentEpisode);
+
         const container = document.getElementById('view-timeline');
         container.innerHTML = '';
-        this.toggleFloatingButton(false); // Сброс при перерисовке
+        this.toggleFloatingButton(false);
 
         let entries = this.currentMedia.entries || [];
+        console.log("📋 [renderTimeline] Всего записей:", entries.length);
+
         if (this.currentEpisode) {
+            console.log("🔍 [renderTimeline] Фильтруем записи по эпизоду:", this.currentEpisode);
             entries = entries.filter(e => e.episode === this.currentEpisode);
         }
+
         entries.sort((a, b) => timeToSeconds(a.timestamp) - timeToSeconds(b.timestamp));
+        console.log("📋 [renderTimeline] После сортировки:", entries);
 
         if (entries.length === 0) {
             container.innerHTML = '<div style="text-align:center; padding:40px; color:#666;">Заметок нет</div>';
+            console.log("ℹ️ [renderTimeline] Записей нет → рендер пустого блока");
             return;
         }
 
         entries.forEach((entry, index) => {
+
+            console.log(`\n──────────────`);
+            console.log(`🧩 [Entry] index=${index}, id=${entry.id}, timestamp=${entry.timestamp}`);
+            console.log("📝 full entry:", entry);
+
             const row = document.createElement('div');
             row.className = 'timeline-row';
-            
-            // Расчет высоты линии (как было)
+
+            // Раскладка
             let gapHeight = 30;
             if (index < entries.length - 1) {
                 const currentSec = timeToSeconds(entry.timestamp);
@@ -318,18 +334,16 @@ export const HistoryApp = {
                 const diff = nextSec - currentSec;
                 if (diff > 0) gapHeight = Math.min(150, 30 + (Math.sqrt(diff) * 3));
             }
-            
-            // ПУНКТ 1: Чекбоксы слева. 
-            // Создаем обертку Flex, чтобы чекбокс был строго слева от карточки
+
             let wrapperStart = '';
             let wrapperEnd = '';
             let checkboxHtml = '';
 
             if (this.currentMode === 'edit') {
-                // Обертка для выравнивания
+                console.log("✏️ [Entry] Рендер чекбокса (режим edit)");
+
                 wrapperStart = `<div style="display: flex; flex-direction: row; align-items: flex-start; width: 100%;">`;
-                
-                // Сам чекбокс в отдельном блоке, чтобы не уезжал
+
                 checkboxHtml = `
                     <div style="padding-top: 5px; margin-right: 10px; flex-shrink: 0;">
                         <input type="checkbox" class="entry-checkbox" data-id="${entry.id}" 
@@ -340,8 +354,14 @@ export const HistoryApp = {
                 wrapperEnd = `</div>`;
             }
 
+            // Сбор медиа
+            const fileIds = Array.isArray(entry.file_ids)
+                ? entry.file_ids
+                : (entry.file_id ? [entry.file_id] : []);
+
+            console.log("🖼️ [Entry] fileIds:", fileIds);
+
             let mediaHtml = '';
-            const fileIds = Array.isArray(entry.file_ids) ? entry.file_ids : (entry.file_id ? [entry.file_id] : []);
             if (fileIds.length > 0) {
                 mediaHtml = `<div class="media-grid">`;
                 fileIds.forEach((fid, idx) => {
@@ -351,22 +371,21 @@ export const HistoryApp = {
                 this.lazyLoadImages(fileIds);
             }
 
-            // ПУНКТ 3: Открытие редактора в режиме Edit
-            // Мы ВСЕГДА устанавливаем clickAction, независимо от режима.
-            // Если режим edit, то openEditorFromHistory сработает.
-            // Подготавливаем fileIds для передачи в модальное окно
-            const entryFileIds = Array.isArray(entry.file_ids) ? entry.file_ids : (entry.file_id ? [entry.file_id] : []);
-            const fileIdsString = JSON.stringify(entryFileIds).replace(/"/g, '&quot;'); // Экранируем, чтобы корректно передать как строку в HTML
+            // CLICK ACTION → ключевой кусок
+            const entryFileIds = fileIds;
+            const fileIdsString = JSON.stringify(entryFileIds).replace(/"/g, '&quot;');
 
-            // ПУНКТ 3: Открытие редактора в режиме Edit или модального окна с текстом + медиа
-            const clickAction = this.currentMode === 'edit' 
-                ? `window.app.openEditorFromHistory('${entry.id}')` 
+            const clickAction = this.currentMode === 'edit'
+                ? `window.app.openEditorFromHistory('${entry.id}')`
                 : `historyApp.openTextModal(\`${(entry.text || '').replace(/`/g, "\\`").replace(/"/g, "&quot;")}\`, ${fileIdsString})`;
-            // Сборка HTML
+
+            console.log("👉 [Entry] clickAction:", clickAction);
+
             row.innerHTML = `
                 <div class="timeline-body">
                     ${wrapperStart} ${checkboxHtml}
-                        <div class="timeline-card" style="flex: 1;" onclick="${clickAction}">
+                        <div class="timeline-card" style="flex: 1;" 
+                             onclick="${clickAction}">
                             <div class="truncated-text">
                                 ${entry.text || '<em style="color:#555">Без текста</em>'}
                             </div>
@@ -379,10 +398,13 @@ export const HistoryApp = {
                     <div class="timeline-line" style="height: ${gapHeight}px;"></div>
                 </div>
             `;
-            
+
             container.appendChild(row);
+
+            console.log("✅ [Entry] Рендер завершён");
         });
 
+        console.log("🏁 [renderTimeline] Полный рендер завершён.");
         this.applyImageSources();
     },
 
@@ -546,6 +568,3 @@ export const HistoryApp = {
 };
 
 window.historyApp = HistoryApp;
-
-
-
