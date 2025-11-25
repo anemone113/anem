@@ -206,7 +206,7 @@ def delete_media(user_id, media_id):
         return False
 
 
-TELEGRAM_BOT_TOKEN = "6026973561:AAEH542TDSuKUfVbIvo3LbmdeI3-Z_hMTvc"
+TELEGRAM_BOT_TOKEN = "7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI"
 
 def upload_file_to_telegram(file_storage, chat_id):
     """
