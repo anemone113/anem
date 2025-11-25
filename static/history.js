@@ -2,21 +2,32 @@
 
 const API_BASE = '/api';
 
-const FALLBACK_USER_ID = '6217936347'; // Ваш резервный ID
+const tg = window.Telegram.WebApp;
+
+const FALLBACK_USER_ID = '6217936347';
 
 function getCurrentUserId() {
+    // 1. Получаем ID из Telegram
+    const tgUserId = tg?.initDataUnsafe?.user?.id;
+
+    if (tgUserId) {
+        return tgUserId.toString();
+    }
+
+    // 2. Пробуем получить ID из URL (если вдруг используешь через браузер)
     const urlParams = new URLSearchParams(window.location.search);
     const userIdFromUrl = urlParams.get('user_id');
-
     if (userIdFromUrl) {
         return userIdFromUrl;
     }
 
-    console.warn("User ID not found in URL. Using fallback ID:", FALLBACK_USER_ID);
+    // 3. Фоллбек для локального тестирования
+    console.warn("User ID not found. Using fallback ID:", FALLBACK_USER_ID);
     return FALLBACK_USER_ID;
-} // ←←← ЭТОЙ СКОБКИ НЕ ХВАТАЛО
+}
 
 const CURRENT_USER_ID = getCurrentUserId();
+
 
 
 
@@ -535,5 +546,6 @@ export const HistoryApp = {
 };
 
 window.historyApp = HistoryApp;
+
 
 
