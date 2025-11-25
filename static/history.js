@@ -399,7 +399,7 @@ export const HistoryApp = {
         // Отправляем запросы на сервер (поштучно, т.к. массового API нет, но это работает)
         for (const noteId of idsToDelete) {
             try {
-                await fetch(`${API_BASE}/timer/delete_entry?user_id=${USER_ID}&media_id=${this.currentMedia.id}&entry_id=${noteId}`, {
+                await fetch(`${API_BASE}/timer/delete_entry?user_id=${CURRENT_USER_ID}&media_id=${this.currentMedia.id}&entry_id=${noteId}`, {
                     method: 'DELETE'
                 });
             } catch(e) { console.error(e); }
@@ -542,3 +542,4 @@ export const HistoryApp = {
 };
 
 window.historyApp = HistoryApp;
+
