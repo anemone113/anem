@@ -1,14 +1,10 @@
 // history.js
 
 const API_BASE = '/api';
+
 const FALLBACK_USER_ID = '6217936347'; // Ваш резервный ID
 
-/**
- * Получает user_id из URL (для работы в Telegram WebApp)
- * или использует FALLBACK_USER_ID, если не может его найти (для локального тестирования).
- */
 function getCurrentUserId() {
-    // 1. Попытка получить ID из параметров поиска URL (например, ...history.html?user_id=12345)
     const urlParams = new URLSearchParams(window.location.search);
     const userIdFromUrl = urlParams.get('user_id');
 
@@ -16,14 +12,11 @@ function getCurrentUserId() {
         return userIdFromUrl;
     }
 
-    // 2. Если ID не найден, возвращаем резервный ID
-    // Это будет происходить, если вы открыли страницу локально без параметров
-    console.warn("User ID not found in URL. Using fallback ID for testing:", FALLBACK_USER_ID);
+    console.warn("User ID not found in URL. Using fallback ID:", FALLBACK_USER_ID);
     return FALLBACK_USER_ID;
-
+} // ←←← ЭТОЙ СКОБКИ НЕ ХВАТАЛО
 
 const CURRENT_USER_ID = getCurrentUserId();
-
 
 
 
@@ -542,4 +535,5 @@ export const HistoryApp = {
 };
 
 window.historyApp = HistoryApp;
+
 
