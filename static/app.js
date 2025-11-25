@@ -55,6 +55,8 @@ const Notify = {
 };
 
 
+
+
 const App = {
     uploadedFiles: [],
 
@@ -84,7 +86,8 @@ const App = {
 
         document.getElementById('btn-timer-toggle').onclick = () => this.toggleTimer();
         document.getElementById('btn-timer-reset').onclick = () => Timer.reset();
-        document.getElementById('btn-timer-edit').onclick = () => this.editTimerTime();
+        document.getElementById('btn-timer-edit').onclick = () => this.openTimerModal();
+
     },
 
 
@@ -130,7 +133,55 @@ const App = {
 
 
 
+    openTimerModal() {
+        const modal = document.getElementById("timer-modal");
+        const input = document.getElementById("timer-input");
+        const slider = document.getElementById("timer-slider");
+        const label = document.getElementById("timer-slider-label");
 
+        // Текущее время таймера
+        const currentSec = Timer.seconds;
+
+        // Устанавливаем значения
+        input.value = Timer.formatTime();
+        slider.value = currentSec;
+        label.innerText = Timer.formatTime();
+
+        modal.style.display = "flex";
+
+        // Синхронизация ползунка → поле ввода
+        slider.oninput = (e) => {
+            let sec = parseInt(e.target.value);
+            label.innerText = Timer.formatTimeFromSeconds(sec);
+            input.value = Timer.formatTimeFromSeconds(sec);
+        };
+
+        // Синхронизация поля → ползунок
+        input.oninput = (e) => {
+            let sec = Timer.parseInput(e.target.value);
+            if (!isNaN(sec)) {
+                if (sec < 0) sec = 0;
+                if (sec > 10800) sec = 10800;
+                slider.value = sec;
+                label.innerText = Timer.formatTimeFromSeconds(sec);
+            }
+        };
+    },
+
+    closeTimerModal() {
+        document.getElementById("timer-modal").style.display = "none";
+    },
+
+    applyTimerModal() {
+        const input = document.getElementById("timer-input").value;
+        const seconds = Timer.parseInput(input);
+
+        if (!isNaN(seconds)) {
+            Timer.setSeconds(seconds);
+        }
+
+        this.closeTimerModal();
+    },
 
 
     openQuickTagMenu() {
@@ -369,10 +420,7 @@ const App = {
     updatePlayButton() {
         document.getElementById('btn-timer-toggle').innerText = Timer.isRunning ? '⏸ Пауза' : '▶ Старт';
     },
-    editTimerTime() {
-        let val = prompt("Время (ЧЧ:ММ:СС, например 01:22:14)", "0");
-        if(val) Timer.setSeconds(Timer.parseInput(val));
-    },
+
 
     // --- Редактор и Сохранение ---
     // --- Замени свою старую функцию openEditor на эту ---
