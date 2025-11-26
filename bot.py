@@ -84,6 +84,7 @@ from gpt_helper import (
     generate_products_response,
     get_user_timers
 )
+from vpn_service import run_vpn_update, create_qr_code, SUB_FILE_PATH
 from collections import deque
 from aiohttp import ClientSession, ClientTimeout, FormData
 import json
@@ -8542,8 +8543,6 @@ async def get_image_file(url: str, session: aiohttp.ClientSession) -> BytesIO | 
         logger.error(f"Ошибка загрузки {url}: {e}")
         return None
 
-
-
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     plant_key = query.data
@@ -8579,14 +8578,14 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
                     get_image_file(img["url"]["o"], session)
                     for img in images if "url" in img
                 ]
-        
+
                 results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
                 media = []
                 for idx, image_file in enumerate(results):
                     if isinstance(image_file, Exception) or image_file is None:
                         continue
-        
+
                     caption = None
                     if idx == 0:
                         caption = (
@@ -8594,9 +8593,9 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
                             f"Общие названия: {escape_markdown_v2(', '.join(common_names))}\n"
                             f"{truncate_text_with_link(description, 300, wikipedia_link, scientific_name)}"
                         )
-        
+
                     media.append(InputMediaPhoto(media=image_file, caption=caption))
-        
+
                 if media:
                     try:
                         await query.message.reply_media_group(media)
@@ -8617,7 +8616,6 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         await query.message.reply_text("Данные о растении не найдены")
 
     await query.answer()
-
 
 async def gpt_plants_more_handler(update, context):
     """Асинхронный обработчик для запроса ухода за растением по научному названию."""
