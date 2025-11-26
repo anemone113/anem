@@ -30,8 +30,6 @@ const CURRENT_USER_ID = getCurrentUserId();
 
 
 
-
-// --- Вспомогательные функции времени (оставляем как были) ---
 function formatDate(ts) {
     if (!ts) return '';
     const d = new Date(ts);
@@ -105,6 +103,112 @@ export const HistoryApp = {
         }
     },
 
+
+    // Генерируем ссылку.
+    openShareModal() {
+        if (!this.currentMedia) return;
+
+         
+        // Если это Telegram WebApp, window.location.href может быть специфичным, 
+        // но обычно window.location.origin + window.location.pathname работает для веба.
+        // Мы добавляем параметры owner_id и shared_media_id
+        
+        const baseUrl = window.location.href.split('?')[0];
+        const shareUrl = `${baseUrl}?owner_id=${CURRENT_USER_ID}&shared_media_id=${this.currentMedia.id}`;
+
+        const input = document.getElementById('share-link-input');
+        input.value = shareUrl;
+
+        document.getElementById('share-modal').style.display = 'flex';
+    },
+
+    // 2. Метод копирования ссылки
+    copyShareLink() {
+        const input = document.getElementById('share-link-input');
+        input.select();
+        input.setSelectionRange(0, 99999); // Для мобильных
+        
+        try {
+            document.execCommand('copy');
+            alert('Ссылка скопирована!');
+            document.getElementById('share-modal').style.display = 'none';
+        } catch (err) {
+            alert('Не удалось скопировать автоматически');
+        }
+    },
+
+    // 3. ПРОВЕРКА РЕЖИМА ГОСТЯ (Shared Mode)
+    async checkSharedLink() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const ownerId = urlParams.get('owner_id');
+        const mediaId = urlParams.get('shared_media_id');
+
+        if (ownerId && mediaId) {
+            console.log("Режим гостя активирован:", ownerId, mediaId);
+            await this.loadSharedMedia(ownerId, mediaId);
+            return true; // Возвращаем true, чтобы остановить обычную загрузку
+        }
+        return false;
+    },
+
+    // 4. Загрузка чужого медиа
+    async loadSharedMedia(ownerId, mediaId) {
+        // Показываем экран просмотра сразу
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById('screen-view').classList.add('active');
+        document.getElementById('view-timeline').innerHTML = '<div style="text-align:center; padding:20px;">Загрузка общего таймлайна...</div>';
+
+        try {
+            // Используем новый API endpoint
+            const res = await fetch(`${API_BASE}/timer/get_one?user_id=${ownerId}&media_id=${mediaId}`);
+
+            const text = await res.text();
+            console.log("RAW RESPONSE:", text);
+
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (parseErr) {
+                console.error("JSON parse ERROR:", parseErr);
+                alert("Ошибка загрузки ссылки: сервер вернул не JSON");
+                return;
+            }
+
+            if (data.error) throw new Error(data.error);
+
+            // Превращаем entries из объекта в массив (как в loadData)
+            if (data.entries && typeof data.entries === 'object' && !Array.isArray(data.entries)) {
+                data.entries = Object.keys(data.entries).map(k => ({ id: k, ...data.entries[k] }));
+            }
+
+            this.currentMedia = data;
+            
+            // Настройка UI для гостя
+            document.getElementById('view-title').innerText = `(Гость) ${this.currentMedia.title}`;
+            
+            // Скрываем кнопки управления, так как гость не может менять чужое
+            const btnContinue = document.getElementById('btn-continue-watching');
+            if (btnContinue) btnContinue.style.display = 'none';
+            
+            const btnShare = document.getElementById('btn-share');
+            if (btnShare) btnShare.style.display = 'none'; // Гость не может шерить чужое (или может, если хотите)
+
+            // Скрываем кнопку "Назад", если мы пришли сразу по ссылке, 
+            // или меняем её действие на "Перейти в своего бота"
+            // Для простоты оставим как есть, она вернет в (пустой) список или главное меню
+            
+            this.renderEpisodeChips();
+            this.selectEpisode(null);
+
+        } catch (e) {
+            console.error(e);
+            alert("Ошибка загрузки ссылки: " + e.message);
+            // Если ошибка, кидаем в меню
+            document.getElementById('screen-view').classList.remove('active');
+            document.getElementById('screen-menu').classList.add('active');
+        }
+    },
+
     // Функция проверки чекбоксов для обновления кнопки
     updateSelectionState(type) {
         const selector = type === 'media' ? '.media-checkbox:checked' : '.entry-checkbox:checked';
@@ -167,7 +271,6 @@ export const HistoryApp = {
             el.className = 'list-item';
             
             // ПУНКТ 4: Чекбоксы рядом с названиями произведений
-            // Используем Flexbox для выравнивания
             el.style.display = 'flex';
             el.style.alignItems = 'center';
             el.style.gap = '10px';
@@ -292,36 +395,24 @@ export const HistoryApp = {
     // --- Рендер таймлайна (Уровень 3) ---
     renderTimeline() {
 
-        console.log("🔄 [renderTimeline] Старт рендера. Текущий режим:", this.currentMode);
-        console.log("📌 [renderTimeline] currentMedia:", this.currentMedia);
-        console.log("📌 [renderTimeline] currentEpisode:", this.currentEpisode);
-
         const container = document.getElementById('view-timeline');
         container.innerHTML = '';
         this.toggleFloatingButton(false);
 
         let entries = this.currentMedia.entries || [];
-        console.log("📋 [renderTimeline] Всего записей:", entries.length);
 
         if (this.currentEpisode) {
-            console.log("🔍 [renderTimeline] Фильтруем записи по эпизоду:", this.currentEpisode);
             entries = entries.filter(e => e.episode === this.currentEpisode);
         }
 
         entries.sort((a, b) => timeToSeconds(a.timestamp) - timeToSeconds(b.timestamp));
-        console.log("📋 [renderTimeline] После сортировки:", entries);
 
         if (entries.length === 0) {
             container.innerHTML = '<div style="text-align:center; padding:40px; color:#666;">Заметок нет</div>';
-            console.log("ℹ️ [renderTimeline] Записей нет → рендер пустого блока");
             return;
         }
 
         entries.forEach((entry, index) => {
-
-            console.log(`\n──────────────`);
-            console.log(`🧩 [Entry] index=${index}, id=${entry.id}, timestamp=${entry.timestamp}`);
-            console.log("📝 full entry:", entry);
 
             const row = document.createElement('div');
             row.className = 'timeline-row';
@@ -340,7 +431,6 @@ export const HistoryApp = {
             let checkboxHtml = '';
 
             if (this.currentMode === 'edit') {
-                console.log("✏️ [Entry] Рендер чекбокса (режим edit)");
 
                 wrapperStart = `<div style="display: flex; flex-direction: row; align-items: flex-start; width: 100%;">`;
 
@@ -358,8 +448,6 @@ export const HistoryApp = {
             const fileIds = Array.isArray(entry.file_ids)
                 ? entry.file_ids
                 : (entry.file_id ? [entry.file_id] : []);
-
-            console.log("🖼️ [Entry] fileIds:", fileIds);
 
             let mediaHtml = '';
             if (fileIds.length > 0) {
@@ -401,10 +489,7 @@ export const HistoryApp = {
 
             container.appendChild(row);
 
-            console.log("✅ [Entry] Рендер завершён");
         });
-
-        console.log("🏁 [renderTimeline] Полный рендер завершён.");
         this.applyImageSources();
     },
 
@@ -432,7 +517,6 @@ export const HistoryApp = {
         }
     },
     
-    // ... Остальные методы (lazyLoadImages, modal, backToList) оставляем без изменений ...
     async lazyLoadImages(fileIds) {}, // (заглушка для краткости, используйте свой код)
     
     async applyImageSources() {
@@ -527,7 +611,7 @@ export const HistoryApp = {
         document.getElementById('screen-list').classList.add('active');
         this.currentMedia = null;
         this.currentEpisode = null;
-        this.renderList(); // Перерисовка списка, чтобы обновить состояние чекбоксов
+        this.renderList(); 
     },
     async deleteMedia(mediaId) {
         // Оптимистичное обновление интерфейса (сразу убираем из списка)
@@ -557,9 +641,6 @@ export const HistoryApp = {
         
         if(!confirm(`Удалить ${idsToDelete.length} заметок?`)) return;
 
-        // В идеале нужен метод API для массового удаления
-        // Пока удаляем по одной или отправляем массив
-        console.log("Deleting entries:", idsToDelete);
         
         // Имитация удаления из UI
         this.currentMedia.entries = this.currentMedia.entries.filter(e => !idsToDelete.includes(String(e.id)));
