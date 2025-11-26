@@ -60,8 +60,9 @@ const Notify = {
 const App = {
     uploadedFiles: [],
 
-    init() {
-        // --- Автосохранение названия при вводе ---
+    // 🔥🔥🔥 ИЗМЕНЕННЫЙ INIT (Главное изменение тут) 🔥🔥🔥
+    async init() {
+        // 1. Стандартные слушатели (как и было)
         let titleTypingTimer = null;
         const titleInput = document.getElementById('media-title');
 
@@ -69,15 +70,13 @@ const App = {
             clearTimeout(titleTypingTimer);
             titleTypingTimer = setTimeout(() => {
                 App.ensureMediaCreated(e.target.value);
-            }, 400); // debounce 400мс
+            }, 400); 
         };
 
-        // --- Дополнительно сохраняем при потере фокуса ---
         titleInput.onchange = (e) => {
             App.ensureMediaCreated(e.target.value);
         };
 
-        // --- Таймер ---
         Timer.init((timeString) => {
             document.getElementById('timer').innerText = timeString;
         });
@@ -88,15 +87,67 @@ const App = {
         document.getElementById('btn-timer-reset').onclick = () => Timer.reset();
         document.getElementById('btn-timer-edit').onclick = () => this.openTimerModal();
 
-    },
+        const editorBtn = document.getElementById('editor-timer-toggle');
+        if (editorBtn) {
+            editorBtn.onclick = () => this.toggleTimer();
+        }
 
+
+        // 2. 🔥🔥🔥 ПРОВЕРКА РЕЖИМА ГОСТЯ ПРИ ЗАПУСКЕ 🔥🔥🔥
+        // Мы ждем проверки ссылки перед тем, как решать, какой экран показывать
+        try {
+            const isShared = await HistoryApp.checkSharedLink();
+            
+            if (isShared) {
+                // Если checkSharedLink вернул true, значит это гость.
+                // HistoryApp сам переключит экран на 'screen-view' и загрузит данные.
+                // Нам НЕ НУЖНО показывать 'screen-menu'.
+                console.log("Запущен режим гостя (Shared View)");
+            } else {
+                // Обычный запуск владельца — показываем меню
+                this.showScreen('screen-menu');
+            }
+        } catch (e) {
+            console.error("Ошибка инициализации:", e);
+            this.showScreen('screen-menu'); // Фолбек на меню при ошибке
+        }
+    },
 
     // --- Связь с модулем History ---
     toHistory() { Timer.stop(); HistoryApp.init('view'); },
     toEditMode() { Timer.stop(); HistoryApp.init('edit'); },
-    
 
+    // Добавить внутрь объекта App
+    syncTimerUI() {
+        const isRunning = Timer.isRunning; // Предполагаем, что в Timer есть геттер isRunning
+        
+        // 1. Обновляем кнопку в основном плеере
+        const mainBtn = document.getElementById('btn-timer-toggle');
+        if (mainBtn) {
+            mainBtn.innerText = isRunning ? '⏸ Пауза' : '▶ Старт';
+            // Опционально: можно менять стиль кнопки
+            if (isRunning) mainBtn.classList.add('active-timer'); 
+            else mainBtn.classList.remove('active-timer');
+        }
 
+        // 2. Обновляем кнопку в редакторе
+        const editorBtn = document.getElementById('editor-timer-toggle');
+        if (editorBtn) {
+            // Меняем иконку
+            editorBtn.innerText = isRunning ? '⏸' : '▶';
+            
+            // Визуальная подсветка, если нужно
+            editorBtn.style.borderColor = isRunning ? '#5848cc' : '#ccc';
+        }
+
+        // 3. Управление отображением "живого" таймера в редакторе
+        const liveLabel = document.getElementById("editor-timer-live");
+        if (liveLabel) {
+            // Показываем его всегда или только когда идет таймер — на ваш вкус. 
+            // Я рекомендую показывать всегда, чтобы видеть позицию.
+            liveLabel.style.display = "inline"; 
+        }
+    },
     // Прочий код
     continueWatchingFromHistory() {
         console.group("%c▶ continueWatchingFromHistory()", "color:#6aaaff; font-weight: bold");
@@ -414,8 +465,8 @@ const App = {
 
     // --- Таймер ---
     toggleTimer() {
-        Timer.toggle();
-        this.updatePlayButton();
+        Timer.toggle(); // Переключает состояние внутри класса Timer
+        this.syncTimerUI(); // Синхронизирует ВСЕ кнопки
     },
     updatePlayButton() {
         document.getElementById('btn-timer-toggle').innerText = Timer.isRunning ? '⏸ Пауза' : '▶ Старт';
@@ -503,31 +554,20 @@ const App = {
             }
         }
 
-        // Лайв-таймер
+        // 1. Сразу синхронизируем кнопку (Play или Pause) в зависимости от текущего состояния
+        this.syncTimerUI();
+
+        // 2. Логика "живого" таймера (текст (текущий: 00:00:00))
+        // Очищаем старый интервал, если он был
+        if (editorLiveTimerInterval) clearInterval(editorLiveTimerInterval);
+
         const liveLabel = document.getElementById("editor-timer-live");
-        const pauseBtn = document.getElementById("editor-timer-pause");
-
-        if (Timer.isRunning) {
-            liveLabel.style.display = "inline";
-            pauseBtn.style.display = "inline-block";
-
-            editorLiveTimerInterval = setInterval(() => {
-                const formatted = Timer.formatTime();
-                liveLabel.innerText = `(текущий: ${formatted})`;
-            }, 1000);
-
-            pauseBtn.onclick = () => {
-                Timer.stop();
-                pauseBtn.style.display = "none";
-            };
-
-        } else {
-            liveLabel.style.display = "none";
-            pauseBtn.style.display = "none";
-
-            clearInterval(editorLiveTimerInterval);
-            editorLiveTimerInterval = null;
-        }
+        
+        // Запускаем интервал обновления текста.
+        editorLiveTimerInterval = setInterval(() => {
+            const formatted = Timer.formatTime();
+            liveLabel.innerText = `(текущий: ${formatted})`;
+        }, 1000);
     },
 
 
