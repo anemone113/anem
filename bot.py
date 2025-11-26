@@ -382,6 +382,210 @@ async def send_timer_app_button(update, context):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async def send_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Определяем "куда отвечать"
+    if update.callback_query:
+        await update.callback_query.answer()
+        target = update.callback_query.message
+    else:
+        target = update.message
+
+    await target.reply_text("🔍 Ищу файл подписки...")
+
+    # Если файла еще нет — запускаем обновление
+    if not SUB_FILE_PATH.exists():
+        await target.reply_text("⚠️ Файл еще не создан — запускаю обновление, подождите...")
+        count = await run_vpn_update()
+
+        if count == 0:
+            return await target.reply_text("❌ Не удалось собрать рабочие VPN-конфиги. Попробуйте позже.")
+        else:
+            await target.reply_text(f"✔️ Собрано {count} рабочих конфигов! Формирую ссылку...")
+
+    # Формируем ссылку на подписку
+    app_url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:80')
+    sub_url = f"{app_url}/static/sub.txt"
+
+    # Генерируем QR
+    qr_bio = create_qr_code(sub_url)
+
+    caption_text = (
+        f"🔐 <b>Ваша подписка обновлена!</b>\n\n"
+        f"🔗 <b>Ссылка для приложения:</b>\n<code>{sub_url}</code>\n\n"
+        f"ℹ️ <i>Вставьте эту ссылку в NekoBox, v2rayNG, Streisand, V2Box и др. как 'Subscription URL'.</i>\n"
+        f"📘 Подробная <a href=\"https://telegra.ph/Vpn-Instrukciya-11-26\">инструкция</a> по настройке."
+    )
+
+    # Кнопка "Закрыть"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Закрыть", callback_data="close")]
+    ])
+
+    # Отправляем QR + текст + кнопку
+    await target.reply_photo(
+        photo=qr_bio,
+        caption=caption_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard
+    )
+
+
+
+
+VPN_BUTTONS = {
+    "black": {
+        "name": "Чёрные списки",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/BLACK_VLESS_RUS-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS.txt"
+    },
+    "black_alt": {
+        "name": "Чёрные списки (альтернатива)",
+        "img": "https://github.com/igareck/vpn-configs-for-russia/raw/main/QR-codes/BLACK_SS+All_RUS-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_SS+All_RUS.txt"
+    },
+    "white_cable": {
+        "name": "Белые списки (кабель)",
+        "img": "https://github.com/igareck/vpn-configs-for-russia/raw/main/QR-codes/Vless-Reality-White-Lists-Rus-Cable-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Cable.txt"
+    },
+    "white_mobile": {
+        "name": "Белые списки (мобильный)",
+        "img": "https://github.com/igareck/vpn-configs-for-russia/raw/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt"
+    }
+}
+
+VPNINSTRUCTION_TEXT = """
+<b>Краткая инструкция</b>
+
+<b>1)</b> Выберите основной тип VPN-ключей, который вам нужен (можно подключить несколько подписок).
+
+<b>2)</b> Бот пришлёт вам QR-картинку и ссылку — вы можете использовать любой вариант (QR или ссылку).
+
+<b>3)</b> Скачайте и установите программу для использования ключей. Популярные клиенты:
+• NekoBox, v2rayNG, Streisand, V2Box и многие другие.
+
+Примеры загрузки NekoBox:
+• <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases">Версия для Android</a>
+• <a href="https://github.com/Matsuridayo/nekoray/releases">Версия для PC</a>
+
+<b>4)</b> Добавьте в программу подписку по QR-коду или по скопированной ссылке. Можно создать несколько групп/плейлистов и в каждую добавить отдельный набор подписок (например — белые/чёрные списки).
+
+<b>5)</b> В приложении выполните TCP-Ping и URL-тесты, затем выберите «удалить нерабочие» (или аналогичный пункт в вашем клиенте).
+
+<b>6)</b> Из оставшихся серверов подключитесь к любому и пользуйтесь. Если многие сервера перестанут работать — нажмите «Обновить подписку», и список автоматически заменится на актуальный.
+
+Для подробной инструкции со скринами читайте на <a href="https://telegra.ph/Vpn-Instrukciya-11-26">telegra.ph — VPN инструкция</a>.
+"""
+
+
+# ============================== #
+#   /vpn — главное меню
+# ============================== #
+
+async def vpn_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton(b["name"], callback_data=f"vpn_{key}")]
+        for key, b in VPN_BUTTONS.items()
+    ]
+
+    # Новая кнопка — именно здесь (до старых ключей)
+    keyboard += [
+        [InlineKeyboardButton("Сгенерировать файл подписки", callback_data="vpn_generate_sub")],
+        [InlineKeyboardButton("Старые альтернативные ключи", callback_data="vpn_old")],
+        [InlineKeyboardButton("Инструкция", callback_data="vpn_instruction")],
+    ]
+
+    message_html = (
+        "<b>VPN конфигурации</b>\n"
+        "Здесь ты можешь скачать рабочие VPN ключи и подключиться через QR.\n\n"
+        "<b>Выберите один из вариантов:</b>\n\n"
+        "1. <b>Основные ключи для обхода чёрных списков</b>\n\n"
+        "2. <b>Альтернативные ключи для обхода чёрных списков</b>\n\n"
+        "3. <b>Ключи для обхода &laquo;Белых списков&raquo; с кабельного интернета</b>\n\n"
+        "4. <b>Ключи для обхода &laquo;Белых списков&raquo; с мобильного</b>\n\n"
+        "5. <b>Сгенерировать файл подписки</b>\n"
+        "<i>Бот генерирует файл подписки на VPN сервисы, код написан подписчиком бота.</i>\n\n"
+        "6. <b>Старый способ получения ключей</b>\n"
+        "<i>Если всё что есть выше не работает.</i>\n\n"
+        "<b>В инструкции</b> — вся необходимая подробная информация."
+    )
+
+    await update.message.reply_text(
+        message_html,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+
+
+
+
+# ============================== #
+#  Обработка кнопок VPN
+# ============================== #
+
+async def vpn_show_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    key = query.data.replace("vpn_", "")
+    cfg = VPN_BUTTONS[key]
+
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть", callback_data="close")]])
+
+    await query.message.reply_photo(
+        cfg["img"],
+        caption=f"<b>{cfg['name']}</b>\n\n<code>{cfg['txt']}</code>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+# ============================== #
+#    Инструкция
+# ============================== #
+
+async def vpn_instruction(update, context):
+    q = update.callback_query
+    await q.answer()
+    await q.message.reply_text(
+        VPNINSTRUCTION_TEXT,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть", callback_data="close")]])
+    )
+
+# ============================== #
+#   Вызов твоей функции с ключами
+# ============================== #
+
+async def vpn_old(update, context):
+    q = update.callback_query
+    await q.answer()
+    await send_keys(update.callback_query, context, 0)   # index = 0 (меняешь сам)
+
+# ============================== #
+#   Кнопка закрыть
+# ============================== #
+
+async def close_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.message.delete()
+
+
+
+
 # Список ваших raw.githubusercontent ссылок
 GITHUB_LINKS = [
     "https://raw.githubusercontent.com/sakha1370/OpenRay/refs/heads/main/output/all_valid_proxies.txt",#9
@@ -559,6 +763,10 @@ async def download_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bio.name = "vpn_keys.txt"
 
     await query.message.reply_document(InputFile(bio))
+
+
+
+
 
 
 
@@ -17724,7 +17932,18 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_otloj_scheduled, pattern=r'^otlview_[\w_]+$')) 
     application.add_handler(CallbackQueryHandler(delete_scheduled_time_handler, pattern=r"^otloj_delete_\d+_\d+$")) 
 
-    application.add_handler(CommandHandler("vpn", vpn))    
+    application.add_handler(CallbackQueryHandler(vpn_show_config, pattern=r"^vpn_(black|black_alt|white_cable|white_mobile)$"))
+    application.add_handler(CallbackQueryHandler(vpn_old, pattern="^vpn_old$"))
+    application.add_handler(CallbackQueryHandler(vpn_instruction, pattern="^vpn_instruction$"))
+    application.add_handler(CallbackQueryHandler(close_handler, pattern="^close$"))
+    application.add_handler(CallbackQueryHandler(send_subscription, pattern="vpn_generate_sub"))
+    application.add_handler(CommandHandler("oldvpn", vpn))
+    application.add_handler(CommandHandler("vpn", vpn_menu))
+    application.add_handler(CommandHandler("vpnconfig", send_subscription))
+
+
+
+    
     application.add_handler(CommandHandler("userid", userid_command))
     application.add_handler(CommandHandler("rec", recognize_test_plant))
     application.add_handler(CommandHandler("testid", handle_testid_command))  
@@ -17773,18 +17992,24 @@ def main() -> None:
     time_to_run = dt_time(hour=8, minute=48, tzinfo=moscow_tz) 
     
     job_queue = application.job_queue
+
+    # ⏳ Запуск обновления через 30 секунд после старта
+    job_queue.run_once(lambda ctx: run_vpn_update(), when=30)
+    # ⏱ Ежедневное автообновление в 04:00
+    job_queue.run_daily(lambda ctx: run_vpn_update(), time=dt_time(hour=4, minute=0, tzinfo=moscow_tz))
+
     job_queue.run_daily(daily_ozon_price_check_job, time=time_to_run)
     
     logging.info(f"Задача daily_ozon_price_check_job зарегистрирована на ежедневный запуск в {time_to_run.strftime('%H:%M')} по Москве.")
 
     # Новая задача для сканирования публикаций
     # Запускаем каждый час, первая проверка сразу после запуска бота
-    job_queue.run_once(reschedule_publications_on_startup, when=0)
+    job_queue.run_once(reschedule_publications_on_startup, when=timedelta(seconds=10))
     logging.info("Задача reschedule_publications_on_startup зарегистрирована для однократного запуска при старте.")
 
 
     
-    application.run_polling()  
+    application.run_polling() 
 if __name__ == '__main__':
     # Настройка логирования
     logging.basicConfig(
