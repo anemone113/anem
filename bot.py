@@ -8608,8 +8608,8 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
 
                 # В любом случае — ждём, disable_web_page_preview=False
                 await asyncio.sleep(2)
-            else:
-                await query.message.reply_text("Изображения не найдены")
+        else: # Этот else относится к if images:
+            await query.message.reply_text("Изображения не найдены")
 
         # Только после медиа — отправляем кнопки
         await send_buttons_after_media(query)
