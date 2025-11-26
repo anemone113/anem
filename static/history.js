@@ -192,11 +192,18 @@ export const HistoryApp = {
             
             const btnShare = document.getElementById('btn-share');
             if (btnShare) btnShare.style.display = 'none'; // Гость не может шерить чужое (или может, если хотите)
-
+            // Убираем кнопку назад
+            const backBtn = document.querySelector('#screen-view .header-nav .btn-icon');
+            if (backBtn) backBtn.style.display = 'none';
             // Скрываем кнопку "Назад", если мы пришли сразу по ссылке, 
             // или меняем её действие на "Перейти в своего бота"
             // Для простоты оставим как есть, она вернет в (пустой) список или главное меню
-            
+            // Меняем кнопку "Продолжить просмотр" → "Перейти в бота"
+            const guestBtn = document.getElementById('guest-back-btn');
+            if (guestBtn) {
+                guestBtn.innerText = 'Перейти в бота';
+                guestBtn.onclick = () => window.open('https://t.me/anemone2_bot', '_blank');
+            }        
             this.renderEpisodeChips();
             this.selectEpisode(null);
 
@@ -649,4 +656,3 @@ export const HistoryApp = {
 };
 
 window.historyApp = HistoryApp;
-
