@@ -113,7 +113,7 @@ export const HistoryApp = {
         // но обычно window.location.origin + window.location.pathname работает для веба.
         // Мы добавляем параметры owner_id и shared_media_id
         
-        const baseUrl = window.location.href.split('?')[0];
+        const baseUrl = `${window.location.origin}${window.location.pathname}`;
         const shareUrl = `${baseUrl}?owner_id=${CURRENT_USER_ID}&shared_media_id=${this.currentMedia.id}`;
 
         const input = document.getElementById('share-link-input');
@@ -649,3 +649,4 @@ export const HistoryApp = {
 };
 
 window.historyApp = HistoryApp;
+
