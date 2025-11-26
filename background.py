@@ -8,6 +8,24 @@ app = Flask(__name__, static_folder='static')  # Указываем папку �
 
 # --- API ENDPOINTS (Точки для работы с данными) ---
 
+@app.route('/api/timer/get_one', methods=['GET'])
+def api_get_one_timer():
+    from gpt_helper import get_single_media
+    
+    user_id = request.args.get('user_id')
+    media_id = request.args.get('media_id')
+    
+    if not user_id or not media_id:
+        return jsonify({"error": "Missing params"}), 400
+        
+    data = get_single_media(user_id, media_id)
+    if data:
+        # Возвращаем данные, добавляя ID внутрь объекта для удобства фронта
+        data['id'] = media_id 
+        return jsonify(data)
+    else:
+        return jsonify({"error": "Not found"}), 404
+
 @app.route('/api/timer/get_all', methods=['GET'])
 def api_get_timers():
     from gpt_helper import get_user_timers  # импорт внутри функции
