@@ -110,6 +110,21 @@ import uuid
 
 # ... (Ваш код инициализации firebase и другие функции) ...
 
+def get_single_media(user_id, media_id):
+    """
+    Получает одну конкретную запись (таймер) по ID пользователя и ID медиа.
+    Нужно для режима 'Поделиться'.
+    """
+    try:
+        path = f'users_timers/{user_id}/{media_id}'
+        ref = db.reference(path)
+        data = ref.get()
+        return data if data else {}
+    except Exception as e:
+        logging.error(f"Ошибка получения медиа {media_id} для {user_id}: {e}")
+        return {}
+
+
 def get_user_timers(user_id):
     """
     Получает все записи таймеров для конкретного пользователя.
