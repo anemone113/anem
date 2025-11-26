@@ -8313,30 +8313,27 @@ from urllib.parse import urlencode
 # URL вашего Google Apps Script
 GAS_URL = 'https://script.google.com/macros/s/AKfycbxsLoPIT3xgg2NrR6q212abtI32pstNrG0v9-OPv7IsdT0Ky-MJqAULed1xM6A2uYwhfw/exec'
 
-async def get_image_file(url: str) -> BytesIO | None:
-    """
-    Асинхронно получает файл изображения через прокси Google Apps Script.
-    """
+async def get_image_file(url: str, session: aiohttp.ClientSession) -> BytesIO | None:
     if not url:
         return None
-        
-    # Формируем URL с параметром для doGet
-    params = {'url': url}
-    proxy_url = f"{GAS_URL}?{urlencode(params)}"
-    
+
+    proxy_url = f"{GAS_URL}?{urlencode({'url': url})}"
+
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(proxy_url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if 'image_b64' in data:
-                        # Декодируем base64 строку обратно в байты
-                        image_bytes = base64.b64decode(data['image_b64'])
-                        return BytesIO(image_bytes)
+        async with session.get(proxy_url) as response:
+            if response.status != 200:
+                return None
+
+            data = await response.json()
+            if 'image_b64' not in data:
+                return None
+
+            return BytesIO(base64.b64decode(data['image_b64']))
+
     except Exception as e:
-        logger.error(f"Ошибка при получении изображения через прокси: {e}")
+        logger.error(f"Ошибка загрузки {url}: {e}")
         return None
-    return None
+
 
 
 async def button_more_plants_handler(update: Update, context: CallbackContext) -> None:
@@ -8369,34 +8366,37 @@ async def button_more_plants_handler(update: Update, context: CallbackContext) -
         media = []
 
         if images:
-            for idx, img in enumerate(images):
-                img_url = img['url']['o'] if 'url' in img else None
-                logger.info(f"img_url {img_url} ")     
-                if img_url:
+            async with aiohttp.ClientSession() as session:
+                tasks = [
+                    get_image_file(img["url"]["o"], session)
+                    for img in images if "url" in img
+                ]
+        
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+                media = []
+                for idx, image_file in enumerate(results):
+                    if isinstance(image_file, Exception) or image_file is None:
+                        continue
+        
+                    caption = None
                     if idx == 0:
                         caption = (
                             f"Растение: {escape_markdown_v2(scientific_name)}\n"
                             f"Общие названия: {escape_markdown_v2(', '.join(common_names))}\n"
                             f"{truncate_text_with_link(description, 300, wikipedia_link, scientific_name)}"
                         )
-                        logger.info(f"caption {caption} ")                           
-                        image_file = await get_image_file(img_url)
-                        if image_file:
-                            media.append(InputMediaPhoto(media=image_file, caption=caption if idx == 0 else None))
-                    else:
-                        image_file = await get_image_file(img_url)
-                        if image_file:
-                            media.append(InputMediaPhoto(media=image_file, caption=caption if idx == 0 else None))
-
-            if media:
-                logger.info(f"media {media} ")                   
-                try:
-                    await query.message.reply_media_group(media)
-                except TimedOut as e:
-                    logger.warning("⚠️ Timeout при отправке медиагруппы, но возможно она всё же дойдёт.")
-                except Exception as e:
-                    logger.error(f"Ошибка отправки медиагруппы: {e}")
-                    await query.message.reply_text("Ошибка при отправке изображений. Сообщите администрации бота для исправления.")
+        
+                    media.append(InputMediaPhoto(media=image_file, caption=caption))
+        
+                if media:
+                    try:
+                        await query.message.reply_media_group(media)
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки медиагруппы: {e}")
+                        await query.message.reply_text("Ошибка при отправке изображений.")
+                else:
+                    await query.message.reply_text("Изображения не загрузились")
 
                 # В любом случае — ждём, disable_web_page_preview=False
                 await asyncio.sleep(2)
