@@ -286,20 +286,94 @@ async def send_reply_with_limit(text, max_length=4096):
 
 
 
-async def send_timer_app_button(update, context):
-    webapp_url = "https://anem-wurw.onrender.com/timer-app/"
+def ts_to_str(ts):
+    """Переводит timestamp (ms) → читабельную дату."""
+    try:
+        return datetime.datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    except:
+        return str(ts)
 
+def format_user_timers(user_data):
+    """Преобразует базу данных пользователя в красивый текст."""
+    if not user_data:
+        return "У вас пока нет сохранённых таймлайнов."
+
+    out = []
+
+    for timer_id, timer in user_data.items():
+        title = timer.get("title", "Без названия")
+        created = ts_to_str(timer.get("created_at"))
+
+        out.append(f"==============================")
+        out.append(f"📌 **{title}**")
+        out.append(f"Создан: {created}")
+        out.append(f"==============================\n")
+
+        entries = timer.get("entries", {})
+
+        if not entries:
+            out.append("  (нет отметок)\n")
+            continue
+
+        for entry_id, entry in entries.items():
+            ts = entry.get("timestamp", "??:??")
+            text = entry.get("text", "(без текста)")
+            created_e = ts_to_str(entry.get("created_at"))
+            episode = entry.get("episode")
+
+            out.append(f"▶️ Время: {ts}")
+            if episode:
+                out.append(f"   Серия: {episode}")
+            out.append(f"   Текст: {text}")
+            out.append(f"   Добавлено: {created_e}")
+            out.append("")  # пустая строка
+
+    return "\n".join(out)
+
+
+async def send_timer_app_button(update, context):
+    user_id = update.effective_user.id
+
+    # 1. Получаем данные
+    user_timers = get_user_timers(user_id)
+
+    # 2. Проверка: если данных нет — отправляем ТОЛЬКО кнопку
+    if not user_timers:
+        webapp_url = "https://anem-wurw.onrender.com/timer-app/"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Открыть таймер ⏱", web_app=WebAppInfo(url=webapp_url))]
+        ])
+
+        await update.message.reply_text(
+            "Открыть приложение:",
+            reply_markup=keyboard
+        )
+        return
+
+    # 3. Если данные есть — формируем красивый текст
+    formatted_text = format_user_timers(user_timers)
+
+    # 4. Сохраняем файл
+    filename = f"your_timers_{user_id}.txt"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(formatted_text)
+
+    # 5. Отправляем файл
+    with open(filename, "rb") as file:
+        await update.message.reply_document(
+            document=file,
+            filename=filename,
+            caption="Резервная копия ваших заметок и таймлайнов. Вы сможете их посмотреть или куда-то перенести даже если бот перестанет работать."
+        )
+
+    # 6. И отправляем кнопку WebApp
+    webapp_url = "https://anem-wurw.onrender.com/timer-app/"
     keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                text="Открыть таймер ⏱",
-                web_app=WebAppInfo(url=webapp_url)
-            )
-        ]
+        [InlineKeyboardButton("Открыть таймер ⏱", web_app=WebAppInfo(url=webapp_url))]
     ])
 
     await update.message.reply_text(
-        "Таймер для заметок в фильмах и сериалах:", 
+        "🌸Это приложение для добавление заметок, напоминаний, мыслей во время просотра фильмов, сериалов, аниме, прослушивания аудиокниг и тд. \n\nВ нём вы сможете запустить таймер и параллельно с просмотром делать быстрые заметки с привязкой ко времени. Чтобы не забыть где и на какой секунде вам встретилось что-то интересное.",
         reply_markup=keyboard
     )
 
